@@ -1,0 +1,15 @@
+{
+  "name": "aside-marketplace",
+  "description": "Aside productivity records through GraphQL MCP",
+  "owner": {
+    "name": "Aside"
+  },
+  "plugins": [
+    {
+      "name": "aside",
+      "source": "./",
+      "description": "Aside productivity records through GraphQL MCP",
+      "version": "0.1.0"
+    }
+  ]
+}

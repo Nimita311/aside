@@ -1,0 +1,2 @@
+- id: 2026-10-12-damaged
+  description: "Invalid YAML triggers a recoverable diagnostic."

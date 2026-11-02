@@ -1,0 +1,39 @@
+{
+  "name": "aside-cli",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "aside": "./dist/main.js"
+  },
+  "scripts": {
+    "build": "node build.mjs",
+    "build:cal": "bash native/build.sh",
+    "dev": "node build.mjs --watch",
+    "typecheck": "tsc --noEmit",
+    "typecheck:bench": "tsc --noEmit -p bench/tsconfig.json",
+    "bench:queries": "node bench/run.mjs",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "esbuild": "^0.28.2",
+    "typescript": "^5.7.0",
+    "vitest": "^4.1.12"
+  },
+  "dependencies": {
+    "@anthropic-ai/claude-agent-sdk": "0.3.296",
+    "@js-temporal/polyfill": "^0.5.1",
+    "@modelcontextprotocol/sdk": "^1.32.1",
+    "chokidar": "^5.0.0",
+    "commander": "^14.0.3",
+    "cron-parser": "^5.10.1",
+    "graphql": "17.0.2",
+    "rrule": "^2.8.1",
+    "yaml": "^2.8.4"
+  },
+  "engines": {
+    "node": ">=22.12.0"
+  }
+}

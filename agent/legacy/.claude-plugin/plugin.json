@@ -1,0 +1,10 @@
+{
+  "name": "aside",
+  "description": "Aside productivity records through legacy MCP tools",
+  "version": "0.1.0",
+  "license": "MIT",
+  "skills": [
+    "./skills/aside"
+  ],
+  "mcpServers": "./.mcp.json"
+}

@@ -1,0 +1,12 @@
+- id: 2026-10-12-typography
+  description: "The complete writing specimen, from headings to references and wide tables."
+- id: 2026-10-12-diagrams
+  description: "A locally rendered Mermaid gallery for architecture, planning, and data."
+- id: 2026-10-12-media
+  description: "Local image, PDF, audio, video, Markdown, text, and download specimens."
+- id: 2026-10-12-dashboard
+  description: "An interactive HTML dashboard with filters, a chart, and live fixture queries."
+- id: 2026-10-12-empty
+  description: "A deliberately empty artifact document."
+- id: 2026-10-12-diagram-error
+  description: "An intentionally broken diagram keeps its source readable and offers Retry."

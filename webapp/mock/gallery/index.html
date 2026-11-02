@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <title>Aside previews</title>
+  <link rel="stylesheet" href="/__mock/style.css">
+</head>
+<body>
+  <aside class="catalogue" id="scenario-catalogue" aria-label="Preview catalogue">
+    <a class="catalogue-title" href="/__mock/">Aside previews</a>
+    <label class="filter-field"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 4 4"/></svg><input id="scenario-filter" type="search" placeholder="Find a preview…" aria-label="Filter previews" autocomplete="off"></label>
+    <nav id="scenario-list" aria-label="Previews"></nav>
+  </aside>
+  <button id="sidebar-scrim" class="sidebar-scrim" aria-label="Close preview list" tabindex="-1" hidden></button>
+
+  <main class="workspace">
+    <header class="toolbar">
+      <button class="icon-button" id="btn-sidebar" aria-label="Hide previews" title="Hide previews" aria-expanded="true" aria-controls="scenario-catalogue"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M9 4v16"/></svg></button>
+      <div class="scenario-navigation">
+        <button class="icon-button" id="btn-previous" aria-label="Previous preview" title="Previous preview · Alt+←"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m14 6-6 6 6 6"/></svg></button>
+        <button class="icon-button" id="btn-next" aria-label="Next preview" title="Next preview · Alt+→"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m10 6 6 6-6 6"/></svg></button>
+      </div>
+      <h1 id="scenario-title">Loading preview…</h1>
+      <div class="preview-controls">
+        <select id="viewport" aria-label="Preview size"><option value="desktop">Fill</option><option value="tablet">Tablet · 768</option><option value="mobile">Mobile · 390</option></select>
+        <button class="icon-button" id="btn-theme" aria-label="Switch to dark theme" title="Switch to dark theme"><svg class="theme-moon" viewBox="0 0 24 24" aria-hidden="true"><path d="M20.9 13A9 9 0 0 1 11 3.1 9 9 0 1 0 20.9 13Z"/></svg><svg class="theme-sun" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2m0 16v2M2 12h2m16 0h2M5 5l1.5 1.5m11 11L19 19M5 19l1.5-1.5m11-11L19 5"/></svg></button>
+        <span class="toolbar-divider" aria-hidden="true"></span>
+        <button class="text-button" id="btn-recover" hidden title="Clear the simulated fault and retry">Recover</button>
+        <button class="icon-button" id="btn-reset" aria-label="Reset preview" title="Reset preview"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 10a9 9 0 1 1 2 8M3 4v6h6"/></svg></button>
+        <button class="icon-button" id="btn-copy" aria-label="Copy preview link" title="Copy preview link"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V4H4v12h4"/></svg></button>
+        <a class="icon-button loading-disabled" id="open-preview" aria-disabled="true" tabindex="-1" target="_blank" rel="noopener" aria-label="Open preview in a new tab" title="Open preview in a new tab"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14 3h7v7m0-7L10 14M10 3H3v18h18v-7"/></svg></a>
+      </div>
+    </header>
+    <section class="preview-stage" id="preview-stage" aria-label="Application preview">
+      <div id="preview-viewport" class="preview-viewport"></div>
+      <div class="preview-start" id="preview-start"><span class="loader" aria-hidden="true"></span><span>Loading preview…</span></div>
+    </section>
+    <span id="preview-state" class="sr-only" role="status" aria-live="polite">Loading preview…</span>
+    <div id="gallery-error" class="gallery-error" role="alert" hidden></div>
+  </main>
+  <script type="module" src="/__mock/gallery.js"></script>
+</body>
+</html>

@@ -1,0 +1,87 @@
+import { WebAuth } from '../src/web/auth.js';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { mkdtempSync, realpathSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
+import crypto from 'node:crypto';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
+import { Store } from '../src/mcp/store.js';
+import { AsideWebServer } from '../src/web/server.js';
+import { availableInstances } from '../src/web/catalogue.js';
+import type { DataSnapshot } from '../src/core/data-snapshot.js';
+
+let dir: string;
+let server: AsideWebServer | null;
+afterEach(() => { vi.restoreAllMocks(); server?.close(); if (dir) rmSync(dir, { recursive: true, force: true }); });
+
+describe('daemon core data API', () => {
+  it('serves the same records as MCP, with validators, immediate writes, reloads and instance isolation', async () => {
+    dir = realpathSync(mkdtempSync(join(tmpdir(), 'aside-data-core-')));
+    writeFileSync(join(dir, 'aside.md'), '---\nid: core-test\nname: Core test\n---\nManifest body');
+    mkdirSync(join(dir, 'actions', '2026'), { recursive: true });
+    const file = join(dir, 'actions', '2026', '2026-10-04-task.md');
+    writeFileSync(file, '---\nname: Original\ncreated: 2026-10-04T10:00\n---\nOriginal body');
+    writeFileSync(join(dir, 'actions', '2026', 'index.yaml'), '- id: 2026-10-04-task\n  description: Task');
+    const store = new Store(dir);
+    const auth = new WebAuth(join(dir, 'auth')), credential = auth.issue();
+    const fetch = (url: string, init: RequestInit = {}) => globalThis.fetch(url, { ...init, headers: { ...init.headers, Authorization: `Bearer ${credential.token}` } });
+    server = await AsideWebServer.start(dir, {
+      instances: () => availableInstances([dir]), register: async () => null, remove: () => {}, load: () => {},
+      data: async (path, refresh) => { expect(path).toBe(dir); if (refresh) store.rebuild(); return store.snapshot(); },
+    }, 0, { auth, stateDirectory: join(dir, 'auth') });
+    const url = `http://127.0.0.1:${server!.port}/-/api/instances/core-test/data`;
+    const clone = vi.spyOn(globalThis, 'structuredClone');
+    const hash = vi.spyOn(crypto, 'createHash');
+    const first = await fetch(url);
+    expect(first.status).toBe(200);
+    const snapshot = await first.json() as DataSnapshot;
+    expect(new Map(snapshot.actions).get('2026-10-04-task')).toEqual(store.getAction('2026-10-04-task'));
+    expect(snapshot.instance!.body).toBe('Manifest body');
+    expect(snapshot.searchProgress.complete).toBe(true);
+    const etag = first.headers.get('ETag')!;
+    const captures = () => clone.mock.calls.filter(([value]) => value && typeof value === 'object' && 'weeklyDates' in value).length;
+    expect(captures()).toBe(1);
+    const hashes = () => hash.mock.calls.filter(([algorithm]) => algorithm === 'sha1').length;
+    const firstHashes = hashes();
+    expect((await fetch(url, { headers: { 'If-None-Match': etag } })).status).toBe(304);
+    expect(captures()).toBe(1);
+    expect(hashes()).toBe(firstHashes);
+    store.saveAction('2026-10-04-task', { name: 'Updated', created: '2026-10-04T10:00' }, 'New body', file);
+    const written = await fetch(url, { headers: { 'If-None-Match': etag } });
+    expect(written.status).toBe(200);
+    expect(new Map((await written.json() as DataSnapshot).actions).get('2026-10-04-task')!.body).toBe('New body');
+    expect(captures()).toBe(2);
+    store.setIndexEntry('actions', '2026-10-04-task', 'Renamed description');
+    const indexed = await (await fetch(url, { headers: { 'If-None-Match': written.headers.get('ETag')! } })).json() as DataSnapshot;
+    expect(indexed.indexes.actions[0].description).toBe('Renamed description');
+    expect(captures()).toBe(3);
+    writeFileSync(file, '---\nname: External\ncreated: 2026-10-04T10:00\n---\nExternal body');
+    const refreshed = await fetch(url + '?refresh=1');
+    expect(new Map((await refreshed.json() as DataSnapshot).actions).get('2026-10-04-task')).toEqual(store.getAction('2026-10-04-task'));
+    expect(store.getAction('2026-10-04-task')!.body).toBe('External body');
+    rmSync(file); mkdirSync(file);
+    const unreadable = await (await fetch(url + '?refresh=1')).json() as DataSnapshot;
+    expect(new Map(unreadable.actions).get('2026-10-04-task')!.body).toBe('External body');
+    expect(store.getActionFile('2026-10-04-task')).toBe(file);
+    expect(unreadable.diagnostics.some(diagnostic => diagnostic.path === 'actions/2026/2026-10-04-task.md')).toBe(true);
+    rmSync(file, { recursive: true });
+    writeFileSync(file, '---\nname: Repaired\ncreated: 2026-10-04T10:00\n---\nRepaired body');
+    const repaired = await (await fetch(url + '?refresh=1')).json() as DataSnapshot;
+    expect(new Map(repaired.actions).get('2026-10-04-task')!.body).toBe('Repaired body');
+    expect(repaired.diagnostics).toEqual([]);
+    writeFileSync(join(dir, 'actions', '2026', 'index.yaml'), '- invalid-item');
+    const partial = await (await fetch(url + '?refresh=1')).json() as DataSnapshot;
+    expect(partial.diagnostics.some(diagnostic => diagnostic.path === 'actions/2026/index.yaml')).toBe(true);
+    expect(partial.searchProgress.complete).toBe(false);
+    expect(partial.searchProgress.failures).toContain('actions/2026/index.yaml');
+    mkdirSync(join(dir, 'artifacts', '2026'), { recursive: true });
+    writeFileSync(join(dir, 'artifacts', '2026', 'index.yaml'), '- id: ../invalid\n  description: Invalid handle');
+    const malformed = await fetch(url + '?refresh=1');
+    expect(malformed.status).toBe(200);
+    const recovered = await malformed.json() as DataSnapshot;
+    expect(new Map(recovered.actions).get('2026-10-04-task')!.body).toBe('Repaired body');
+    expect(recovered.searchProgress.complete).toBe(false);
+    expect((await fetch(url.replace('core-test', 'other'))).status).toBe(404);
+    expect((await fetch(url, { method: 'POST', headers: { 'X-Aside-Control': '1' } })).status).toBe(405);
+    store.close();
+  });
+});

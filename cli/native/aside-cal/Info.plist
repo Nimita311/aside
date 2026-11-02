@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleIdentifier</key>
+	<string>sh.117.aside.cal</string>
+	<key>CFBundleName</key>
+	<string>aside-cal</string>
+	<!-- Pre-macOS-14 key. -->
+	<key>NSCalendarsUsageDescription</key>
+	<string>Aside mirrors your scheduled actions to your calendar.</string>
+	<!-- The key requestFullAccessToEvents actually consults on macOS 14+. -->
+	<key>NSCalendarsFullAccessUsageDescription</key>
+	<string>Aside mirrors your scheduled actions to your calendar and reads them back so calendar edits update your actions.</string>
+</dict>
+</plist>

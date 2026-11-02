@@ -1,0 +1,6 @@
+- id: {{ACTION_ID_PROJECT}}
+  description: Open a thread for real work
+- id: {{ACTION_ID_CAPTURE}}
+  description: Capture an entry, just by talking
+- id: {{ACTION_ID_SCHEDULE}}
+  description: Block calendar time for an action

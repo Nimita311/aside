@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="en" data-theme="light">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Elements · Aside</title>
+  <link rel="stylesheet" href="/-/assets/style.css">
+  <link rel="stylesheet" href="/__mock/elements/style.css">
+</head>
+<body class="elements-page">
+  <main class="element-gallery" id="element-gallery">
+    <section class="element-section" id="icons" aria-labelledby="icons-heading">
+      <h2 id="icons-heading">Icons</h2>
+      <ul class="element-icons" id="icon-list" aria-label="Application icons"></ul>
+    </section>
+
+    <section class="element-section" id="pills" aria-labelledby="pills-heading">
+      <h2 id="pills-heading">Pills &amp; references</h2>
+      <div id="pill-specimens"></div>
+    </section>
+
+    <section class="element-section" id="controls" aria-labelledby="controls-heading">
+      <h2 id="controls-heading">Controls</h2>
+      <div class="element-control-grid">
+        <div class="element-demo">
+          <div class="element-row"><button class="btn btn-primary" type="button">Continue</button><button class="btn" type="button">Cancel</button><button class="btn" type="button" disabled>Disabled</button><span class="element-row" id="icon-buttons"></span></div>
+          <div class="element-row element-spaced"><button class="notice-action" type="button" id="preview-toast">Show toast</button><button class="notice-action" type="button" disabled>Unavailable action</button><a href="#pills">Text link</a></div>
+        </div>
+        <div class="element-demo">
+          <div class="element-row element-fields"><input class="search-input" type="search" id="element-search" placeholder="Search…" aria-label="Search"><select class="form-select" id="element-format" aria-label="Date format"><option>Short</option><option>Medium</option><option>Long</option><option>ISO</option></select></div>
+          <div class="element-row"><label class="form-checkbox"><input type="checkbox" checked>Selected</label><label class="form-checkbox"><input type="checkbox">Unselected</label><label class="form-checkbox"><input type="checkbox" disabled>Disabled</label></div>
+        </div>
+        <div class="element-demo">
+          <div class="element-row element-fields"><label class="date-jump-entry" for="element-date"><input class="date-jump-input is-invalid" id="element-date" value="October 45" aria-label="Invalid date" aria-invalid="true" aria-describedby="element-date-error"><span id="element-date-error" role="alert">Enter a valid date.</span></label><input class="search-input" id="element-disabled" value="Unavailable" aria-label="Disabled field" disabled></div>
+          <details class="element-disclosure"><summary>Disclosure</summary><p class="element-label">Supporting details.</p></details>
+        </div>
+        <div class="element-demo">
+          <div class="element-calendar-states" id="calendar-states"></div>
+          <div class="element-row element-spaced"><button class="cal-nav" type="button" aria-label="Previous month specimen">‹</button><span class="cal-title">October 2026</span><button class="cal-nav" type="button" aria-label="Next month specimen">›</button><div class="date-jump-units" role="group" aria-label="Period selector"><button class="date-jump-unit is-active" type="button" aria-pressed="true">Week</button><button class="date-jump-unit" type="button" aria-pressed="false">Month</button><button class="date-jump-unit" type="button" aria-pressed="false">Quarter</button></div></div>
+        </div>
+      </div>
+    </section>
+
+    <section class="element-section" id="feedback" aria-labelledby="feedback-heading">
+      <h2 id="feedback-heading">Feedback</h2>
+      <div class="element-feedback-grid" id="notice-specimens"></div>
+      <div class="element-control-grid element-spaced">
+        <div class="action-toast element-in-place">Could not complete that action. Try again.</div>
+        <div class="element-row"><button class="instance-calendar-icon" type="button" id="tooltip-trigger" aria-label="Calendar sync information"></button><div class="instance-tooltip element-in-place">Calendar sync is disabled for Git worktrees.</div></div>
+      </div>
+    </section>
+
+    <section class="element-section" id="tokens" aria-labelledby="tokens-heading">
+      <h2 id="tokens-heading">Design tokens</h2>
+      <ul class="element-swatches" id="color-tokens" aria-label="Theme colors"></ul>
+      <div class="element-control-grid element-spaced">
+        <div id="type-tokens" class="element-type-scale" aria-label="Type scale"></div>
+        <div class="element-row"><div id="radius-tokens" class="element-row" aria-label="Corner radii"></div><span class="element-surface">Surface</span><span class="element-surface element-surface-raised">Raised</span></div>
+      </div>
+    </section>
+  </main>
+  <script src="/__mock/environment.js"></script>
+  <!-- mock-config -->
+  <script type="module" src="/-/assets/elements.js"></script>
+</body>
+</html>

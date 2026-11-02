@@ -1,0 +1,192 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Aside</title>
+  <!-- Root-absolute so assets resolve on a cold load of a nested route path -->
+  <link rel="stylesheet" href="/-/assets/style.css">
+</head>
+<body>
+
+  <div class="top-bar">
+    <header class="app-header">
+      <div class="header-left">
+        <h1 class="app-title"><a href="/" title="Choose an instance">Aside</a></h1>
+        <span class="instance-context-divider" aria-hidden="true">/</span>
+        <div id="instance-switcher" class="instance-switcher">
+          <button id="btn-instance-switch" class="instance-switch-trigger" type="button" aria-haspopup="dialog" aria-expanded="false" aria-controls="instance-switch-menu"><span id="instance-name">Choose an instance</span><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg></button>
+          <div id="instance-switch-menu" class="instance-switch-menu" role="dialog" aria-label="Switch instance" hidden>
+            <div class="instance-menu-heading"><span>Switch instance</span><button id="btn-close-instance-switch" class="btn-icon" type="button" aria-label="Close instance switcher">×</button></div>
+            <input id="instance-switch-search" type="search" placeholder="Find an instance…" aria-label="Find an instance" autocomplete="off">
+            <div id="instance-switch-list" role="listbox" aria-label="Instances"></div>
+            <div class="instance-menu-footer"><button id="btn-all-instances" type="button">All instances</button></div>
+          </div>
+        </div>
+      </div>
+      <div class="header-center">
+        <div class="search-wrapper">
+          <input
+            type="search"
+            class="search-input"
+            placeholder="Search entries, projects, actions, artifacts..."
+            aria-label="Search"
+            role="combobox"
+            aria-autocomplete="list"
+            aria-haspopup="listbox"
+            aria-controls="search-listbox"
+            aria-expanded="false"
+            autocomplete="off"
+          >
+          <div id="search-results" class="search-results" hidden>
+            <div id="search-listbox" role="listbox" aria-label="Search results"></div>
+          </div>
+        </div>
+      </div>
+      <div class="header-right">
+        <button class="btn-icon connection-indicator" id="connection-status" aria-label="Offline" title="Offline. Click to reconnect." hidden>
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m2 2 20 20M8.5 8.5a16 16 0 0 1 13 1M2.5 9.5a16 16 0 0 1 3-1.6M5 13a10 10 0 0 1 4-2m5-0.2A10 10 0 0 1 19 13M8.5 16.5a5 5 0 0 1 7 0M12 20h.01"/></svg>
+        </button>
+        <button class="btn-icon" id="btn-settings" aria-label="Settings" title="Settings">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/>
+            <circle cx="12" cy="12" r="3"/>
+          </svg>
+        </button>
+        <button class="btn-icon" id="btn-theme-toggle" aria-label="Toggle dark mode" title="Toggle dark mode">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="12" cy="12" r="4"/>
+            <path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/>
+          </svg>
+        </button>
+      </div>
+    </header>
+
+    <details class="data-diagnostics" id="data-diagnostics" hidden><summary id="data-diagnostics-summary"></summary><div id="data-diagnostics-files"></div></details>
+  </div>
+
+  <div class="layout">
+    <section id="instance-chooser" class="instance-chooser" aria-label="Instance picker" hidden>
+      <div id="instance-notice"></div>
+      <ul id="instance-list" aria-label="Instances"></ul>
+      <button class="instance-add-card" id="btn-add-instance" aria-expanded="false" aria-controls="instance-add-form">
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
+        <span>Add instance</span>
+      </button>
+      <form id="instance-add-form" class="instance-add-form" hidden>
+        <h2>Add instance</h2>
+        <label for="instance-add-path">Instance path</label>
+        <p id="instance-add-help">Choose an existing Aside folder or enter its path.</p>
+        <div class="instance-add-input">
+          <input id="instance-add-path" type="text" placeholder="~/Aside" autocomplete="off" spellcheck="false" aria-describedby="instance-add-help instance-add-error">
+          <button class="btn" id="btn-browse-instance" type="button">Browse…</button>
+        </div>
+        <p id="instance-add-error" role="status"></p>
+        <div class="instance-add-actions">
+          <button class="btn" id="btn-cancel-add-instance" type="button">Cancel</button>
+          <button class="btn btn-primary" type="submit">Add instance</button>
+        </div>
+      </form>
+      <button class="notice-action" id="btn-retry-instances" hidden>Retry</button>
+    </section>
+    <!-- The app frame is fixed; the flow scrolls inside its own pane -->
+    <div class="flow-scroll" id="flow-scroll">
+      <main class="flow" id="flow" aria-label="Entries"></main>
+    </div>
+
+    <aside class="side-panel" id="side-panel" aria-label="Details panel" hidden>
+      <div class="side-panel-resize" id="side-panel-resize" role="separator" tabindex="0" aria-orientation="vertical" aria-label="Details panel width" aria-controls="side-panel" aria-describedby="panel-resize-help" title="Drag or Left/Right to resize · Enter to retract · Shift+Enter or double-click to fit the margin"></div>
+      <span id="panel-resize-help" hidden>Left and Right arrows resize the panel by 10 pixels; hold Shift for 50 pixels. Home and End set the minimum and maximum width. Enter retracts the panel. Shift+Enter or double-click fits the panel to the margin.</span>
+      <div class="side-panel-actions">
+        <button class="btn-icon" id="btn-side-panel-collapse" aria-expanded="true" aria-controls="side-panel-body" aria-label="Retract panel" title="Retract panel">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 17 5-5-5-5"/><path d="m13 17 5-5-5-5"/></svg>
+        </button>
+        <button class="btn-icon side-panel-close" id="btn-side-panel-close" aria-label="Close panel">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg>
+        </button>
+      </div>
+      <div class="side-panel-body" id="side-panel-body"></div>
+    </aside>
+
+    <div class="filter-pill" id="filter-pill" hidden></div>
+  </div>
+
+  <dialog class="doc-backdrop" id="doc-backdrop" aria-label="Document" tabindex="-1" hidden>
+    <div class="doc-window">
+      <button class="btn-icon doc-close" id="btn-doc-close" aria-label="Close document">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg>
+      </button>
+      <div class="doc-body" id="doc-body"></div>
+    </div>
+  </dialog>
+
+  <dialog class="modal-backdrop" id="modal-backdrop" aria-labelledby="modal-datasource-title" tabindex="-1" hidden>
+    <div class="modal" id="modal-datasource">
+      <header class="modal-header">
+        <h2 class="modal-title" id="modal-datasource-title">Settings</h2>
+        <button class="btn-icon modal-close" id="btn-modal-close" aria-label="Close modal">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg>
+        </button>
+      </header>
+      <div class="modal-body">
+        <div class="settings-section" id="setting-instance-status" hidden></div>
+        <div class="settings-section">
+          <h3 class="settings-heading">Display</h3>
+          <div class="form-row">
+            <label class="form-label" for="setting-date-format">Date format</label>
+            <select class="form-select" id="setting-date-format">
+              <option value="short">Short</option>
+              <option value="medium">Medium</option>
+              <option value="long">Long</option>
+              <option value="full">Full</option>
+              <option value="iso">ISO</option>
+            </select>
+          </div>
+          <div class="form-row">
+            <label class="form-label" for="setting-time-style">Time format</label>
+            <select class="form-select" id="setting-time-style">
+              <option value="short">Short</option>
+              <option value="medium">Medium</option>
+              <option value="long">Long</option>
+              <option value="full">Full</option>
+            </select>
+          </div>
+          <div class="form-row">
+            <label class="form-label" for="setting-time-format">Clock</label>
+            <select class="form-select" id="setting-time-format">
+              <option value="12h">12-hour</option>
+              <option value="24h">24-hour</option>
+            </select>
+          </div>
+          <div class="form-row date-time-preview">
+            <span class="form-label">Preview</span>
+            <output id="setting-date-time-preview" aria-live="polite" aria-atomic="true"></output>
+          </div>
+          <div class="form-row">
+            <label class="form-label" for="setting-anim-speed">Animation</label>
+            <select class="form-select" id="setting-anim-speed">
+              <option value="0">Off</option>
+              <option value="0.5">Fast</option>
+              <option value="1">Normal</option>
+              <option value="2">Slow</option>
+            </select>
+          </div>
+          <div class="form-row">
+            <span class="form-label" id="expand-tags-label">Expand tags</span>
+            <div class="form-checkboxes" role="group" aria-labelledby="expand-tags-label">
+              <label class="form-checkbox"><input type="checkbox" id="setting-expand-projects"> Projects</label>
+              <label class="form-checkbox"><input type="checkbox" id="setting-expand-actions"> Actions</label>
+            </div>
+          </div>
+        </div>
+        <div class="settings-section">
+          <h3 class="settings-heading">Keyboard</h3>
+          <label class="form-checkbox"><input type="checkbox" id="setting-search-shortcut"> Press / to focus search</label>
+        </div>
+      </div>
+    </div>
+  </dialog>
+
+  <script type="module" src="/-/assets/app.js"></script>
+</body>
+</html>

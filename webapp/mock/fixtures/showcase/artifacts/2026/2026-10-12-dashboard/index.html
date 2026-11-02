@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Aurora at a glance</title>
+  <link rel="stylesheet" href="styles.css">
+  <script src="/-/assets/iframe-client.js" defer></script>
+  <script src="dashboard.js" defer></script>
+</head>
+<body>
+<main>
+  <header>
+    <div><p class="eyebrow">AURORA / THE LAUNCH STUDIO</p><h1>A little clarity.</h1><p class="subtitle">A view of the work, with space to think.</p></div>
+    <span class="date">October 18, 2026</span>
+  </header>
+  <p id="connection" class="connection" role="status">Connecting to the local demo workspace…</p>
+  <p id="notice" class="notice" role="alert" hidden></p>
+  <section class="metrics" aria-label="Workspace totals">
+    <article><span>Actions in view</span><strong id="total">—</strong><small>One useful step at a time</small></article>
+    <article><span>Scheduled</span><strong id="scheduled">—</strong><small>Time set aside</small></article>
+    <article><span>Completed</span><strong id="done">—</strong><small>Progress made</small></article>
+    <article><span>Open projects</span><strong id="projects">—</strong><small>Connected efforts</small></article>
+  </section>
+  <section class="overview">
+    <div class="chart-panel"><p class="eyebrow">THE SHAPE OF THE WORK</p><h2>Every thread has a place.</h2><p>Choose a status to focus the list.</p><div id="chart" class="chart" role="group" aria-label="Filter actions by status"></div><div id="legend" class="legend"></div></div>
+    <div class="note-panel"><p class="eyebrow">FROM THE STUDIO</p><h2>Ready is a conversation.</h2><p>The brief, the evidence, and the people belong in the same room.</p><blockquote>Clear words, connected work, and a little space to think.</blockquote><span class="sun" aria-hidden="true"></span><span class="hill" aria-hidden="true"></span></div>
+  </section>
+  <section class="task-panel">
+    <div class="panel-heading"><div><p class="eyebrow">THE NEXT USEFUL STEP</p><h2>Explore the actions</h2></div><label>Status <select id="status"><option value="">All actions</option><option value="BACKLOG">Backlog</option><option value="SCHEDULED">Scheduled</option><option value="DONE">Done</option><option value="CANCELLED">Cancelled</option></select></label></div>
+    <div class="table-scroll"><table><thead><tr><th scope="col">Action</th><th scope="col">Status</th><th scope="col">Scheduled</th></tr></thead><tbody id="tasks"><tr><td colspan="3">Loading local actions…</td></tr></tbody></table></div>
+    <footer><span id="count" role="status">Loading…</span><button id="reset" type="button">Reset view</button></footer>
+  </section>
+  <p class="footnote">A fictional workspace. All data stays within this demo.</p>
+</main>
+</body>
+</html>

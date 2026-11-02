@@ -1,0 +1,2649 @@
+/* ============================================================
+   Productivity Webapp — style.css
+   Design: GitHub Primer / Bootstrap inspired. Minimalist, clean.
+   ============================================================ */
+
+/* ------------------------------------------------------------------
+   1. Custom Properties (Theming)
+   ------------------------------------------------------------------ */
+
+:root {
+  /* ---------- Light mode (default) ---------- */
+  --color-bg:               #ffffff;
+  --color-bg-secondary:     #f6f8fa;
+  --color-bg-tertiary:      #eef1f5;
+  --color-surface:          #ffffff;
+
+  --color-text:             #1f2328;
+  --color-text-secondary:   #656d76;
+  --color-text-muted:       #646d77;
+
+  --color-border:           #d1d9e0;
+  --color-border-subtle:    #e8ecf0;
+
+  --color-accent:           #0969da;
+  --color-accent-hover:     #0550ae;
+  --color-accent-subtle-bg: #ddf4ff;
+
+  /* entity tag palette */
+  --color-tag-project-bg:   #ddf4ff;
+  --color-tag-project-fg:   #0550ae;
+  --color-tag-action-bg:    #dafbe1;
+  --color-tag-action-fg:    #116329;
+  --color-tag-entry-bg:     #eef1f5;
+  --color-tag-entry-fg:     #656d76;
+
+  /* status mark palette — a pill's second channel: the icon and accent
+     carry the entity type, the marks (due ring, calendar-slot glyph) its state.
+     The due gold reads against the action green where a red would collapse
+     for red-green color vision; red is reserved for the breach (overdue). */
+  --color-status-due:       #9a6700;
+  --color-status-overdue:   #b51d28;
+  --color-status-neutral:   #8b949e;
+
+  /* buttons */
+
+  /* misc */
+  --color-backdrop:         rgba(0, 0, 0, 0.4);
+  --color-focus-ring:       rgba(9, 105, 218, 0.4);
+  --color-shadow:           rgba(31, 35, 40, 0.06);
+  --color-shadow-lg:        rgba(31, 35, 40, 0.12);
+
+  /* spacing & sizing */
+  --header-height:          48px;
+  /* --side-panel-width is set by the app at startup: the persisted width,
+     or the computed home width parked in the flow's right margin. */
+  --modal-max-width:        480px;
+  --search-max-width:       400px;
+  /* Flow geometry. The readable content measure is shared with the document
+     reader so a document reads exactly as wide inside the reader as it does
+     in the flow. */
+  --flow-max-width:         960px;
+  --flow-gutter:            130px;   /* left padding: the timeline gutter */
+  --flow-pad-x:             16px;
+  --flow-content-width:     calc(var(--flow-max-width) - var(--flow-gutter) - var(--flow-pad-x));
+  --doc-pad-x:              48px;    /* the reader's horizontal content padding */
+  --scrollbar-width:        8px;
+  --radius-sm:              4px;
+  --radius-md:              6px;
+  --radius-lg:              12px;
+  --radius-pill:            100px;
+
+  /* transitions */
+  --duration-fast:          150ms;
+  --duration-normal:        200ms;
+  --duration-slow:          300ms;
+  --ease-default:           cubic-bezier(0.4, 0, 0.2, 1);
+
+  /* typography */
+  --font-body: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans",
+    Helvetica, Arial, sans-serif, "Apple Color Emoji", "Segoe UI Emoji";
+  --font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas,
+    "Liberation Mono", monospace;
+  /* Type scale: font sizes with paired whole-pixel line heights on a 4px
+     grid — fractional line boxes jitter across re-renders (spec.md,
+     Typography). The pair travels together: a rule setting a font-size above
+     the base must set the matching line-height (px line-height inherits
+     as-is and would cramp). Enforced by test/typography.test.ts. */
+  --font-size-xs:   11px;  --line-height-xs:   16px;
+  --font-size-sm:   12px;  --line-height-sm:   16px;
+  --font-size-base: 14px;  --line-height-base: 20px;
+  --font-size-md:   16px;  --line-height-md:   24px;
+  --font-size-lg:   20px;  --line-height-lg:   28px;
+  --font-size-xl:   24px;  --line-height-xl:   32px;
+}
+
+/* Reduced motion disables every transition (the JS-driven FLIP and latch
+   check the same media query themselves); elements snap between states. */
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --duration-fast:   0ms;
+    --duration-normal: 0ms;
+    --duration-slow:   0ms;
+  }
+}
+
+/* ---------- Dark mode ---------- */
+html[data-theme="dark"] {
+  --color-bg:               #0d1117;
+  --color-bg-secondary:     #161b22;
+  --color-bg-tertiary:      #1c2129;
+  --color-surface:          #161b22;
+
+  --color-text:             #e6edf3;
+  --color-text-secondary:   #919ba7;
+  --color-text-muted:       #8b949e;
+
+  --color-border:           #30363d;
+  --color-border-subtle:    #21262d;
+
+  --color-accent:           #58a6ff;
+  --color-accent-hover:     #79c0ff;
+  --color-accent-subtle-bg: rgba(56, 139, 253, 0.15);
+
+  --color-tag-project-bg:   rgba(56, 139, 253, 0.15);
+  --color-tag-project-fg:   #79c0ff;
+  --color-tag-action-bg:    rgba(63, 185, 80, 0.15);
+  --color-tag-action-fg:    #7ee787;
+  --color-tag-entry-bg:     rgba(110, 118, 129, 0.15);
+  --color-tag-entry-fg:     #919ba7;
+
+  --color-status-due:       #d29922;
+  --color-status-overdue:   #f85149;
+  /* --color-status-neutral holds its :root value — the slot glyph's grey
+     reads on both themes */
+
+
+  --color-backdrop:         rgba(0, 0, 0, 0.6);
+  --color-focus-ring:       rgba(88, 166, 255, 0.4);
+  --color-shadow:           rgba(0, 0, 0, 0.2);
+  --color-shadow-lg:        rgba(0, 0, 0, 0.4);
+  color-scheme: dark;
+}
+
+
+/* ------------------------------------------------------------------
+   2. Reset & Base
+   ------------------------------------------------------------------ */
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html {
+  font-size: var(--font-size-base);
+  line-height: var(--line-height-base);
+  -webkit-text-size-adjust: 100%;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  /* Pin native controls (checkboxes, scrollbars) to the app's own theme
+     toggle, not the OS — otherwise a light app on a dark OS renders them dark */
+  color-scheme: light;
+}
+
+/* App frame: the page itself never scrolls — each pane is its own scroll
+   container, so rubber-band bounces happen inside a pane and reveal that
+   pane's own background. The chrome (header, panel, pill) is plain fixed
+   layout that can never desync. */
+html,
+body {
+  height: 100%;
+}
+
+body {
+  font-family: var(--font-body);
+  color: var(--color-text);
+  background-color: var(--color-bg);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+a {
+  color: var(--color-accent);
+  text-decoration: none;
+}
+a:hover {
+  text-decoration: underline;
+}
+
+img,
+svg {
+  display: inline-block;
+  vertical-align: middle;
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+  color: inherit;
+  border: none;
+  background: none;
+  outline: none;
+}
+
+button {
+  cursor: pointer;
+}
+
+:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+  border-radius: var(--radius-sm);
+}
+
+::placeholder {
+  color: var(--color-text-muted);
+  opacity: 1;
+}
+
+/* Scrollbar (Webkit) */
+::-webkit-scrollbar {
+  width: var(--scrollbar-width);
+  height: var(--scrollbar-width);
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--color-border);
+  border-radius: var(--radius-pill);
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--color-text-muted);
+}
+
+
+/* ------------------------------------------------------------------
+   3. Header
+   ------------------------------------------------------------------ */
+
+.top-bar {
+  position: relative;
+  flex: 0 0 auto;
+  z-index: 100;
+  background-color: var(--color-bg);
+}
+
+.app-header {
+  display: flex;
+  align-items: center;
+  height: var(--header-height);
+  padding: 0 16px;
+  background-color: var(--color-bg);
+  border-bottom: 1px solid var(--color-border-subtle);
+}
+
+.header-left,
+.header-right {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.header-left {
+  min-width: 120px;
+  flex-shrink: 1;
+}
+
+.header-center {
+  flex: 1 1 auto;
+  min-width: 120px;
+  display: flex;
+  justify-content: center;
+  padding: 0 16px;
+}
+
+.header-right {
+  min-width: 120px;
+  justify-content: flex-end;
+}
+
+.app-title {
+  flex-shrink: 0;
+  font-size: var(--font-size-md);
+  line-height: var(--line-height-md);
+  font-weight: 600;
+  white-space: nowrap;
+  color: var(--color-text);
+}
+
+/* Search */
+.search-wrapper {
+  width: 100%;
+  max-width: var(--search-max-width);
+  position: relative;
+}
+
+.search-input {
+  width: 100%;
+  height: 32px;
+  padding: 0 12px;
+  font-size: var(--font-size-sm);
+  background-color: var(--color-bg-secondary);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  transition: border-color var(--duration-fast) var(--ease-default),
+              box-shadow var(--duration-fast) var(--ease-default);
+}
+.search-input:focus {
+  border-color: var(--color-accent);
+  box-shadow: 0 0 0 3px var(--color-focus-ring);
+  background-color: var(--color-bg);
+}
+
+/* Icon buttons */
+.btn-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border-radius: var(--radius-md);
+  color: var(--color-text-secondary);
+  transition: color var(--duration-fast) var(--ease-default),
+              background-color var(--duration-fast) var(--ease-default);
+}
+.btn-icon:hover {
+  color: var(--color-text);
+  background-color: var(--color-bg-tertiary);
+}
+
+/* ------------------------------------------------------------------
+   4. Layout
+   ------------------------------------------------------------------ */
+
+.layout {
+  position: relative;
+  display: flex;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+/* The flow's scroll pane spans the full layout — its position never depends
+   on panel or overlay state: the panel floats above it, so the flow never
+   reflows. Bounces stay inside this pane. */
+.flow-scroll {
+  flex: 1 1 auto;
+  min-width: 0;
+  /* `scroll`, not `auto`: the (classic, styled) scrollbar's track exists
+     even when a short filtered flow has nothing to scroll, so the centered
+     column never shifts sideways. The track is transparent, so the reserved
+     strip is invisible. Works everywhere, unlike scrollbar-gutter. */
+  overflow-y: scroll;
+  /* Keep vertical gestures latched to this pane even when they start at its
+     edge — without this, edge-started gestures chain to the (unscrollable)
+     page and the pane never rubber-bands, unlike the panel. Y-axis only:
+     containing x would swallow the browser's swipe back/forward gesture. */
+  overscroll-behavior-y: contain;
+}
+
+.flow {
+  max-width: var(--flow-max-width);
+  margin: 0 auto;
+  padding: 0 var(--flow-pad-x) 64px var(--flow-gutter);
+}
+
+
+/* ------------------------------------------------------------------
+   6. Side Panel
+   ------------------------------------------------------------------ */
+
+/* The panel floats above the flow — it never pushes it */
+.side-panel {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: var(--side-panel-width);
+  z-index: 90;
+  background-color: var(--color-bg);
+  border-left: 1px solid var(--color-border-subtle);
+  box-shadow: -4px 0 16px var(--color-shadow-lg);
+  transform: translateX(100%);
+  transition: transform var(--duration-normal) var(--ease-default);
+  overflow: hidden;
+}
+
+.side-panel[hidden] {
+  /* Override browser default display:none so transform can animate; the
+     visibility keeps the off-screen controls out of the tab order */
+  display: block !important;
+  pointer-events: none;
+  visibility: hidden;
+}
+
+.side-panel.is-open {
+  transform: translateX(0);
+  pointer-events: auto;
+}
+
+/* No header stripe — the summary's own title identifies the entity; the
+   retract and close buttons float over the corner */
+.side-panel-actions {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  display: flex;
+  gap: 2px;
+  z-index: 1;
+}
+
+/* The instance summary is not a filter — nothing to clear, so no close
+   button; the panel retracts to the pill instead */
+.side-panel.is-instance .side-panel-close {
+  display: none;
+}
+
+/* Drag the panel's left edge to resize */
+.side-panel-resize {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 6px;
+  cursor: col-resize;
+  z-index: 2;
+  touch-action: none;
+}
+.side-panel-resize:hover {
+  background: var(--color-accent-subtle-bg);
+}
+.side-panel-resize:focus-visible {
+  outline-offset: -2px;
+  border-radius: 0;
+}
+/* The panel's transition covers transform only, so live width tracking is
+   always instant — fold/unfold slides stay animated even mid-drag. */
+body.is-panel-resizing {
+  cursor: col-resize;
+  user-select: none;
+}
+
+/* Double-click snap to the home width animates the width change too */
+.side-panel.is-snapping {
+  transition: transform var(--duration-normal) var(--ease-default),
+              width var(--duration-normal) var(--ease-default);
+}
+
+.side-panel-body {
+  height: 100%;
+  padding: 16px;
+  overflow-y: auto;
+  /* The panel scrolls in isolation — reaching its end never scrolls the flow */
+  overscroll-behavior-y: contain;
+}
+
+/* Keep the summary title clear of the floating buttons */
+.side-panel-body .entity-title {
+  padding-right: 64px;
+}
+
+/* Retracted panel: a docked pill keeps the active filter visible —
+   click to expand, × to clear */
+.filter-pill {
+  position: absolute;
+  top: 12px;
+  right: 0;
+  z-index: 89;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 4px 4px 4px 8px;
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  border-right: none;
+  border-radius: var(--radius-pill) 0 0 var(--radius-pill);
+  box-shadow: -2px 2px 8px var(--color-shadow-lg);
+  /* Slides in from the viewport edge; the offset clears the shadow */
+  transform: translateX(calc(100% + 12px));
+  transition: transform var(--duration-normal) var(--ease-default);
+}
+.filter-pill[hidden] {
+  /* Override browser default display:none so transform can animate; the
+     visibility keeps the off-screen buttons out of the tab order */
+  display: flex !important;
+  pointer-events: none;
+  visibility: hidden;
+}
+.filter-pill.is-visible {
+  transform: translateX(0);
+}
+.filter-pill .tag {
+  font-size: var(--font-size-xs);
+  padding: 3px 8px;
+}
+.filter-pill-label {
+  max-width: 200px;
+}
+.filter-pill-clear {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  font-size: 14px;
+  line-height: 1;
+  color: var(--color-text-secondary);
+  border-radius: 50%;
+}
+.filter-pill-clear:hover {
+  color: var(--color-text);
+  background-color: var(--color-bg-tertiary);
+}
+
+
+/* ------------------------------------------------------------------
+   6b. Document reader — full project/action bodies and assets.
+   An overlay reading surface: constant size regardless of content,
+   dimmed flow around it, dismissed by clicking outside.
+   ------------------------------------------------------------------ */
+
+.doc-backdrop,
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  width: 100vw;
+  height: 100dvh;
+  max-width: none;
+  max-height: none;
+  padding: 0;
+  margin: 0;
+  border: 0;
+  color: var(--color-text);
+  align-items: center;
+  justify-content: center;
+  background-color: var(--color-backdrop);
+  opacity: 0;
+  display: none;
+  transition: opacity var(--duration-normal) var(--ease-default),
+    display var(--duration-normal) allow-discrete,
+    overlay var(--duration-normal) allow-discrete;
+}
+.doc-backdrop[open], .modal-backdrop[open] { display: flex; }
+.doc-backdrop[hidden], .modal-backdrop[hidden] { display: none !important; }
+.doc-backdrop.is-visible, .modal-backdrop.is-visible { opacity: 1; }
+.doc-backdrop::backdrop, .modal-backdrop::backdrop { background: transparent; }
+
+.doc-window {
+  position: relative;
+  /* Sized so the content column lands at exactly --flow-content-width: the
+     padding, the always-present scrollbar track, and the 1px borders all sit
+     outside it, matching the flow, whose scrollbar is likewise outside its column. */
+  width: calc(var(--flow-content-width) + 2 * var(--doc-pad-x) + var(--scrollbar-width) + 2px);
+  height: calc(100vh - 96px);   /* a reading surface, not a content-sized popup */
+  display: flex;
+  flex-direction: column;
+  background-color: var(--color-bg);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  box-shadow: 0 12px 48px var(--color-shadow-lg);
+}
+
+.doc-close {
+  position: absolute;
+  top: 12px;
+  right: 16px;
+  z-index: 1;
+}
+
+.doc-body {
+  flex: 1 1 auto;
+  /* `scroll`, not `auto`: the 8px track is always reserved so the content
+     column keeps its width whether or not the document scrolls (as the flow does). */
+  overflow-y: scroll;
+  overscroll-behavior-y: contain;
+  padding: 40px var(--doc-pad-x) 64px;
+}
+.doc-body .entity-view {
+  max-width: var(--flow-content-width);
+  margin: 0 auto;
+}
+.doc-body .entity-title {
+  font-size: var(--font-size-xl);
+  line-height: var(--line-height-xl);
+  margin-bottom: 16px;
+}
+
+.doc-window:has(.asset-webpage) {
+  width: min(1200px, calc(100vw - 48px));
+}
+.doc-body:has(.asset-webpage) .entity-view {
+  max-width: none;
+}
+
+
+/* ------------------------------------------------------------------
+   6c. Detail views (summary panel, documents, related entities)
+   ------------------------------------------------------------------ */
+
+.entity-title {
+  font-size: var(--font-size-lg);
+  line-height: var(--line-height-lg);
+  font-weight: 600;
+  margin-bottom: 8px;
+  overflow-wrap: anywhere;
+}
+
+/* Type icon in front of the title, colored by entity type */
+.entity-title-icon {
+  display: inline-flex;
+  margin-right: 6px;
+  vertical-align: -2px;
+}
+.entity-title-icon svg {
+  width: 18px;
+  height: 18px;
+}
+.entity-title-icon.icon-project  { color: var(--color-tag-project-fg); }
+.entity-title-icon.icon-action   { color: var(--color-tag-action-fg); }
+.entity-title-icon.icon-entry    { color: var(--color-tag-entry-fg); }
+.entity-title-icon.icon-asset    { color: var(--color-text-secondary); }
+.entity-title-icon.icon-instance { color: var(--color-text-secondary); }
+
+/* With a detail target the whole title — icon, name, arrow — is one control
+   opening the scope's record in the reader: the control is the identity it
+   opens, the title reading as the entity's own tag writ large. Hover lifts
+   its opacity — the pill's hover — and lights the arrow */
+.title-open {
+  padding: 0;
+  text-align: left;
+  max-width: 100%;
+  transition: opacity var(--duration-fast) var(--ease-default);
+}
+.title-open:hover {
+  opacity: 0.8;
+}
+.title-open:hover .title-detail {
+  color: var(--color-accent);
+}
+
+/* The open-arrow trailing the title text — the detail affordance riding the
+   identity it opens. Raised and small like a superscript, hugging the name's
+   top-right corner the way an external-link marker does. inline-flex, so the
+   box hugs the glyph and the raise is exact */
+.title-detail {
+  display: inline-flex;
+  margin-left: 4px;
+  color: var(--color-text-muted);
+  vertical-align: 6px;
+}
+.title-detail svg {
+  width: 12px;
+  height: 12px;
+}
+
+.detail-fields {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 2px 12px;
+  margin: 8px 0 12px;
+  font-size: var(--font-size-sm);
+}
+.detail-fields dt {
+  color: var(--color-text-muted);
+}
+/* Code-like values (ids, versions, config entries) keep the mono face */
+.detail-fields dd.field-mono {
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
+}
+
+/* Status pill row — each pill a lifecycle state or an exception, in the
+   entity-pill style: the type accent field wearing the same marks as the
+   entity's own chips (the due ring, the calendar-slot glyph, the closed mute —
+   shared rules under "Tag pills"). No type icon; the title above carries
+   it. */
+.status-pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+.status-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 10px;
+  border-radius: var(--radius-pill);
+  font-size: var(--font-size-sm);
+  font-weight: 500;
+}
+.status-pill.tag-project { background: var(--color-tag-project-bg); color: var(--color-tag-project-fg); }
+.status-pill.tag-action  { background: var(--color-tag-action-bg);  color: var(--color-tag-action-fg); }
+/* An exception pill flags an anomaly (scheduled but synced to no calendar),
+   not a lifecycle state: a dashed outline on no field — an absence — in the
+   muted ink. Its presence is the flag; the normal state shows no pill. */
+.status-pill.pill-exception {
+  background: transparent;
+  border: 1px dashed var(--color-border);
+  padding: 1px 9px;
+  color: var(--color-text-muted);
+}
+/* The glyph keeps the tags' icon-to-text ratio at the status pill's size */
+.status-pill .ref-status svg { width: 10px; height: 10px; }
+
+.detail-body {
+  margin-top: 12px;
+}
+
+/* Authored one-line description from the index, below the pills */
+.summary-description {
+  margin: 0 0 8px;
+  font-size: var(--font-size-sm);
+  color: var(--color-text-muted);
+}
+
+/* The facts line closing the header — the stats as icon-and-count pairs
+   (the type icon in its full color, the count in the mono face), the
+   updated text trailing them in the text face. The line shares one line box
+   and every child centers geometrically — icon-first flex pairs export
+   unusable baselines, so baseline alignment would let each pair ride at its
+   own height. One wrapping row, so a narrow panel drops the updated text to
+   its own line rather than truncating. */
+.summary-facts {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px 12px;
+  margin: 0 0 8px;
+  font-size: var(--font-size-xs);
+  line-height: var(--line-height-xs);
+  color: var(--color-text-muted);
+}
+.summary-stat {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-family: var(--font-mono);
+}
+.summary-stat .stat-icon { display: inline-flex; }
+.summary-stat .stat-icon svg { display: block; width: 11px; height: 11px; }
+.summary-stat .stat-icon.icon-project { color: var(--color-tag-project-fg); }
+.summary-stat .stat-icon.icon-action  { color: var(--color-tag-action-fg); }
+.summary-stat .stat-icon.icon-entry   { color: var(--color-tag-entry-fg); }
+
+.entity-related {
+  margin-top: 12px;
+  padding-top: 8px;
+  border-top: 1px solid var(--color-border-subtle);
+}
+
+.related-heading {
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--color-text-muted);
+  margin: 12px 0 6px;
+}
+.related-heading:first-child {
+  margin-top: 0;
+}
+
+/* Foldable detail sections (native <details>): the heading discloses its
+   content behind a plain triangle; the count in the heading still reads
+   while folded */
+.detail-section > summary.related-heading {
+  cursor: pointer;
+  list-style: none;
+  /* Re-assert the heading rhythm: as its <details>' first child the summary
+     would otherwise catch the first-in-panel zero-margin rule */
+  margin: 12px 0 6px;
+}
+.detail-section:first-child > summary.related-heading {
+  margin-top: 0;
+}
+.detail-section > summary::-webkit-details-marker {
+  display: none;
+}
+.detail-section > summary::before {
+  content: '▸';
+  display: inline-block;
+  width: 12px;
+  color: var(--color-text-muted);
+}
+.detail-section[open] > summary::before {
+  content: '▾';
+}
+.detail-section > summary:hover {
+  color: var(--color-text-secondary);
+}
+
+/* A section's count, spaced after its heading title */
+.related-heading .heading-count {
+  margin-left: 8px;
+  color: var(--color-text-muted);
+}
+
+.related-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.related-item {
+  padding: 3px 0;
+  font-size: var(--font-size-sm);
+}
+
+.related-desc {
+  color: var(--color-text-muted);
+}
+
+/* The instance summary's last-update timeline: each project/backlog row
+   hangs as a node on a vertical rail, the compact age in a fixed
+   right-aligned gutter marking the rail where it changes; the pills align
+   into a column after the rail and wrapped descriptions stay clear of it.
+   The rail and node draw on the <li>'s pseudo-elements so the line spans the
+   row padding unbroken; it starts at the first node and ends at the last */
+.timeline-row {
+  display: flex;
+  align-items: baseline;
+  gap: 14px;
+}
+.timeline-row .row-when {
+  flex: none;
+  width: 36px;
+  text-align: right;
+  font-size: var(--font-size-xs);
+  color: var(--color-text-muted);
+}
+.timeline-list .related-item {
+  position: relative;
+}
+.timeline-list .related-item::before {
+  content: '';
+  position: absolute;
+  left: 43px;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: var(--color-border);
+}
+.timeline-list .related-item:first-child::before {
+  top: 12px;
+}
+.timeline-list .related-item:last-child::before {
+  bottom: auto;
+  height: 12px;
+}
+.timeline-list .related-item:only-child::before {
+  display: none;
+}
+.timeline-list .related-item::after {
+  content: '';
+  position: absolute;
+  left: 41px;
+  top: 9px;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--color-text-muted);
+}
+/* A node marks each row that prints a date; a row inside a same-date run
+   lets the rail pass through unmarked */
+.timeline-list .related-item:not(:has(.row-when:not(:empty)))::after {
+  display: none;
+}
+
+/* The future stretch of a dated timeline — everything below the now tick —
+   carries the now color and draws dotted, not yet happened. The dots are a
+   repeating gradient, not a dotted border: the browser fits whole border
+   dots to each row and drops the partial ones, opening holes at row joins */
+.timeline-list {
+  --rail-dots: repeating-linear-gradient(
+    to bottom, var(--color-accent) 0 2px, transparent 2px 5px);
+}
+.timeline-list .related-item.timeline-future::before {
+  background: var(--rail-dots);
+}
+.timeline-list .related-item.timeline-future::after {
+  background: var(--color-accent);
+}
+.timeline-future .row-when {
+  color: var(--color-accent);
+}
+
+/* When future rows follow, the now row's rail splits at its tick: the
+   past's solid grey runs down into the tick, the dotted stretch continues
+   beneath it; a tick leading the list (nothing past) rides the dots whole */
+.timeline-list .timeline-now:has(+ .timeline-future)::before {
+  background: var(--rail-dots);
+}
+.timeline-list .related-item + .timeline-now:has(+ .timeline-future)::before {
+  background:
+    linear-gradient(var(--color-border), var(--color-border))
+      top / 1px 12px no-repeat,
+    var(--rail-dots) bottom / 1px calc(100% - 10px) no-repeat;
+}
+
+/* The now tick: where a dated timeline crosses the present — a wider bar on
+   the rail in place of a node, its gutter label matching */
+.timeline-list .related-item.timeline-now::after {
+  left: 39px;
+  top: 10px;
+  width: 9px;
+  height: 3px;
+  border-radius: 1.5px;
+  background: var(--color-accent);
+}
+.timeline-now .row-when {
+  color: var(--color-accent);
+}
+
+/* Timeline fold buttons sit in the pill column (gutter + rail + gap) */
+.timeline-more {
+  margin-left: 50px;
+}
+
+/* Project hierarchy: nested related lists, each level indented behind a guide */
+.hierarchy-list .hierarchy-list {
+  margin-left: 7px;
+  padding-left: 12px;
+  border-left: 1px solid var(--color-border-subtle);
+}
+
+.related-more {
+  background: none;
+  border: none;
+  padding: 2px 0;
+  font-size: var(--font-size-xs);
+  color: var(--color-text-muted);
+  cursor: pointer;
+}
+.related-more:hover {
+  color: var(--color-accent);
+  text-decoration: underline;
+}
+
+/* Asset rows in related lists */
+.asset-row {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  cursor: pointer;
+  color: var(--color-accent);
+}
+.asset-row:hover .asset-row-title {
+  text-decoration: underline;
+}
+.asset-row svg {
+  vertical-align: -1px;
+  flex-shrink: 0;
+  align-self: center;
+}
+
+/* Asset path line under a document title */
+.asset-path {
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
+  color: var(--color-text-muted);
+  margin-bottom: 12px;
+  overflow-wrap: anywhere;
+}
+.artifact-parent {
+  margin-bottom: 4px;
+  font-size: var(--font-size-xs);
+}
+.artifact-link {
+  overflow-wrap: anywhere;
+}
+.asset-plain {
+  white-space: pre-wrap;
+}
+.asset-media {
+  display: block;
+  max-width: 100%;
+}
+img.asset-media {
+  height: auto;
+  margin: 0 auto;
+  border-radius: var(--radius-sm);
+}
+.asset-pdf, .asset-webpage {
+  width: 100%;
+  height: 70vh;
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-sm);
+}
+.asset-webpage {
+  background: white;
+}
+.asset-audio {
+  width: 100%;
+}
+.asset-binary {
+  color: var(--color-text-secondary);
+}
+.asset-download {
+  display: inline-block;
+  margin-top: 8px;
+}
+
+/* Asset links inside rendered markdown */
+.rendered-content .asset-link svg {
+  vertical-align: -1px;
+  margin-right: 3px;
+}
+
+
+/* ------------------------------------------------------------------
+   7. Entry Cards — two columns: timeline | content
+   ------------------------------------------------------------------ */
+
+.entry-card {
+  display: flex;
+  align-items: first baseline;
+  padding: 12px 0;
+  border-bottom: 1px solid var(--color-border-subtle);
+  transition: opacity var(--duration-fast) var(--ease-default);
+}
+.entry-card:last-child {
+  border-bottom: none;
+}
+
+/* Week seam: on the first entry of each Mon–Sun week (the files' native
+   grouping), the divider above extends across the gutter — a timeline cut
+   in the margin, no height added */
+.entry-card.week-start {
+  position: relative;
+}
+.entry-card.week-start::before {
+  content: '';
+  position: absolute;
+  top: -1px;
+  left: calc(-1 * var(--flow-gutter));
+  right: 0;
+  height: 1px;
+  background: var(--color-border);
+  /* Scrubbed by updateLatch as the seam approaches the readout: a soft
+     transparency edge sweeps left to right across the gutter extension,
+     retracting it before the readout's backdrop could occlude it partially;
+     the content-column part stays and exits under the pane edge like any
+     divider. --seam-dissolve runs 0 (full seam) to 1 (gutter cleared); the
+     sweep is sized in px to the gutter plus its 60px soft edge, so
+     the visible retraction spends the whole scrub zone on the gutter. */
+  --seam-sweep: calc(var(--flow-gutter) + 60px);
+  --seam-mask: linear-gradient(to right,
+    transparent calc(var(--seam-dissolve, 0) * var(--seam-sweep) - 60px),
+    black calc(var(--seam-dissolve, 0) * var(--seam-sweep)));
+  mask-image: var(--seam-mask);
+  -webkit-mask-image: var(--seam-mask);
+}
+
+/* Filter-transition depth: survivors (movers) paint above arrivals, arrivals
+   above departures (the ghost overlay) — the arriving content comes forward.
+   Every arrival fades in from transparent, so the first frame still reads as
+   the old view (departures show through until arrivals materialize over
+   them); every departure fades out to transparent, dissolving whether it
+   tucks on-screen or exits past the edge. All of it stays under the readout
+   latch (z 20) and the side panel and pill. The ghost overlay clips to the
+   flow pane. Arrivals and ghosts carry their per-seam stacking
+   (shortest-flight-on-top) as an inline z-index. Every card in flight paints
+   an opaque surface — coverage is the mechanism (an arrival hides what it
+   lands over as it fades in); the surface color matches the pane, so it is
+   invisible at rest. */
+.flow-ghosts {
+  position: fixed;
+  overflow: hidden;
+  pointer-events: none;
+  z-index: 0;
+}
+.flow-ghost {
+  position: absolute;
+  background-color: var(--color-bg);
+}
+.entry-card.flow-mover {
+  position: relative;
+  z-index: 11;
+  background-color: var(--color-bg);
+}
+.entry-card.flow-arrival {
+  position: relative;
+  background-color: var(--color-bg);
+}
+/* The time and marker column renders in the flow's left gutter padding,
+   outside the card's border box, so the card's background alone leaves the
+   gutter transparent — dates would show through a covering card. Each
+   in-flight card extends its opaque surface across the gutter with a
+   pseudo-element: painted under the card's own content and seam line
+   (negative z inside the card's stacking context — all three classes
+   create one) but over everything stacked beneath the card. */
+.entry-card.flow-mover::after,
+.entry-card.flow-arrival::after,
+.flow-ghost::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: calc(-1 * var(--flow-gutter));
+  width: var(--flow-gutter);
+  background-color: var(--color-bg);
+  z-index: -1;
+}
+
+/* Flash when the flow jumps to an entry reference */
+.entry-card.is-target {
+  animation: entry-flash 1.8s var(--ease-default);
+}
+@keyframes entry-flash {
+  0%, 30% { background-color: var(--color-accent-subtle-bg); }
+  100% { background-color: transparent; }
+}
+
+/* Left gutter: each entry carries only its time — dates live in the markers */
+.entry-margin {
+  display: flex;
+  align-items: baseline;
+  gap: 4px;
+  flex-shrink: 0;
+  width: var(--flow-gutter);
+  margin-left: calc(-1 * var(--flow-gutter));
+  padding-right: 12px;
+  justify-content: flex-end;
+  order: -1;
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
+  white-space: nowrap;
+}
+
+/* The time doubles as the entry's permalink handle: muted at rest, accented
+   on hover/focus, clicking scrolls the entry to the top and deep-links it. */
+.em-time {
+  color: var(--color-text-muted);
+  text-decoration: none;
+  cursor: pointer;
+  transition: color var(--duration-fast) var(--ease-default);
+}
+.em-time:hover,
+.em-time:focus-visible {
+  color: var(--color-accent);
+  text-decoration: none;
+}
+
+/* Date markers: on the first (latest) entry of each day, sharing the
+   margin's first line, so a day boundary adds no height to the flow. The
+   marker pins to the gutter's left edge (the time keeps the right), showing
+   only the units that changed at the boundary — bare day number within a
+   month, month + day at a month boundary, year + month + day at a year
+   boundary. */
+.date-marker {
+  display: flex;
+  flex-shrink: 0;
+  align-items: baseline;
+  gap: 0;
+  margin-right: auto;
+  font-weight: 600;
+}
+/* Fixed-width unit columns (exact in the mono font): markers and the latch
+   share them, so dates align down the gutter and across the latch takeover */
+.dm-date-part { flex-shrink: 0; }
+.dm-year, .dm-month { color: var(--color-text); }
+.dm-day { text-align: right; color: var(--color-text-secondary); }
+.dm-literal { white-space: pre; }
+
+/* The flow's first marker only holds its place in the margin — the readout,
+   pinned above it from scroll 0, is its rendering */
+.date-marker.is-first {
+  visibility: hidden;
+}
+
+/* The latched readout: a zero-height sticky row at the top of the flow
+   column, so it overlays the gutter without occupying flow space. The chip
+   shows the full date of the entries at the pane's top edge, aligned where
+   the markers sit. The chip never moves; its solid backdrop is exactly the
+   text row, and the unit clip windows end flush with its bottom edge, so a
+   marker passing behind it reappears seamlessly as the chip's riding copy —
+   an odometer window, no fade. It spans only the date columns, so entry
+   times scroll past uncovered. */
+.date-latch {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  height: 0;
+  width: var(--flow-gutter);
+  margin-left: calc(-1 * var(--flow-gutter));
+}
+/* Kept laid out while hidden — the marker-to-chip handoff threshold reads
+   the chip's height before the first show */
+.date-latch[hidden] {
+  display: block !important;
+  visibility: hidden;
+}
+.date-latch-chip {
+  width: fit-content;
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  white-space: nowrap;
+  cursor: pointer;
+  /* pointer-events land only on the chip's glyphs; the zero-height latch and
+     its padding stay click-through so the gutter behind reads normally */
+  pointer-events: auto;
+}
+.date-latch-chip:hover {
+  color: var(--color-accent);
+}
+.date-latch-chip:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+  border-radius: var(--radius-sm);
+}
+.latch-calendar-icon { display: none; }
+
+/* The jump-to-date popover, floated under the latch chip. */
+.date-jump {
+  position: fixed;
+  z-index: 150;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 8px;
+  width: 232px;
+  max-width: calc(100vw - 16px);
+  max-height: calc(100vh - 16px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+  font-size: var(--font-size-sm);
+}
+.date-jump > * {
+  flex-shrink: 0;
+}
+/* The live region stays available to assistive technology while empty,
+   without adding a blank row to the navigator. */
+.date-jump-status:empty {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+}
+
+/* Quick navigator: period segments on the left, up/down steppers on the right. */
+.date-jump-nav {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.date-jump-units {
+  display: flex;
+  flex: 1;
+  gap: 2px;
+  padding: 2px;
+  background: var(--color-bg-secondary);
+  border-radius: var(--radius-sm);
+}
+.date-jump-unit {
+  flex: 1;
+  padding: 4px 0;
+  background: none;
+  border: none;
+  border-radius: 3px;
+  color: var(--color-text-muted);
+  font: inherit;
+  font-size: var(--font-size-xs);
+  cursor: pointer;
+}
+.date-jump-unit:hover {
+  color: var(--color-text);
+}
+.date-jump-unit.is-active {
+  background: var(--color-surface);
+  color: var(--color-text);
+  font-weight: 600;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.12);
+}
+.date-jump-steppers {
+  display: flex;
+  gap: 4px;
+}
+.date-jump-step {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  background: none;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  color: var(--color-text);
+  cursor: pointer;
+}
+.date-jump-step:hover {
+  background: var(--color-bg-secondary);
+}
+/* Rule dividing the quick navigator from the date selection below. */
+.date-jump-divider {
+  height: 0;
+  margin: 0;
+  border: none;
+  border-top: 1px solid var(--color-border);
+}
+
+/* Date entry: label above the ISO date field. */
+.date-jump-entry {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  color: var(--color-text-muted);
+  font-size: var(--font-size-xs);
+}
+.date-jump-input {
+  padding: 4px 6px;
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  color: var(--color-text);
+  font: inherit;
+}
+.date-jump-input.is-invalid {
+  border-color: #e5534b;
+}
+
+/* Inline calendar, always expanded. */
+.date-jump-cal {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.cal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.cal-nav {
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  background: none;
+  border: none;
+  border-radius: var(--radius-sm);
+  color: var(--color-text);
+  font-size: var(--font-size-md);
+  line-height: 1;
+  cursor: pointer;
+}
+.cal-nav:hover {
+  background: var(--color-bg-secondary);
+}
+.cal-title {
+  font-weight: 600;
+  font-size: var(--font-size-sm);
+}
+.cal-weekdays,
+.cal-grid {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 2px;
+}
+.cal-weekdays span {
+  text-align: center;
+  color: var(--color-text-muted);
+  font-size: 10px;
+  text-transform: uppercase;
+}
+.cal-day {
+  position: relative;
+  aspect-ratio: 1;
+  padding: 0;
+  background: none;
+  border: none;
+  border-radius: var(--radius-sm);
+  color: var(--color-text);
+  font: inherit;
+  font-size: var(--font-size-xs);
+  cursor: pointer;
+}
+.cal-day:hover {
+  background: var(--color-bg-secondary);
+}
+/* The date in the field (what a jump would land on) — filled. */
+.cal-day.is-selected {
+  background: var(--color-accent);
+  color: var(--color-bg);
+  font-weight: 600;
+}
+/* Today — a ring, distinct from the filled selection (both can land together). */
+.cal-day.is-today {
+  box-shadow: inset 0 0 0 1px var(--color-accent);
+  font-weight: 600;
+}
+.cal-day.is-selected.is-today {
+  box-shadow: inset 0 0 0 1px var(--color-bg);
+}
+/* The day the flow is currently showing — a dot beneath the number. */
+.cal-day.is-current::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  bottom: 2px;
+  transform: translateX(-50%);
+  width: 3px;
+  height: 3px;
+  border-radius: 50%;
+  background: var(--color-accent);
+}
+.cal-day.is-selected.is-current::after {
+  background: var(--color-bg);
+}
+
+.latch-date-row {
+  display: flex;
+  align-items: baseline;
+  gap: 0;
+  /* The readout row sits where the first entry's margin line rests at the
+     top of the flow — updateLatch measures that offset and overrides this
+     initial value inline; the padding also extends the backdrop up to the
+     pane edge so departing markers pass behind it the whole way out. */
+  padding-top: 12px;
+  background: var(--color-bg);
+}
+.dm-weekday {
+  min-width: 3ch;
+  font-weight: 400;
+  color: var(--color-text-muted);
+}
+.latch-unit {
+  display: grid;
+  justify-items: start;
+  overflow: hidden;
+  /* Clip hugs the glyphs at the top, not the line box (which has ~5px of
+     leading), so the rolling pair can sit one glyph-height apart and read
+     as a connected reel; the bottom ends flush with the chip's backdrop so
+     glyphs passing behind it reappear with no seam. Tuned for 600 11px
+     ui-monospace: glyphs incl. month descenders span ~5.1–15.8px of the
+     20px box. */
+  clip-path: inset(4.5px 0 0);
+}
+.latch-unit > span {
+  grid-area: 1 / 1;
+}
+
+/* Center column: content */
+.entry-body {
+  flex: 1;
+  min-width: 0;
+  order: 0;
+}
+
+/* Tag row above entry content */
+.entry-tag-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+.entry-tag-row + .entry-content:not(:empty) {
+  margin-top: 6px;
+}
+
+.tag-group {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+}
+
+/* Tag pills */
+.tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 2px 6px;
+  font-size: 10px;
+  font-weight: 500;
+  line-height: 1.4;
+  border-radius: var(--radius-pill);
+  cursor: pointer;
+  user-select: none;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
+  flex-shrink: 1;
+  transition: opacity var(--duration-fast) var(--ease-default);
+}
+a.tag:hover { text-decoration: none; }
+.tag svg { width: 10px; height: 10px; flex-shrink: 0; }
+.tag-text { overflow: hidden; text-overflow: ellipsis; }
+.tag-sm { height: 20px; padding: 0 5px; max-width: none; flex-shrink: 0; }
+.tag:hover,
+.tag.is-cohovered {
+  outline: 1px solid var(--color-border);
+  outline-offset: 1px;
+}
+
+/* The active filter's own tag is marked in the flow: pills (and a +N bubble
+   hiding the tag) fill with a softened solid of their type color; inline
+   mentions get a soft background fill of their type color — background and
+   shadow only, so text metrics never change and nothing shifts */
+.tag-project.is-active,
+.tag-bubble-project.is-active {
+  background-color: color-mix(in srgb, var(--color-tag-project-fg) 95%, var(--color-bg));
+  color: var(--color-bg);
+}
+.tag-action.is-active,
+.tag-bubble-action.is-active {
+  background-color: color-mix(in srgb, var(--color-tag-action-fg) 95%, var(--color-bg));
+  color: var(--color-bg);
+}
+.tag-entry.is-active {
+  background-color: color-mix(in srgb, var(--color-tag-entry-fg) 95%, var(--color-bg));
+  color: var(--color-bg);
+}
+.inline-tag.is-active {
+  border-radius: 3px;
+}
+/* The box-shadow spread pads the highlight outward without touching layout */
+.inline-tag-project.is-active {
+  background-color: var(--color-tag-project-bg);
+  box-shadow: 0 0 0 2px var(--color-tag-project-bg);
+}
+.inline-tag-action.is-active {
+  background-color: var(--color-tag-action-bg);
+  box-shadow: 0 0 0 2px var(--color-tag-action-bg);
+}
+.inline-tag-entry.is-active {
+  background-color: var(--color-tag-entry-bg);
+  box-shadow: 0 0 0 2px var(--color-tag-entry-bg);
+}
+
+.tag-project {
+  background-color: var(--color-tag-project-bg);
+  color: var(--color-tag-project-fg);
+}
+.tag-action {
+  background-color: var(--color-tag-action-bg);
+  color: var(--color-tag-action-fg);
+}
+.tag-entry,
+.tag-artifact {
+  background-color: var(--color-tag-entry-bg);
+  color: var(--color-tag-entry-fg);
+}
+/* The instance pill — the whole timeline, not an entity type; neutral grey */
+.tag-instance {
+  background-color: var(--color-tag-entry-bg);
+  color: var(--color-tag-entry-fg);
+}
+/* The search dropdown's jump-to-date rows — a moment, not an entity; neutral */
+.tag-date {
+  background-color: var(--color-bg-secondary);
+  color: var(--color-text-muted);
+}
+
+/* Inline tags — colored references that flow with text */
+.inline-tag {
+  display: inline;
+  font-weight: inherit;
+  cursor: pointer;
+  line-height: inherit;
+  transition: opacity var(--duration-fast) var(--ease-default);
+}
+.inline-tag svg {
+  width: 10px;
+  height: 10px;
+  vertical-align: -1px;
+  margin-right: 2px;
+}
+.inline-tag .tag-text { }
+/* Hover marks retain full ink contrast, including on a selected fill. */
+.inline-tag:hover,
+.inline-tag.is-cohovered { text-decoration-line: underline; }
+.inline-tag-project {
+  color: var(--color-tag-project-fg);
+}
+.inline-tag-action {
+  color: var(--color-tag-action-fg);
+}
+.inline-tag-entry {
+  color: var(--color-tag-entry-fg);
+}
+.inline-tag-date, .rendered-content a.inline-tag-date {
+  color: var(--color-tag-entry-fg);
+  background: var(--color-bg-secondary);
+  border-radius: 3px;
+  padding: 1px 4px;
+  box-decoration-break: clone;
+  -webkit-box-decoration-break: clone;
+}
+
+/* The calendar-slot glyph — one grey mark, two faces: a dashed empty circle
+   while a time was never set (backlog), a clock face with hands once a set
+   time lapsed (slipped) — either way waiting to be scheduled. Upcoming work
+   and live projects are the clean pill; urgency is the due ring below,
+   closed work the mute below that. */
+.ref-status {
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+  color: var(--color-status-neutral);
+}
+.ref-status svg { width: 8px; height: 8px; }
+/* On the active filter's solid fill the glyph joins the fill's ink */
+.tag.is-active .ref-status { color: inherit; }
+
+/* A deadline rings the pill — urgency drawn as a circle, not a glyph, so it
+   composes with the slot glyph rather than taking its place. The ring is
+   the same weight whether or not the pill is highlighted — the fill marks
+   the highlight, the ring only the deadline (a +N bubble standing in for a
+   hidden active due tag carries it too). */
+.tag.tag-status-due,
+.tag-bubble.tag-status-due,
+.status-pill.tag-status-due { box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--color-status-due) 45%, transparent); }
+/* An inline mention has no field to ring, and a box around flowing text
+   breaks across line wraps — so the ring flattens into its bottom stroke: a
+   thin underline in the same due gold, at the same weight highlighted or not.
+   It reads as the same mark laid into the text line. */
+.inline-tag.tag-status-due {
+  text-decoration-line: underline;
+  text-decoration-color: color-mix(in srgb, var(--color-status-due) 45%, transparent);
+  text-decoration-thickness: 1px;
+  text-underline-offset: 2px;
+}
+
+/* A breached deadline — overdue — escalates the same signal instead of
+   minting a new mark: the ring turns the overdue red and bleeds into the
+   field as a soft wash, the name's ink reddening with it, while the icon
+   keeps the full type color — the vivid reference the alarm reads against.
+   An inline mention, field-less as ever, reddens its ink and underline. */
+.tag.tag-status-overdue,
+.tag-bubble.tag-status-overdue,
+.status-pill.tag-status-overdue {
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--color-status-overdue) 60%, transparent);
+  background-color: color-mix(in srgb, var(--color-status-overdue) 14%, var(--color-bg));
+}
+.tag.tag-status-overdue:not(.is-active) .tag-text,
+.status-pill.tag-status-overdue .tag-text {
+  color: var(--color-status-overdue);
+}
+.inline-tag.tag-status-overdue {
+  color: var(--color-status-overdue);
+  text-decoration-line: underline;
+  text-decoration-color: color-mix(in srgb, var(--color-status-overdue) 60%, transparent);
+  text-decoration-thickness: 1px;
+  text-underline-offset: 2px;
+}
+
+/* The filter fill never downplays a breach: an overdue pill (or its stand-in
+   bubble) fills with the overdue solid instead of the type color, a mention
+   with the wash — the same shape as the closed-grey rule below. */
+.tag.is-active.tag-status-overdue,
+.tag-bubble.is-active.tag-status-overdue {
+  background-color: color-mix(in srgb, var(--color-status-overdue) 95%, var(--color-bg));
+}
+.inline-tag.is-active.tag-status-overdue {
+  background-color: color-mix(in srgb, var(--color-status-overdue) 14%, var(--color-bg));
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-status-overdue) 14%, var(--color-bg));
+}
+
+/* Closed work — a done or cancelled action, an ended project, all carrying
+   tag-status-closed — mutes: the pill field greys and the name's ink goes
+   fully grey (the secondary text tone — the entry pills' ink — quiet but
+   comfortably legible on the grey field), while the icon keeps the full type
+   color — the vivid icon is the reference the grey name mutes against, and
+   alone says what it is. Inline mentions have no field; their name takes
+   the same grey, their icon the same full color. */
+.tag.tag-status-closed:not(.is-active) .tag-text,
+.inline-tag.tag-status-closed .tag-text,
+.status-pill.tag-status-closed .tag-text {
+  color: var(--color-text-secondary);
+}
+.tag.tag-status-closed:not(.is-active),
+.status-pill.tag-status-closed { background-color: var(--color-tag-entry-bg); }
+
+/* The active filter's highlight never resurrects closed work: a closed
+   pill (or the +N bubble standing in for it) fills with the muted grey
+   solid instead of the type color, an inline mention with the entry grey —
+   the cancelled strike reads on either. */
+.tag.is-active.tag-status-closed,
+.tag-bubble.is-active.tag-status-closed {
+  background-color: color-mix(in srgb, var(--color-tag-entry-fg) 95%, var(--color-bg));
+}
+.inline-tag.is-active.tag-status-closed {
+  background-color: var(--color-tag-entry-bg);
+  box-shadow: 0 0 0 2px var(--color-tag-entry-bg);
+}
+/* A cancelled name additionally strikes through — dropped, not finished */
+.tag-status-cancelled .tag-text {
+  /* The strike drawn soft — half the ink, hairline — a calm mark, not a scribble */
+  text-decoration: line-through;
+  text-decoration-color: color-mix(in srgb, currentColor 50%, transparent);
+  text-decoration-thickness: 1px;
+}
+
+/* In running text the glyph hangs off the mention's tail */
+.inline-tag .ref-status { margin-left: 2px; }
+.inline-tag .ref-status svg { margin-right: 0; }
+
+/* Settings sections */
+.settings-section {
+  margin: 0 0 24px;
+}
+.settings-section:last-child {
+  margin-bottom: 0;
+}
+.settings-heading {
+  margin: 0 0 12px;
+  padding-bottom: 8px;
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--color-text-muted);
+  border-bottom: 1px solid var(--color-border-subtle);
+}
+
+/* Entry content (rendered markdown — GitHub Primer style) */
+.rendered-content {
+  font-size: var(--font-size-base);
+  color: var(--color-text);
+  line-height: var(--line-height-base);
+  /* Long unbreakable strings (bare URLs) wrap instead of widening the reader */
+  overflow-wrap: anywhere;
+}
+
+.rendered-content > *:first-child { margin-top: 0; }
+.rendered-content > *:last-child { margin-bottom: 0; }
+.entry-content > *:first-child { margin-top: 0; }
+.entry-content > *:last-child { margin-bottom: 0; }
+
+.rendered-content p {
+  margin-top: 0;
+  margin-bottom: 16px;
+}
+
+.rendered-content h1,
+.rendered-content h2,
+.rendered-content h3,
+.rendered-content h4,
+.rendered-content h5,
+.rendered-content h6 {
+  margin-top: 24px;
+  margin-bottom: 16px;
+  font-weight: 600;
+}
+/* Whole-pixel line heights (~1.25) for the em sizes at the 14px base */
+.rendered-content h1 { font-size: 1.6em;  line-height: 28px; }
+.rendered-content h2 { font-size: 1.35em; line-height: 24px; }
+.rendered-content h3 { font-size: 1.15em; line-height: 20px; }
+.rendered-content h4 { font-size: 1em;    line-height: 20px; }
+.rendered-content h5 { font-size: 0.95em; line-height: 16px; }
+.rendered-content h6 { font-size: 0.85em; line-height: 16px; color: var(--color-text-muted); }
+
+.rendered-content hr {
+  display: none;
+}
+
+.rendered-content code {
+  font-family: var(--font-mono);
+  font-size: 0.85em;
+  padding: 0.2em 0.4em;
+  background-color: var(--color-bg-tertiary);
+  border-radius: 6px;
+  white-space: break-spaces;
+}
+
+.rendered-content pre {
+  padding: 16px;
+  margin-top: 0;
+  margin-bottom: 16px;
+  font-family: var(--font-mono);
+  font-size: var(--font-size-sm);
+  line-height: var(--line-height-sm);
+  background-color: var(--color-bg-secondary);
+  border-radius: var(--radius-md);
+  overflow-x: auto;
+  word-wrap: normal;
+}
+.rendered-content pre code {
+  padding: 0;
+  background: none;
+  font-size: inherit;
+  border-radius: 0;
+}
+
+.mermaid-diagram {
+  margin-bottom: 16px;
+  min-width: 0;
+}
+.mermaid-output {
+  overflow-x: auto;
+  padding: 12px 0;
+}
+.mermaid-output > svg {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  margin: 0 auto;
+}
+.mermaid-source > summary {
+  width: fit-content;
+  cursor: pointer;
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-sm);
+  line-height: var(--line-height-sm);
+}
+.mermaid-source[open] > summary { margin-bottom: 8px; }
+.mermaid-source > pre { margin-bottom: 0; }
+.rendered-content .mermaid-message {
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-sm);
+  line-height: var(--line-height-sm);
+  white-space: pre-wrap;
+  margin-bottom: 8px;
+}
+.mermaid-retry {
+  margin-bottom: 8px;
+  color: var(--color-accent);
+}
+
+.rendered-content ul,
+.rendered-content ol {
+  padding-left: 2em;
+  margin-top: 0;
+  margin-bottom: 16px;
+}
+.rendered-content ul ul,
+.rendered-content ul ol,
+.rendered-content ol ul,
+.rendered-content ol ol {
+  margin-bottom: 0;
+}
+.rendered-content li {
+  margin-top: 4px;
+}
+.rendered-content li + li {
+  margin-top: 4px;
+}
+.rendered-content li > p {
+  margin-top: 16px;
+}
+
+.rendered-content blockquote {
+  padding: 0 1em;
+  margin-top: 0;
+  margin-bottom: 16px;
+  border-left: 0.25em solid var(--color-border);
+  color: var(--color-text-secondary);
+}
+.rendered-content blockquote > :first-child { margin-top: 0; }
+.rendered-content blockquote > :last-child { margin-bottom: 0; }
+
+.rendered-content table {
+  display: block;
+  width: max-content;
+  max-width: 100%;
+  /* A wide table is an x-scroller inside panes that only scroll in y: keep
+     an edge pan from chaining into the browser's swipe back/forward */
+  overscroll-behavior-x: contain;
+  margin-top: 0;
+  margin-bottom: 16px;
+  border-spacing: 0;
+  border-collapse: collapse;
+  overflow: auto;
+  font-size: var(--font-size-sm);
+}
+.rendered-content table th,
+.rendered-content table td {
+  padding: 6px 13px;
+  border: 1px solid var(--color-border);
+  /* Column floor — a wide table scrolls rather than squeezes (spec.md,
+     Visual design) */
+  min-width: 10em;
+}
+.rendered-content table th {
+  font-weight: 600;
+  background-color: var(--color-bg-secondary);
+}
+.rendered-content table tr {
+  background-color: var(--color-bg);
+  border-top: 1px solid var(--color-border-subtle);
+}
+.rendered-content table tr:nth-child(2n) {
+  background-color: var(--color-bg-secondary);
+}
+
+.rendered-content img {
+  max-width: 100%;
+  height: auto;
+  border-radius: var(--radius-md);
+}
+
+.rendered-content strong {
+  font-weight: 600;
+}
+
+.rendered-content a {
+  color: var(--color-accent);
+  text-decoration: none;
+}
+.rendered-content a:not(.inline-tag):not(.tag) {
+  text-decoration: underline;
+}
+.rendered-content a:hover {
+  text-decoration: underline;
+}
+
+
+/* ------------------------------------------------------------------
+   8. Modal
+   ------------------------------------------------------------------ */
+
+.modal-backdrop {
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+}
+
+.modal {
+  display: flex;
+  flex-direction: column;
+  width: 90vw;
+  max-width: var(--modal-max-width);
+  max-height: calc(100dvh - 24px);
+  padding: 0;
+  background-color: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  box-shadow: 0 8px 24px var(--color-shadow-lg);
+  transform: scale(0.95);
+  transition: transform var(--duration-normal) var(--ease-default);
+}
+.modal-backdrop.is-visible .modal {
+  transform: scale(1);
+}
+
+
+.modal-header {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--color-border-subtle);
+}
+
+.modal-title {
+  font-size: var(--font-size-md);
+  line-height: var(--line-height-md);
+  font-weight: 600;
+}
+
+.modal-body {
+  min-height: 0;
+  overflow-y: auto;
+  padding: 20px;
+}
+
+
+/* ------------------------------------------------------------------
+   9. Forms
+   ------------------------------------------------------------------ */
+
+.form-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  min-height: 36px;
+}
+.form-row + .form-row {
+  margin-top: 8px;
+}
+
+.form-label {
+  font-size: var(--font-size-base);
+  font-weight: 500;
+  color: var(--color-text);
+}
+
+#setting-date-format,
+#setting-time-style,
+#setting-time-format {
+  min-width: 0;
+  max-width: 70%;
+  text-overflow: ellipsis;
+}
+.date-time-preview {
+  align-items: baseline;
+}
+.date-time-preview output {
+  min-width: 0;
+  text-align: right;
+  overflow-wrap: anywhere;
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-base);
+}
+
+.form-select {
+  height: 36px;
+  padding: 0 12px;
+  font-size: var(--font-size-base);
+  background-color: var(--color-bg);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  transition: border-color var(--duration-fast) var(--ease-default),
+              box-shadow var(--duration-fast) var(--ease-default);
+  appearance: none;
+  min-width: 180px;
+  background-image: url("data:image/svg+xml,%3Csvg width='12' height='12' viewBox='0 0 12 12' fill='%23656d76' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M2.5 4.5L6 8l3.5-3.5' stroke='%23656d76' stroke-width='1.5' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 10px center;
+  padding-right: 32px;
+}
+.form-select:focus {
+  border-color: var(--color-accent);
+  box-shadow: 0 0 0 3px var(--color-focus-ring);
+}
+
+.form-checkboxes {
+  display: flex;
+  gap: 12px;
+}
+.form-checkbox {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  color: var(--color-text);
+  cursor: pointer;
+}
+.form-checkbox input {
+  cursor: pointer;
+  accent-color: var(--color-accent);
+}
+
+/* Buttons */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 36px;
+  padding: 0 16px;
+  font-size: var(--font-size-base);
+  font-weight: 500;
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  transition: background-color var(--duration-fast) var(--ease-default),
+              border-color var(--duration-fast) var(--ease-default);
+  user-select: none;
+}
+
+
+/* ------------------------------------------------------------------
+   10. Responsive
+   ------------------------------------------------------------------ */
+
+/* Tablet and below */
+@media (max-width: 1024px) {
+  .side-panel {
+    width: min(var(--side-panel-width), 92vw);
+  }
+}
+
+/* Too narrow to float with a margin: the reader fills the screen. */
+@media (max-width: 960px) {
+  .doc-window, .doc-window:has(.asset-webpage) {
+    width: 100vw;
+    height: 100dvh;
+    border: none;
+    border-radius: 0;
+    box-shadow: none;
+  }
+}
+
+/* Long timestamp styles keep the reading column wide by moving above entries. */
+:root[data-timeline-layout="stacked"] .entry-card { flex-direction: column; }
+:root[data-timeline-layout="stacked"] .entry-body { width: 100%; }
+:root[data-timeline-layout="stacked"] .flow .entry-margin {
+  width: auto;
+  margin-left: 0;
+  justify-content: flex-start;
+  order: 0;
+  flex-wrap: wrap;
+  gap: 4px 16px;
+  padding-right: 0;
+  margin-bottom: 4px;
+}
+:root[data-timeline-layout="stacked"] .flow .date-marker {
+  position: absolute;
+  visibility: hidden;
+  pointer-events: none;
+}
+:root[data-timeline-layout="stacked"] .flow .em-time { white-space: normal; max-width: 100%; }
+:root[data-timeline-layout="stacked"] .entry-card.week-start::before { left: 0; }
+:root[data-timeline-layout="stacked"] .date-latch { width: auto; margin-left: 0; }
+:root[data-timeline-layout="stacked"] .date-latch-chip {
+  position: relative;
+  left: -16px;
+  width: 16px;
+  color: var(--color-text-muted);
+}
+:root[data-timeline-layout="stacked"] .date-latch-chip:hover { color: var(--color-accent); }
+:root[data-timeline-layout="stacked"] .latch-date-row {
+  visibility: hidden;
+  background: none;
+}
+:root[data-timeline-layout="stacked"] .latch-calendar-icon {
+  position: absolute;
+  bottom: 4px;
+  left: 0;
+  display: flex;
+  width: 12px;
+  height: 12px;
+}
+:root[data-timeline-layout="stacked"] .instance-row { display: block; }
+:root[data-timeline-layout="stacked"] .instance-date {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 16px;
+  width: auto;
+  padding: 0;
+  margin: 0 0 4px;
+}
+:root[data-timeline-layout="stacked"] .instance-date > span { margin: 0; }
+
+/* Narrow: stack the complete timestamp above content */
+@media (max-width: 768px) {
+  :root[data-timeline-layout="stacked"] .date-latch-chip { left: -12px; }
+
+  .flow {
+    padding: 0 16px 64px;
+  }
+
+  .entry-card {
+    flex-direction: column;
+  }
+
+  .entry-margin {
+    width: auto;
+    margin-left: 0;
+    height: auto;
+    justify-content: flex-start;
+    order: 0;
+    flex-wrap: wrap;
+    padding-right: 0;
+    margin-bottom: 2px;
+  }
+
+  /* No gutter: the readout is a full-width strip and week seams span the
+     content width. Hidden markers still anchor the readout. */
+  .date-marker {
+    margin-right: 0;
+  }
+  .entry-card.week-start::before {
+    left: 0;
+  }
+  .date-latch {
+    width: auto;
+    margin-left: 0;
+  }
+  /* The readout is a full-width strip: entry text scrolls behind it, never
+     beside it */
+  .date-latch-chip,
+  .latch-date-row {
+    width: auto;
+  }
+  /* Empty date columns do not occupy space on narrow screens. */
+  .date-marker .dm-date-part:empty {
+    display: none;
+  }
+}
+
+/* Mobile */
+@media (max-width: 640px) {
+  .app-header {
+    padding: 0 12px;
+    gap: 4px;
+  }
+
+  .header-left {
+    min-width: 0;
+  }
+
+  .app-title {
+    font-size: var(--font-size-base);
+  }
+
+  .header-center {
+    min-width: 100px;
+    padding: 0 8px;
+  }
+
+  .header-right {
+    min-width: auto;
+  }
+
+  .search-input {
+    font-size: 16px;  /* prevent iOS zoom on focus */
+    line-height: var(--line-height-md);
+  }
+
+  .flow {
+    padding: 0 12px 48px;
+  }
+
+  .doc-body {
+    padding: 24px 16px 48px;
+  }
+
+  .side-panel {
+    width: min(var(--side-panel-width), 100vw);
+  }
+
+  .modal {
+    width: calc(100vw - 24px);
+    border-radius: var(--radius-md);
+  }
+
+  .modal-body {
+    padding: 16px;
+  }
+}
+
+
+/* ------------------------------------------------------------------
+   11. Print
+   ------------------------------------------------------------------ */
+
+@media print {
+  html,
+  body {
+    height: auto;
+    overflow: visible;
+    display: block;
+  }
+
+  .flow-scroll {
+    overflow: visible;
+  }
+
+  .app-header,
+  .side-panel,
+  .doc-backdrop,
+  .modal-backdrop,
+  .date-latch {
+    display: none !important;
+  }
+
+  .flow {
+    max-width: 100%;
+    /* Keep the gutter: dates and times live there */
+    padding: 0 0 0 var(--flow-gutter);
+  }
+
+  /* No sticky readout on paper — the first marker is the date's rendering */
+  .date-marker.is-first {
+    visibility: visible;
+  }
+
+  .entry-card {
+    break-inside: avoid;
+  }
+}
+
+/* Tag overflow bubbles */
+.tag-bubble {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 20px;
+  padding: 2px 5px;
+  border-radius: var(--radius-pill);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 500;
+  /* Match .tag's line-height so the bubble is the same height as the tags it
+     sits among — otherwise it inherits the larger base line-height and stands
+     3px taller, lifting the tag row's baseline (and, on the first entry, the
+     latched readout pinned to it). */
+  line-height: 1.4;
+  cursor: pointer;
+  user-select: none;
+  transition: opacity var(--duration-fast) var(--ease-default);
+}
+.tag-bubble:hover,
+.tag-bubble.is-cohovered {
+  outline: 1px solid var(--color-border);
+  outline-offset: 1px;
+}
+.tag-bubble-project {
+  background: var(--color-tag-project-bg);
+  color: var(--color-tag-project-fg);
+}
+.tag-bubble-action {
+  background: var(--color-tag-action-bg);
+  color: var(--color-tag-action-fg);
+}
+
+/* Search results dropdown */
+.search-results {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  right: 0;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+  max-height: min(400px, calc(100dvh - var(--header-height) - 8px));
+  overflow-y: auto;
+  overscroll-behavior-y: contain;
+  z-index: 100;
+  margin-top: 4px;
+}
+.search-results[hidden] { display: none; }
+.search-results mark {
+  background: rgba(255, 213, 79, 0.25);
+  color: inherit;
+  border-radius: 2px;
+}
+@media (max-width: 640px) {
+  .search-results {
+    position: fixed;
+    top: var(--header-height);
+    left: 12px;
+    right: 12px;
+  }
+}
+.search-result-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 8px 12px;
+  cursor: pointer;
+  font-size: var(--font-size-sm);
+}
+.search-result-item:hover {
+  background: var(--color-bg-secondary);
+}
+.search-result-item.is-active {
+  background: var(--color-accent-subtle-bg);
+  box-shadow: inset 3px 0 0 var(--color-accent);
+}
+.search-result-item .tag-sm { margin-top: 2px; }
+.search-result-text {
+  flex: 1;
+  min-width: 0;
+}
+.search-result-name {
+  font-weight: 500;
+}
+.search-result-description {
+  color: var(--color-text-muted);
+  font-size: var(--font-size-xs);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+.search-result-group {
+  padding: 8px 12px 2px;
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--color-text-muted);
+}
+.search-result-more {
+  color: var(--color-text-muted);
+  font-size: var(--font-size-xs);
+}
+.search-result-snippet {
+  font-style: italic;
+}
+
+/* Icon inside tags */
+.tag svg, .inline-tag svg {
+  vertical-align: -1px;
+  flex-shrink: 0;
+}
+
+/* Scroll sentinel / loading / end */
+.scroll-sentinel {
+  height: 1px;
+}
+.scroll-sentinel.loading {
+  height: 40px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.scroll-sentinel.loading::after {
+  content: '';
+  width: 16px;
+  height: 16px;
+  color: var(--color-text-muted);
+  border: 1.5px solid var(--color-border);
+  border-top-color: currentColor;
+  border-radius: 50%;
+  animation: spin 0.9s linear infinite;
+}
+.scroll-sentinel.end {
+  height: 120px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-top: 24px;
+  color: var(--color-text-muted);
+  font-size: 14px;
+  font-style: italic;
+}
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+/* Operation feedback shares one quiet row in every surface. */
+.app-notice { display: flex; align-items: flex-start; gap: 10px; color: var(--color-text-secondary); font-size: var(--font-size-base); line-height: var(--line-height-base); }
+.app-notice-indicator { display: flex; flex: none; width: 16px; height: 16px; margin-top: 2px; }
+.app-notice[data-kind="loading"] .app-notice-indicator { border: 1.5px solid var(--color-border); border-top-color: currentColor; border-radius: 50%; animation: spin 0.9s linear infinite; }
+.app-notice[data-kind="warning"] .app-notice-indicator,
+.app-notice[data-kind="warning"] .app-notice-message { color: var(--color-status-due); }
+.app-notice[data-kind="error"] .app-notice-indicator { color: var(--color-status-overdue); }
+.app-notice-content { min-width: 0; }
+.app-notice-message, .app-notice-description { margin: 0; overflow-wrap: anywhere; }
+.app-notice[data-kind="error"] .app-notice-message { color: var(--color-text); }
+.app-notice-description, .app-notice-details { margin-top: 4px; font-size: var(--font-size-sm); line-height: var(--line-height-sm); color: var(--color-text-secondary); }
+.app-notice-details summary { width: fit-content; cursor: pointer; }
+.app-notice-details p { margin: 6px 0 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+.app-notice-actions { display: flex; flex-wrap: wrap; gap: 16px; margin-top: 8px; }
+.notice-action { border: 0; background: none; padding: 0; color: var(--color-accent); font: inherit; cursor: pointer; text-decoration: none; }
+.notice-action:hover { color: var(--color-accent-hover); text-decoration: underline; }
+.notice-action:focus-visible { outline: 2px solid var(--color-accent); outline-offset: 3px; border-radius: 2px; }
+.notice-action:disabled { color: var(--color-text-muted); cursor: default; }
+.flow > .app-notice, .instance-startup-notice > .app-notice { max-width: 560px; margin: 64px auto; padding: 0 20px; }
+/* Keep startup feedback visible while records and diagrams render underneath.
+   The overlay never shifts the flow or a deep link's measured destination. */
+.instance-startup-notice { position: absolute; inset: 0; z-index: 80; background: var(--color-bg); }
+.instance-startup-notice:empty { display: none; }
+.side-panel-body > .app-notice, #doc-body > .app-notice { margin: 24px 0; }
+@media (prefers-reduced-motion: reduce) {
+  .app-notice[data-kind="loading"] .app-notice-indicator,
+  .scroll-sentinel.loading::after { animation: none; }
+}
+
+/* Daemon discovery and recoverable connection state. */
+.app-title a { color: inherit; text-decoration: none; }
+#instance-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--color-text-muted); font-size: 0.85rem; }
+.connection-indicator { color: var(--color-text-muted); }
+.connection-indicator[hidden] { display: inline-flex; visibility: hidden; pointer-events: none; }
+.action-toast { position: fixed; inset: auto 16px 16px auto; width: fit-content; max-width: min(320px, calc(100vw - 32px)); margin: 0; padding: 10px 14px; border: 1px solid var(--color-border); border-radius: 8px; background: var(--color-bg-secondary); color: var(--color-text); font-size: var(--font-size-sm); line-height: var(--line-height-sm); box-shadow: 0 4px 16px rgb(0 0 0 / 10%); overflow-wrap: anywhere; pointer-events: none; z-index: 1000; }
+.action-toast[hidden] { display: none; }
+.action-toast::backdrop { background: transparent; pointer-events: none; }
+.instance-recovery { display: flex; gap: 16px; max-width: 560px; margin: 64px auto; padding: 0 20px; }
+/* The catalogue uses the flow's date gutter, divider rhythm and highlight. */
+.instance-chooser { width: min(var(--flow-max-width), 100%); margin: 0 auto; padding: 0 var(--flow-pad-x) 48px var(--flow-gutter); overflow: auto; }
+.instance-chooser[hidden] { display: none; }
+.instance-chooser:not([hidden]) ~ .side-panel,
+.instance-chooser:not([hidden]) ~ .filter-pill,
+.flow-scroll:has(> .instance-startup-notice) ~ .side-panel,
+.flow-scroll:has(> .instance-startup-notice) ~ .filter-pill,
+.flow-scroll:has(> .flow > .instance-recovery) ~ .side-panel,
+.flow-scroll:has(> .flow > .instance-recovery) ~ .filter-pill,
+.flow-scroll:has(> .flow > .app-notice) ~ .side-panel,
+.flow-scroll:has(> .flow > .app-notice) ~ .filter-pill { display: none !important; }
+#instance-list { list-style: none; padding: 0; margin: 0; }
+.instance-row { position: relative; display: grid; grid-template-columns: 0 minmax(0, 1fr); padding: 8px 0; border-bottom: 1px solid var(--color-border-subtle); }
+.instance-row:has(a.instance-open:hover), .instance-row:has(a.instance-open:focus-visible) { background: var(--color-accent-subtle-bg); }
+.instance-card-body { grid-area: 1 / 2; position: relative; min-width: 0; padding-right: 72px; }
+.instance-open { display: block; min-width: 0; color: inherit; text-decoration: none; }
+a.instance-open::after { content: ''; position: absolute; inset: -8px 0; }
+a.instance-open:hover { color: inherit; text-decoration: none; }
+.instance-open .instance-description { margin: 2px 0 8px; }
+.instance-date { grid-area: 1 / 1; margin: 3px 0 0 calc(-1 * var(--flow-gutter)); width: var(--flow-gutter); padding-right: 14px; font-family: var(--font-mono); font-size: var(--font-size-xs); color: var(--color-text-muted); overflow-wrap: anywhere; }
+.instance-date time { display: block; font-weight: 600; color: var(--color-text); }
+.instance-date > span { display: block; margin-top: 2px; }
+.instance-identity { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
+.instance-identity-text { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 12px; min-width: 0; }
+.instance-identity strong { position: relative; font-size: var(--font-size-md); line-height: var(--line-height-md); }
+.instance-identity strong:has(.instance-loading) { min-width: 80px; padding-right: 20px; }
+.instance-type-icon { display: inline-flex; flex: none; color: var(--color-text-muted); }
+.instance-type-icon svg { display: block; width: 16px; height: 16px; }
+.instance-checkout { color: var(--color-text-muted); font: var(--font-size-sm)/var(--line-height-sm) var(--font-mono); overflow-wrap: anywhere; }
+.instance-description { display: block; margin-top: 2px; color: var(--color-text-muted); font-size: var(--font-size-sm); line-height: var(--line-height-sm); overflow-wrap: anywhere; }
+.instance-error { display: block; margin-top: 4px; color: var(--color-error); font-size: var(--font-size-sm); }
+.instance-row-worktree .instance-card-body { margin-left: 24px; border-left: 1px solid var(--color-border-subtle); padding-left: 24px; }
+.instance-row-worktree .instance-identity strong { font: var(--font-size-sm)/var(--line-height-sm) var(--font-mono); font-weight: 400; color: var(--color-text-muted); padding-right: 0; }
+.instance-row-worktree .instance-identity { min-height: 24px; }
+.instance-card-actions { position: absolute; top: -4px; right: 0; z-index: 2; display: flex; gap: 2px; }
+.instance-remove, .instance-calendar-icon { position: relative; display: inline-flex; align-items: center; justify-content: center; flex: none; width: 32px; height: 32px; padding: 0; border: 0; border-radius: 6px; background: none; color: var(--color-text-muted); cursor: pointer; }
+.instance-remove svg, .instance-calendar-icon svg { width: 16px; height: 16px; }
+.instance-remove:hover { color: var(--color-error); background: var(--color-bg-secondary); }
+.instance-calendar-icon:hover { background: var(--color-bg-secondary); }
+.instance-remove:disabled, .instance-add-card:disabled { opacity: .5; cursor: default; }
+.instance-duplicate-error { position: relative; z-index: 2; display: inline-flex; align-items: center; gap: 5px; width: fit-content; padding: 0; border: 0; background: none; color: var(--color-status-due); font: var(--font-size-xs)/var(--line-height-xs) var(--font-mono); cursor: pointer; }
+.instance-duplicate-error code, .instance-status-message code { font: inherit; font-family: var(--font-mono); }
+.instance-duplicate-error svg { width: 13px; height: 13px; }
+.instance-status-message { white-space: pre-line; overflow-wrap: anywhere; }
+.instance-status-warning { color: var(--color-status-due); }
+.instance-status-warning svg { vertical-align: text-bottom; }
+.instance-loading { position: absolute; top: 3px; right: 0; width: 16px; height: 16px; border: 1.5px solid var(--color-border); border-top-color: var(--color-text-muted); border-radius: 50%; animation: spin .9s linear infinite; pointer-events: none; }
+.instance-loading-message { position: absolute; width: 1px; height: 1px; margin: -1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+#instance-notice:empty { display: none; }
+#instance-notice { margin: 16px 0; }
+#btn-retry-instances[hidden] { display: none; }
+.instance-add-card { display: flex; align-items: center; gap: 6px; width: 100%; margin: 0; padding: 18px 0; border: 0; border-bottom: 1px solid var(--color-border-subtle); background: none; color: var(--color-text-muted); font: inherit; font-size: var(--font-size-sm); cursor: pointer; }
+.instance-add-card[hidden] { display: none; }
+.instance-add-card svg { width: 14px; height: 14px; }
+.instance-add-card:hover { background: var(--color-accent-subtle-bg); color: var(--color-text); }
+.instance-add-form { padding: 12px 0 16px; border-bottom: 1px solid var(--color-border-subtle); }
+.instance-add-form[hidden] { display: none; }
+.instance-add-form h2 { font-size: var(--font-size-md); line-height: var(--line-height-md); margin: 0 0 12px; }
+.instance-add-form label { display: block; font-size: var(--font-size-sm); }
+#instance-add-help { margin: 4px 0 8px; color: var(--color-text-muted); font-size: var(--font-size-sm); }
+.instance-add-input { display: flex; align-items: center; gap: 8px; }
+#instance-add-path { flex: 1; min-width: 0; padding: 5px 8px; border: 1px solid var(--color-border); border-radius: var(--radius-md); background: var(--color-bg); color: var(--color-text); font: var(--font-size-sm)/var(--line-height-sm) var(--font-mono); }
+#instance-add-path[aria-invalid="true"] { border-color: var(--color-error); }
+.instance-add-actions { display: flex; justify-content: flex-end; align-items: center; gap: 8px; margin-top: 12px; }
+#instance-add-error { margin: 6px 0 0; color: var(--color-error); font-size: var(--font-size-sm); }
+#instance-add-error:empty { display: none; }
+.instance-context-divider { color: var(--color-text-muted); margin: 0 2px; }
+.instance-switcher { min-width: 0; position: relative; }
+.instance-switch-trigger { display: inline-flex; align-items: center; gap: 8px; max-width: 100%; padding: 6px; border: 0; border-radius: 6px; background: none; color: var(--color-text); font: inherit; font-size: var(--font-size-base); font-weight: 600; cursor: pointer; }
+.instance-switch-trigger:hover, .instance-switch-trigger[aria-expanded="true"] { background: var(--color-bg-secondary); }
+#instance-name { color: inherit; font-size: inherit; }
+#instance-name .instance-type-icon { display: none; }
+#instance-name .instance-identity { display: inline-flex; flex-wrap: nowrap; align-items: baseline; }
+#instance-name .instance-identity-text { flex-wrap: nowrap; }
+#instance-name strong { font-size: inherit; padding: 0; }
+#instance-name .instance-checkout { white-space: nowrap; }
+.instance-switch-trigger > svg { flex: none; }
+.instance-switch-menu { position: absolute; top: calc(100% + 8px); left: 0; z-index: 100; width: 380px; max-width: calc(100vw - 32px); border: 1px solid var(--color-border); border-radius: 12px; background: var(--color-bg); box-shadow: 0 8px 32px rgb(0 0 0 / 15%); }
+.instance-switch-menu[hidden] { display: none; }
+.instance-menu-heading { display: flex; align-items: center; justify-content: space-between; padding: 10px 16px 8px; font-size: var(--font-size-base); font-weight: 600; }
+.instance-menu-heading .btn-icon { width: 24px; height: 24px; font-size: 20px; line-height: 24px; }
+#instance-switch-search { display: block; width: calc(100% - 24px); margin: 0 12px 10px; padding: 5px 10px; border: 1px solid var(--color-border); border-radius: 6px; background: var(--color-bg); color: var(--color-text); font: inherit; font-size: var(--font-size-base); }
+#instance-switch-list { padding: 6px; border-top: 1px solid var(--color-border-subtle); max-height: min(560px, 65dvh); overflow-y: auto; }
+.instance-menu-item { display: grid; grid-template-columns: 16px minmax(0, 1fr) 16px; align-items: start; gap: 8px; padding: 8px; position: relative; color: var(--color-text); text-decoration: none; border-radius: 6px; }
+.instance-menu-item:hover, .instance-menu-item[aria-selected="true"] { background: var(--color-bg-secondary); color: var(--color-text); text-decoration: none; }
+.instance-menu-item[aria-selected="true"]::before { content: ''; position: absolute; top: 6px; bottom: 6px; left: -6px; width: 3px; border-radius: 3px; background: var(--color-accent); }
+.instance-menu-body { min-width: 0; }
+.instance-menu-item .instance-identity { display: flex; gap: 8px; align-items: baseline; }
+.instance-menu-item .instance-identity-text { gap: 2px 8px; }
+.instance-menu-item .instance-identity strong { padding: 0; font-size: var(--font-size-base); line-height: var(--line-height-md); font-weight: 500; }
+.instance-menu-item .instance-type-icon { margin: 0; }
+.instance-menu-item .instance-description, .instance-menu-item .instance-duplicate-error, .instance-menu-item .instance-error { margin-left: 24px; }
+.instance-menu-item .instance-duplicate-error { display: flex; margin-top: 4px; font-size: var(--font-size-sm); line-height: var(--line-height-sm); }
+.instance-menu-item .instance-checkout { min-width: 0; }
+.instance-menu-check { line-height: var(--line-height-md); }
+.instance-menu-calendar { display: inline-flex; align-items: center; height: var(--line-height-md); color: var(--color-text-muted); }
+.instance-menu-calendar svg { width: 16px; height: 16px; }
+.instance-menu-worktree { padding: 5px 8px 5px 32px; align-items: center; }
+.instance-menu-worktree .instance-identity { flex-wrap: wrap; }
+.instance-menu-worktree .instance-identity strong { font: var(--font-size-sm)/var(--line-height-sm) var(--font-mono); color: var(--color-text-muted); font-weight: 400; }
+.instance-menu-empty { padding: 8px; margin: 0; color: var(--color-text-muted); font-size: var(--font-size-sm); }
+.instance-menu-footer { padding: 4px; border-top: 1px solid var(--color-border-subtle); }
+.instance-menu-footer button { width: 100%; padding: 8px 12px; text-align: left; border: 0; background: none; color: var(--color-text); font: inherit; font-size: var(--font-size-sm); cursor: pointer; border-radius: 6px; }
+.instance-menu-footer button:hover { background: var(--color-bg-secondary); }
+.instance-tooltip { position: fixed; z-index: 1100; pointer-events: none; width: max-content; max-width: min(380px, calc(100vw - 16px)); padding: 7px 10px; border: 1px solid var(--color-border); border-radius: 6px; background: var(--color-bg-secondary); color: var(--color-text); font-size: var(--font-size-sm); line-height: var(--line-height-sm); overflow-wrap: anywhere; box-shadow: 0 4px 12px rgb(0 0 0 / 12%); }
+.instance-tooltip[hidden] { display: none; }
+@media (prefers-reduced-motion: reduce) { .instance-loading { animation: none; } }
+@media (max-width: 768px) {
+  .instance-chooser { padding: 0 16px 32px; }
+  .instance-row { display: block; }
+  .instance-date { display: flex; flex-wrap: wrap; gap: 8px; width: auto; padding: 0; margin: 0 0 4px; }
+  .instance-date > span { margin: 0; }
+  .instance-switch-menu { position: fixed; left: 12px; top: calc(var(--header-height) - 4px); max-width: calc(100vw - 24px); }
+}
+@media (max-width: 480px) {
+  .app-header:has(.instance-switcher) .header-center { display: none; }
+  .header-left { flex: 1; }
+  .instance-chooser { padding: 0 12px 24px; }
+  .instance-card-body { padding-right: 64px; }
+  .instance-row-worktree .instance-card-body { margin-left: 16px; padding-left: 16px; }
+  .instance-identity { gap: 2px 8px; }
+}
+@media (pointer: coarse) {
+  .instance-remove, .instance-calendar-icon { width: 44px; height: 44px; }
+  .instance-card-body { padding-right: 90px; }
+  .instance-switch-trigger, .instance-menu-item, .instance-menu-footer button { min-height: 44px; }
+  .instance-add-input input, #instance-switch-search { font-size: 16px; line-height: 24px; }
+}
+
+.flow-scroll[hidden] { display: none; }
+
+/* Native reference links retain chip styling and clear keyboard focus. */
+a.title-open { display: inline-block; color: inherit; }
+a.asset-row { color: inherit; }
+.tag:hover, .title-open:hover, .asset-row:hover { text-decoration: none; }
+a.tag:focus-visible, a.inline-tag:focus-visible, a.title-open:focus-visible,
+a.asset-row:focus-visible, .tag-bubble:focus-visible, .related-more:focus-visible, .filter-pill-label:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+}
+
+.schedule-time { color: var(--color-text-secondary); font-size: var(--font-size-xs); overflow-wrap: anywhere; }
+
+.status-pills .schedule-time { flex-basis: 100%; }
+.timeline-row:has(.schedule-time) { flex-wrap: wrap; row-gap: 2px; }
+.timeline-row .schedule-time { flex-basis: calc(100% - 50px); margin-left: 50px; }
+
+/* Muted history gaps remain in chronological order while older weeks load. */
+.week-view { display: contents; }
+.week-view > .entry-card:last-child { border-bottom: 1px solid var(--color-border-subtle); }
+.history-notice { display: flex; align-items: baseline; gap: 12px; padding: 12px 0; color: var(--color-text-muted); font-size: var(--font-size-sm); }
+.history-notice details { min-width: 0; }
+.history-notice summary { cursor: pointer; }
+.history-notice p { margin: 6px 0 0; overflow-wrap: anywhere; }
+.history-retry { flex: none; }
+.history-retry:disabled { cursor: wait; text-decoration: none; }
+
+.data-diagnostics { padding: 6px 16px; color: var(--color-text-secondary); font-size: var(--font-size-sm); line-height: var(--line-height-sm); border-bottom: 1px solid var(--color-border-subtle); }
+.data-diagnostics > summary { cursor: pointer; }
+.data-diagnostics-files, #data-diagnostics-files { max-height: 35vh; overflow: auto; }
+.data-file-notice ul { margin: 6px 0; padding-left: 20px; }
+
+.search-index-progress:empty { display: none; }
+.search-index-progress { padding: 8px 12px; color: var(--color-text-secondary); font-size: var(--font-size-sm); line-height: var(--line-height-sm); border-bottom: 1px solid var(--color-border-subtle); }
+.search-index-progress .app-notice { font-size: var(--font-size-sm); line-height: var(--line-height-sm); }
+.search-index-progress .app-notice-indicator { margin-top: 0; }
+/* Retained live slots remain completely absent while not applicable. */
+.status-pill[hidden], .schedule-time[hidden], .related-more[hidden] { display: none !important; }
+
+/* Empty views stay quiet and use the reading column. */
+.flow-empty { max-width: 560px; padding: 64px 20px; margin: 0 auto; }
+.flow-empty h2 { font-size: var(--font-size-xl); line-height: var(--line-height-xl); font-weight: 500; margin-bottom: 16px; }
+.empty-fine-print, .empty-instance, .empty-copy-status { color: var(--color-text-secondary); }
+.empty-fine-print { margin-bottom: 20px; }
+.empty-instance { font-size: var(--font-size-sm); line-height: var(--line-height-sm); margin-bottom: 24px; overflow-wrap: anywhere; }
+.empty-actions { display: flex; flex-wrap: wrap; gap: 12px; align-items: flex-start; }
+.empty-guide { flex: 1 1 200px; }
+.empty-guide summary { display: inline-flex; cursor: pointer; }
+.empty-guide ol { margin: 20px 0 12px; padding-left: 20px; }
+.empty-guide li + li { margin-top: 12px; }
+.empty-copy-status { font-size: var(--font-size-sm); line-height: var(--line-height-sm); margin-top: 12px; }
+.empty-prompt { width: 100%; min-height: 160px; margin-top: 12px; padding: 12px; background: var(--color-surface); color: var(--color-text); border: 1px solid var(--color-border); border-radius: var(--radius-md); }

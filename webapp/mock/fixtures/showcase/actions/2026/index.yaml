@@ -1,0 +1,22 @@
+- id: 2026-10-12-review
+  description: "Gather the launch team for a final review of Aurora."
+- id: 2026-10-12-backlog
+  description: "A backlog action with no scheduled time."
+- id: 2026-10-12-slipped
+  description: "A scheduled session whose calendar slot has passed."
+- id: 2026-10-12-due
+  description: "An unscheduled action with a future deadline."
+- id: 2026-10-12-overdue
+  description: "A missed deadline that needs a fresh plan."
+- id: 2026-10-12-done
+  description: "Completed work with a quiet, muted reference."
+- id: 2026-10-12-cancelled
+  description: "A cancelled experiment, retained as part of the record."
+- id: 2026-10-12-standup
+  description: "A weekday recurring check-in with projected occurrences."
+- id: 2026-10-12-global
+  description: "A time-zoned call with the Tokyo research team."
+- id: 2026-10-12-long-name
+  description: "Long labels test wrapping in pills, summaries, search, and calendar cards."
+- id: 2026-10-12-empty
+  description: "An action with no matching notes yet."

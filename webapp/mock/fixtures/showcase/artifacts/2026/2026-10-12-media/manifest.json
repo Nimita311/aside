@@ -1,0 +1,7 @@
+{
+  "name": "Aurora local media kit",
+  "version": "1.0",
+  "created": "2026-10-12T11:15",
+  "files": ["aurora.svg", "launch-brief.pdf", "chime.wav", "orbit.mp4"],
+  "fixture": true
+}

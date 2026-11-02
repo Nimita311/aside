@@ -1,0 +1,4 @@
+- id: 2026-10-12-recoverable
+  description: "A readable body survives invalid project metadata."
+- id: 2026-10-12-missing
+  description: "An indexed file that is intentionally missing."
