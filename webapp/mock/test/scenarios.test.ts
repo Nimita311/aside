@@ -8,6 +8,7 @@ describe('gallery scenario catalogue', () => {
     expect(new Set(scenarios.map(item => item.id)).size).toBe(scenarios.length);
     for (const id of [
       'elements',
+      'query-source', 'query-source-scoped', 'query-source-inspection', 'query-source-unavailable',
       'timeline', 'instance-summary', 'instance-detail', 'project', 'project-detail',
       'action', 'action-detail', 'entry-detail', 'entry-jump', 'date-jump', 'date-range',
       'project-date', 'search', 'search-empty', 'search-date', 'datepicker', 'datepicker-invalid',
@@ -55,9 +56,29 @@ describe('gallery scenario catalogue', () => {
     expect(state('entry-detail')).toMatchObject({ filter: { type: 'entry', id: '2026-10-18T09:30' } });
     expect(state('typography-in-project')).toMatchObject({ filter: { type: 'project' }, doc: { kind: 'artifact' } });
     expect(state('raw-asset')).toMatchObject({ filter: null, doc: { kind: 'asset' } });
+    const source = '#artifact/2026-10-12-recent-decisions/decisions.json';
+    expect(state('query-source')).toMatchObject({ filter: null, doc: null, source });
+    expect(state('query-source-scoped')).toMatchObject({ filter: { type: 'project' }, search: 'calmer', source });
     expect(state('date-range').date).toBeDefined();
     for (const id of ['image', 'pdf', 'audio', 'video', 'plain-text', 'binary']) {
       expect(state(id).doc).toMatchObject({ kind: 'artifact', filename: expect.any(String) });
     }
+  });
+
+  it('stages record and content previews in the expanded context panel', () => {
+    const content = scenarios.filter(item => item.group === 'Content' ||
+      ['instance-detail', 'project-detail', 'action-detail', 'entry-detail', 'diagram-error', 'missing-file', 'file-error', 'recurring-action'].includes(item.id));
+    expect(content.length).toBeGreaterThan(15);
+    for (const item of content) {
+      expect(item.preferences?.contextPanelMode, `${item.id} reveals its record body`).toBe('expanded');
+      expect(item.preferences?.contextPanelView, `${item.id} selects its content rather than Overview`).toBe('content');
+      expect(item.ready, `${item.id} waits for the live context body`).toContain('#side-panel-body');
+    }
+    for (const item of scenarios) {
+      expect(item.ready).not.toContain('#doc-body');
+      for (const action of item.actions ?? []) expect(action.selector).not.toContain('#doc-body');
+    }
+    expect(scenarioById('instance-summary')?.preferences?.contextPanelMode).not.toBe('expanded');
+    expect(scenarioById('panel-wide')?.preferences?.contextPanelMode).not.toBe('expanded');
   });
 });

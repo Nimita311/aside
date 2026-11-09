@@ -1,7 +1,7 @@
 import { readdirSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { parseWeeklyFile, parseProjectFile, parseActionFile, parseArtifactFile, parseIndex } from './parser.js';
-import { assertManagedPath, readManagedText } from './managed-path.js';
+import { createManagedReader } from './managed-path.js';
 import type {
   WeeklyValue,
   Project,
@@ -28,6 +28,26 @@ export interface InstanceFile<T> {
 }
 
 export type { WeeklyValue } from './types.js';
+
+/** Parse reuse is keyed by exact bytes, never timestamps. The cache owns its
+ * parsed values; every read returns an isolated result that consumers may edit. */
+export class InstanceReadCache {
+  private files = new Map<string, {content: string; parser: unknown; result: ParseResult<unknown>}>();
+  private seen = new Set<string>();
+  clear(): void { this.files.clear(); this.seen.clear(); }
+  begin(): void { this.seen.clear(); }
+  end(): void { for (const path of this.files.keys()) if (!this.seen.has(path)) this.files.delete(path); }
+  parse<T>(path: string, content: string, name: string, parser: (content: string, name: string) => ParseResult<T>): ParseResult<T> {
+    this.seen.add(path);
+    const previous = this.files.get(path);
+    if (previous?.content === content && previous.parser === parser) return structuredClone(previous.result) as ParseResult<T>;
+    const result = parser(content, name);
+    this.files.set(path, {content, parser, result: structuredClone(result)});
+    return result;
+  }
+}
+
+type ManagedReader = ReturnType<typeof createManagedReader>;
 
 // Everything read from one instance's year-partitioned data, with the
 // directory-walking conventions applied in exactly one place. The MCP Store and
@@ -60,10 +80,10 @@ function readError(errors: ParseIssue[], relPath: string, e: unknown): void {
 
 // Year directories under a subdir, sorted for determinism regardless of
 // filesystem enumeration order.
-function yearDirs(dataDir: string, relPath: string, errors: ParseIssue[]): string[] {
+function yearDirs(dataDir: string, relPath: string, errors: ParseIssue[], reader: ManagedReader): string[] {
   let names: string[];
   try {
-    const base = assertManagedPath(dataDir, join(dataDir, relPath), 'directory', true);
+    const base = reader.directory(join(dataDir, relPath), true);
     names = readdirSync(base).filter(name => /^\d{4}$/.test(name)).sort();
   } catch (e) {
     if ((e as NodeJS.ErrnoException).code === 'ENOENT') return [];
@@ -71,7 +91,7 @@ function yearDirs(dataDir: string, relPath: string, errors: ParseIssue[]): strin
     return [];
   }
   return names.filter(name => {
-    try { assertManagedPath(dataDir, join(dataDir, relPath, name), 'directory'); return true; }
+    try { reader.directory(join(dataDir, relPath, name)); return true; }
     catch (e) { readError(errors, `${relPath}/${name}`, e); return false; }
   });
 }
@@ -84,14 +104,16 @@ function readMarkdown<T>(
   subDir: string,
   parse: (content: string, name: string) => ParseResult<T>,
   errors: ParseIssue[],
+  reader: ManagedReader,
+  cache?: InstanceReadCache,
 ): InstanceFile<T>[] {
   const out: InstanceFile<T>[] = [];
   const base = join(dataDir, subDir);
-  for (const year of yearDirs(dataDir, subDir, errors)) {
+  for (const year of yearDirs(dataDir, subDir, errors, reader)) {
     const yearDir = join(base, year);
     let names: string[];
     try {
-      names = readdirSync(assertManagedPath(dataDir, yearDir, 'directory'))
+      names = readdirSync(reader.directory(yearDir))
         .filter(name => name.endsWith('.md')).sort();
     } catch (e) {
       readError(errors, `${subDir}/${year}`, e);
@@ -101,12 +123,12 @@ function readMarkdown<T>(
       const relPath = `${subDir}/${year}/${name}`;
       let content: string;
       try {
-        content = readManagedText(dataDir, join(yearDir, name));
+        content = reader.text(join(yearDir, name));
       } catch (e) {
         readError(errors, relPath, e);
         continue;
       }
-      const { value, issues } = parse(content, name);
+      const { value, issues } = cache ? cache.parse(relPath, content, name, parse) : parse(content, name);
       out.push({ relPath, name, id: name.slice(0, -3), content, value, issues });
     }
   }
@@ -121,21 +143,23 @@ function readIndexes<T>(
   subDir: string,
   parse: (content: string) => ParseResult<T>,
   errors: ParseIssue[],
+  reader: ManagedReader,
+  cache?: InstanceReadCache,
 ): InstanceFile<T>[] {
   const out: InstanceFile<T>[] = [];
   const base = join(dataDir, subDir);
-  for (const year of yearDirs(dataDir, subDir, errors)) {
+  for (const year of yearDirs(dataDir, subDir, errors, reader)) {
     const relPath = `${subDir}/${year}/index.yaml`;
     const path = join(base, year, 'index.yaml');
     let content: string;
     try {
-      content = readManagedText(dataDir, path);
+      content = reader.text(path);
     } catch (e) {
       if ((e as NodeJS.ErrnoException).code === 'ENOENT') continue;
       readError(errors, relPath, e);
       continue;
     }
-    const { value, issues } = parse(content);
+    const { value, issues } = cache ? cache.parse(relPath, content, 'index.yaml', parse) : parse(content);
     out.push({ relPath, name: 'index.yaml', id: 'index', content, value, issues });
   }
   return out;
@@ -143,18 +167,22 @@ function readIndexes<T>(
 
 // Read an instance's entities and their indexes from disk. The
 // single place that maps the on-disk layout to in-memory data.
-export function readInstanceData(dataDir: string): InstanceData {
+export function readInstanceData(dataDir: string, cache?: InstanceReadCache): InstanceData {
   dataDir = resolve(dataDir);
   const errors: ParseIssue[] = [];
-  return {
-    weeks: readMarkdown(dataDir, 'notes', parseWeeklyFile, errors),
-    projects: readMarkdown(dataDir, 'projects', parseProjectFile, errors),
-    actions: readMarkdown(dataDir, 'actions', parseActionFile, errors),
-    artifacts: readMarkdown(dataDir, 'artifacts', parseArtifactFile, errors),
-    noteIndexes: readIndexes(dataDir, 'notes', parseIndex, errors),
-    projectIndexes: readIndexes(dataDir, 'projects', parseIndex, errors),
-    actionIndexes: readIndexes(dataDir, 'actions', parseIndex, errors),
-    artifactIndexes: readIndexes(dataDir, 'artifacts', parseIndex, errors),
-    errors,
-  };
+  const reader = createManagedReader(dataDir);
+  cache?.begin();
+  try {
+    return {
+      weeks: readMarkdown(dataDir, 'notes', parseWeeklyFile, errors, reader, cache),
+      projects: readMarkdown(dataDir, 'projects', parseProjectFile, errors, reader, cache),
+      actions: readMarkdown(dataDir, 'actions', parseActionFile, errors, reader, cache),
+      artifacts: readMarkdown(dataDir, 'artifacts', parseArtifactFile, errors, reader, cache),
+      noteIndexes: readIndexes(dataDir, 'notes', parseIndex, errors, reader, cache),
+      projectIndexes: readIndexes(dataDir, 'projects', parseIndex, errors, reader, cache),
+      actionIndexes: readIndexes(dataDir, 'actions', parseIndex, errors, reader, cache),
+      artifactIndexes: readIndexes(dataDir, 'artifacts', parseIndex, errors, reader, cache),
+      errors,
+    };
+  } finally { cache?.end(); }
 }

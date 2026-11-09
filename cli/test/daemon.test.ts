@@ -4,9 +4,9 @@ import { promisify } from 'node:util';
 import { homedir } from 'node:os';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
 import { basename, dirname, join, relative, resolve } from 'node:path';
-import { init } from '../src/commands/init.js';
+import { init } from '../src/source/bootstrap.js';
 import { Daemon } from '../src/daemon/daemon.js';
-import { DaemonClient, tryConnect, type Launcher } from '../src/daemon/client.js';
+import { DaemonClient, tryConnect, type Connection, type Launcher } from '../src/daemon/client.js';
 import { InstanceHost, type ToolResult } from '../src/daemon/host.js';
 import { daemonPaths, JOB_LABEL, type DaemonPaths } from '../src/daemon/paths.js';
 import { FileLock, isLocked } from '../src/daemon/filelock.js';
@@ -17,7 +17,10 @@ import { WebAuth } from '../src/web/auth.js';
 import { buildSchema } from 'graphql';
 import type { GraphQLSchemaResult } from '../src/graphql/schema.js';
 import type { InstanceSessionState } from '../src/mcp/instance-session.js';
+import { SemanticSearchService } from '../src/semantic/search.js';
+import { daemonSession, hostGraphQL } from './support/graphql-host.js';
 
+type GraphQLReply = { result: { data?: any; errors?: Array<{ message: string }> } };
 const execFileAsync = promisify(execFile);
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -83,8 +86,13 @@ describe('daemon', () => {
     return c;
   }
 
+  const captureDocument = 'mutation($input: CaptureInput!) { capture(input: $input) { entry { content filePath } } }';
+  const entriesDocument = '{ entries { nodes { content } } }';
+  const graphql = (c: DaemonClient, dir: string, mode: 'query' | 'mutation', document: string, variables?: Record<string, unknown>) =>
+    c.request<GraphQLReply>('graphql', { session: daemonSession(dir), mode, args: { document, variables } }, { read: mode === 'query' });
   const capture = (c: DaemonClient, dir: string, content: string) =>
-    c.request<ToolResult>('tool', { instance: dir, name: 'capture', args: { content, description: content } });
+    graphql(c, dir, 'mutation', captureDocument, { input: { content, description: content } });
+  const entries = async (c: DaemonClient, dir: string) => (await graphql(c, dir, 'query', entriesDocument)).result.data.entries.nodes.map((entry: { content: string }) => entry.content);
 
   it('validates schema-read requests strictly and recovers from a failed cold read without loading an instance', async () => {
     const host = new InstanceHost(new CalClient(null));
@@ -114,11 +122,16 @@ describe('daemon', () => {
   it('rejects unsupported daemon tool envelopes and nested arguments before writes', async () => {
     const dir = instance('strict');
     const c = client();
-    await expect(c.request('tool', { instance: dir, name: 'capture', args: { content: 'Rejected', description: 'Rejected' }, extra: true })).rejects.toThrow(/extra/);
-    await expect(c.request('tool', { instance: dir, name: 'capture', args: { content: 'Rejected', description: 'Rejected', actions: [{ name: 'Orphan', description: 'Orphan', created: '2026-10-04T12:00' }] } })).rejects.toThrow(/actions.0.*created/);
-    await expect(c.request('tool', { instance: dir, name: 'calendar_info', args: { request: true } })).rejects.toThrow(/request/);
-    const result = await c.request<ToolResult>('tool', { instance: dir, name: 'query_entries', args: {} }, { read: true });
+    await expect(c.request('tool', { instance: dir, name: 'create_artifact', args: { name: 'Rejected', description: 'Rejected' }, extra: true })).rejects.toThrow(/extra/);
+    await expect(c.request('tool', { instance: dir, name: 'create_artifact', args: { name: 'Rejected', description: 'Rejected', files: [{ source: '/tmp/rejected', created: '2026-10-04T12:00' }] } })).rejects.toThrow(/files.0.*created/);
+    await expect(c.request('tool', { instance: dir, name: 'capture', args: { content: 'Rejected', description: 'Rejected' } })).rejects.toThrow('Unknown operation: capture');
+    await expect(c.request('tool', { instance: dir, name: 'calendar_info', args: {} })).rejects.toThrow('Unknown operation: calendar_info');
+    await expect(c.request('graphql', { session: daemonSession(dir), mode: 'mutation', args: { document: captureDocument }, extra: true })).rejects.toThrow(/extra/);
+    const nested = await graphql(c, dir, 'mutation', captureDocument, { input: { content: 'Rejected', description: 'Rejected', actions: [{ create: { name: 'Orphan', description: 'Orphan', created: '2026-10-04T12:00' } }] } });
+    expect(nested.result.errors?.[0].message).toMatch(/actions\[0\].*created/);
+    const result = await c.request<ToolResult>('tool', { instance: dir, name: 'query_artifacts', args: {} }, { read: true });
     expect(result.text).toMatch(/^0 of 0/);
+    expect(await entries(c, dir)).toEqual([]);
     expect(existsSync(join(dir, 'actions'))).toBe(false);
     expect(existsSync(join(dir, 'notes'))).toBe(false);
   });
@@ -205,13 +218,13 @@ describe('daemon', () => {
     // A preexisting alias entry is normalized while the daemon owns the file.
     writeFileSync(paths.known, JSON.stringify([alias, one]));
     const host = new InstanceHost(new CalClient(null));
-    await startDaemon({ host, known: [alias, one] });
+    const daemon = await startDaemon({ host, known: [alias, one] });
     const c = client();
     expect((await c.request<Status>('status')).known).toEqual([one]);
     expect(JSON.parse(readFileSync(paths.known, 'utf8'))).toEqual([one]);
     expect(host.loadedPaths()).toEqual([one]);
-    const result = await capture(c, alias, 'Original target');
-    expect(result.text).toContain(`file: ${one}/notes/`);
+    const result = (await capture(c, alias, 'Original target')).result.data.capture;
+    expect(result.entry.filePath).toContain(`${one}/notes/`);
     unlinkSync(alias); symlinkSync(two, alias);
     // Removing/retargeting a launch alias must not redirect the store, unload
     // the registered directory or register the new target without a new request.
@@ -219,12 +232,12 @@ describe('daemon', () => {
     const status = await c.request<Status>('status');
     expect(status.known).toEqual([one]);
     expect(status.loaded).toEqual([one]);
-    const query = await c.request<ToolResult>('tool', { instance: one, name: 'query_entries', args: { detail: 'full' } }, { read: true });
-    expect(query.text).toContain('Original target');
+    expect(await entries(c, one)).toEqual(['Original target']);
     expect(existsSync(join(two, 'notes'))).toBe(false);
     unlinkSync(alias);
     expect((await c.request<Status>('status')).known).toEqual([one]);
     rmSync(join(one, 'aside.md'));
+    (daemon as any).reconcileKnown();
     expect((await c.request<Status>('status')).known).toEqual([]);
   });
 
@@ -246,6 +259,37 @@ describe('daemon', () => {
       const { port } = await host.web();
       expect(await (await authenticatedFetch(`http://127.0.0.1:${port}/-/api/instances`)).json()).toEqual([expect.objectContaining({ path: one })]);
     } finally { loading.mockRestore(); }
+  });
+
+  it('loads and starts indexing a retained registration after its unreadable manifest is repaired', async () => {
+    const ready = instance('ready'), one = instance('one'), manifest = join(one, 'aside.md');
+    const source = readFileSync(manifest, 'utf8');
+    rmSync(manifest); mkdirSync(manifest);
+    const host = new InstanceHost(new CalClient(null));
+    const loaded = vi.spyOn(host, 'load');
+    const service = new SemanticSearchService({indexRoot: join(home, 'search'),
+      embedder: {model: 'registration-retry', resolveGeneration: async () => ({model: 'registration-retry', identity: 'registration-retry', embed: async texts => texts.map(() => [1, 1])})}});
+    const reconciled = vi.spyOn(service, 'reconcile');
+    host.configureSemantic({service: () => service, reconciliation: {debounceMs: 0, reconciliationIntervalMs: 0}});
+    await startDaemon({known: [ready, one], host});
+    expect(host.loadedPaths()).toEqual([ready]);
+    expect(JSON.parse(readFileSync(paths.known, 'utf8'))).toEqual([ready, one]);
+    rmSync(manifest, {recursive: true}); writeFileSync(manifest, source);
+    // No request, registration edit, or daemon restart should be needed.
+    await until(() => host.loadedPaths().includes(one));
+    await until(() => reconciled.mock.calls.some(([store]) => store.getDataDir() === one));
+    expect(loaded.mock.calls.filter(([path]) => path === ready)).toHaveLength(1);
+    expect(JSON.parse(readFileSync(paths.known, 'utf8'))).toEqual([ready, one]);
+  });
+
+  it('cancels failed registration load retries when the daemon shuts down', async () => {
+    const one = instance('one'), host = new InstanceHost(new CalClient(null));
+    const loaded = vi.spyOn(host, 'load').mockImplementation(() => {throw new Error('temporarily unreadable');});
+    const daemon = await startDaemon({known: [one], host});
+    await daemon.shutdown();
+    const attempts = loaded.mock.calls.length;
+    await sleep(1_100);
+    expect(loaded).toHaveBeenCalledTimes(attempts);
   });
 
   it('registers native selections canonically and leaves known paths untouched on cancellation', async () => {
@@ -506,12 +550,47 @@ describe('daemon', () => {
     try {
       const launches = { count: 0 };
       const c = client(launches);
-      expect((await capture(c, dir, 'After updating')).text).toMatch(/^entry: /);
+      expect((await capture(c, dir, 'After updating')).result.data.capture.entry.content).toBe('After updating');
       expect(launches.count).toBe(1);
       const current = await c.hello();
       expect(current.build.version).toBe(mine.build.version);
       expect((await c.request<Status>('status')).loaded).toEqual([dir]);
     } finally { hello.mockRestore(); }
+  });
+
+  it('does not launch a missing daemon for an existing-owner operation', async () => {
+    const launcher = vi.fn(async () => {throw new Error('Must not launch');});
+    const c = new DaemonClient({paths, launcher, startIfMissing: false}); clients.push(c);
+    await expect(c.request('registry.reconcile')).rejects.toThrow('No running aside daemon is available');
+    expect(launcher).not.toHaveBeenCalled();
+  });
+
+  it('closes an existing connection even when no request used it', () => {
+    const close = vi.fn();
+    const initialConnection = {peer: {close}, hello: {...ownHello(), pid: process.pid}} as unknown as Connection;
+    const c = new DaemonClient({paths, startIfMissing: false, initialConnection}); clients.push(c);
+    c.close();
+    expect(close).toHaveBeenCalledOnce();
+  });
+
+  it.each(['instance.bootstrap', 'registry.reconcile'])('settles an existing older owner before sending %s', async method => {
+    const daemon = await startDaemon(), mine = ownHello();
+    const dispatch = vi.spyOn(daemon as any, 'dispatch');
+    const hello = vi.spyOn(daemon as unknown as {hello(): HelloResult}, 'hello').mockReturnValue({
+      ...mine, build: {...mine.build, builtAt: mine.build.builtAt - 1}, pid: process.pid,
+    });
+    try {
+      const initialConnection = (await tryConnect(paths))!;
+      const launcher = vi.fn(async () => {await startDaemon();});
+      const c = new DaemonClient({paths, launcher, startIfMissing: false, initialConnection}); clients.push(c);
+      const path = join(root, 'new-bootstrap');
+      await c.request(method, method === 'instance.bootstrap' ? {input: {path, name: 'New', description: 'Bootstrap'}} : undefined);
+      expect(launcher).toHaveBeenCalledOnce();
+      expect(dispatch.mock.calls.some(([, operation]) => operation === method)).toBe(false);
+      expect((await c.hello()).build).toEqual(mine.build);
+      if (method === 'instance.bootstrap') expect(readFileSync(join(path, 'aside.md'), 'utf8')).toContain('name: New');
+      expect((await c.request<Status>('status')).known).toEqual([]);
+    } finally {hello.mockRestore();}
   });
 
   it('keeps known instances loaded and unloads forgotten ones after their connections close', async () => {
@@ -534,18 +613,19 @@ describe('daemon', () => {
   });
 
   it('drops a known instance whose manifest is gone, and edits the list by hand', async () => {
-    await startDaemon();
+    const daemon = await startDaemon();
     const alpha = instance('alpha');
     const beta = instance('beta');
     const c = client();
     expect((await c.request<{ known: string[] }>('known.add', { paths: [alpha, beta] })).known).toEqual([alpha, beta]);
     expect((await c.request<{ known: string[] }>('known.forget', { paths: [alpha] })).known).toEqual([beta]);
     rmSync(join(beta, 'aside.md'));
+    (daemon as any).reconcileKnown();
     expect((await c.request<Status>('status')).known).toEqual([]);
     await expect(c.request('known.add', { paths: [join(root, 'missing')] })).rejects.toThrow(/Not an aside instance/);
   });
 
-  it('collects deleted and repurposed instances when cached use fails, before any status call', async () => {
+  it('queues owner reconciliation after a cached write guard fails, before any status call', async () => {
     const host = new InstanceHost(new CalClient(null));
     await startDaemon({ host });
     const removed = instance('removed'), repurposed = instance('repurposed'), valid = instance('valid');
@@ -555,16 +635,33 @@ describe('daemon', () => {
     expect(host.loadedPaths()).toHaveLength(3);
     rmSync(removed, { recursive: true });
     writeFileSync(join(repurposed, 'aside.md'), 'This directory has another purpose.');
-    await expect(capture(c, removed, 'Must not recreate a removed directory')).rejects.toThrow(/Not an aside instance/);
+    const write = (dir: string, name: string) => c.request('tool', { instance: dir, name: 'create_artifact', args: { name, description: name } });
+    await expect(write(removed, 'Must not recreate a removed directory')).rejects.toThrow(/Not an aside instance/);
+    await until(() => JSON.stringify(JSON.parse(readFileSync(paths.known, 'utf8'))) === JSON.stringify([valid]));
     expect(JSON.parse(readFileSync(paths.known, 'utf8'))).toEqual([valid]);
     expect(host.loadedPaths()).toEqual([valid]);
     expect(existsSync(removed)).toBe(false);
-    await expect(capture(c, repurposed, 'Must not write here')).rejects.toThrow(/Not an aside instance/);
-    expect(existsSync(join(repurposed, 'notes'))).toBe(false);
+    await expect(write(repurposed, 'Must not write here')).rejects.toThrow(/Not an aside instance/);
+    expect(existsSync(join(repurposed, 'artifacts'))).toBe(false);
     const status = await c.request<Status>('status');
     expect(status.known).toEqual([valid]);
     expect(status.loaded).toEqual([valid]);
     expect(status.sessions).toEqual({ [valid]: 0 });
+  });
+
+  it('queues owner reconciliation when a GraphQL write hits a cached write guard, without recreating the directory', async () => {
+    await startDaemon();
+    const removed = instance('removed'), repurposed = instance('repurposed'), valid = instance('valid');
+    const c = client();
+    await c.request('known.add', { paths: [removed, repurposed, valid] });
+    rmSync(removed, { recursive: true });
+    writeFileSync(join(repurposed, 'aside.md'), 'This directory has another purpose.');
+    expect((await capture(c, removed, 'Must not recreate a removed directory')).result.errors?.[0].message).toMatch(/Not an aside instance/);
+    expect((await capture(c, repurposed, 'Must not write here')).result.errors?.[0].message).toMatch(/Not an aside instance/);
+    expect(existsSync(removed)).toBe(false);
+    expect(existsSync(join(repurposed, 'notes'))).toBe(false);
+    await until(() => JSON.stringify(JSON.parse(readFileSync(paths.known, 'utf8'))) === JSON.stringify([valid]));
+    expect((await c.request<Status>('status')).known).toEqual([valid]);
   });
 
   it('keeps a valid instance registered when its operation fails for another reason', async () => {
@@ -577,18 +674,21 @@ describe('daemon', () => {
     expect((await c.request<Status>('status')).known).toEqual([dir]);
   });
 
-  it('garbage-collects before browser discovery without a preceding status request', async () => {
+  it('serves the owner-reconciled browser catalogue without request-time garbage collection', async () => {
     const host = new InstanceHost(new CalClient(null));
-    await startDaemon({ host });
+    const daemon = await startDaemon({ host });
     const valid = instance('valid'), removed = instance('removed');
     const c = client();
     await c.request('known.add', { paths: [valid, removed] });
     rmSync(removed, { recursive: true });
+    (daemon as any).reconcileKnown();
+    const prune = vi.spyOn(daemon as any, 'pruneKnown');
     const web = await host.web();
     const listing = await (await authenticatedFetch(`http://127.0.0.1:${web.port}/-/api/instances`)).json();
     expect(listing.map((instance: { path: string }) => instance.path)).toEqual([valid]);
     expect(JSON.parse(readFileSync(paths.known, 'utf8'))).toEqual([valid]);
     expect(host.loadedPaths()).toEqual([valid]);
+    expect(prune).not.toHaveBeenCalled();
   });
 
   it('stays running without clients even after the former idle deadline', async () => {
@@ -615,14 +715,14 @@ describe('daemon', () => {
     await c.request('known.add', { paths: [beta] });
     expect((await c.request<Status>('status')).loaded.sort()).toEqual([alpha, beta].sort());
     const captured = await capture(c, beta, 'Before disconnect');
-    const file = captured.text.match(/file: (.+)/)![1];
+    const file: string = captured.result.data.capture.entry.filePath;
     // Capture creates the notes tree after watch startup. Wait for Chokidar
     // to discover this file before testing edits made without a client.
     const watcher = host.load(beta).store['watcher']!;
     await until(() => watcher.getWatched()[dirname(file)]?.includes(basename(file)) === true);
     c.close();
     writeFileSync(file, readFileSync(file, 'utf8').replace('Before disconnect', 'After disconnect'));
-    await until(async () => (await host.tool(beta, 'query_entries', { detail: 'full' })).text.includes('After disconnect'));
+    await until(async () => (await hostGraphQL(host, beta, 'query', { document: entriesDocument })).text.includes('After disconnect'));
     expect(host.loadedPaths().sort()).toEqual([alpha, beta].sort());
     expect(isLocked(paths.lifetimeLock)).toBe(true);
   }, 15_000);
@@ -741,25 +841,43 @@ describe('daemon', () => {
     await capture(c, dir, 'Before the restart');
     await first.shutdown();
     daemons.splice(daemons.indexOf(first), 1);
-    const read = await c.request<ToolResult>('tool', { instance: dir, name: 'query_entries', args: {} }, { read: true });
-    expect(read.text).toContain('Before the restart');
+    expect(await entries(c, dir)).toEqual(['Before the restart']);
     expect(launches.count).toBe(1);
 
     // A connection that dies mid-write leaves the outcome unknown.
     const conn = (await tryConnect(paths))!;
-    const pending = conn.peer.request('tool', { instance: dir, name: 'capture', args: { content: 'x', description: 'x' } });
+    const pending = conn.peer.request('graphql', { session: daemonSession(dir), mode: 'mutation', args: { document: captureDocument, variables: { input: { content: 'x', description: 'x' } } } });
     conn.peer.close();
     await expect(pending).rejects.toThrow(/connection closed/);
   });
 
-  it('unloads an instance whose directory vanished while loaded', async () => {
-    await startDaemon();
+  it('retries an artifact read after the daemon is replaced, and reports an artifact write whose connection dropped', async () => {
+    const launches = { count: 0 };
+    const first = await startDaemon();
+    const dir = instance('alpha');
+    const c = client(launches);
+    await c.request('tool', { instance: dir, name: 'create_artifact', args: { name: 'Before the restart', description: 'Saved' } });
+    await first.shutdown();
+    daemons.splice(daemons.indexOf(first), 1);
+    const read = await c.request<ToolResult>('tool', { instance: dir, name: 'query_artifacts', args: {} }, { read: true });
+    expect(read.text).toContain('before-the-restart');
+    expect(launches.count).toBe(1);
+
+    const conn = (await tryConnect(paths))!;
+    const pending = conn.peer.request('tool', { instance: dir, name: 'create_artifact', args: { name: 'Lost', description: 'Unknown outcome' } });
+    conn.peer.close();
+    await expect(pending).rejects.toThrow(/connection closed/);
+  });
+
+  it('unloads an instance whose directory vanished after owner reconciliation', async () => {
+    const daemon = await startDaemon();
     const dir = instance('gone');
     const user = client();
     const watcher = client();
     await user.request('instance.info', { instance: dir }, { read: true });
     rmSync(dir, { recursive: true, force: true });
     user.close();
+    (daemon as any).reconcileKnown();
     await until(async () => (await watcher.request<Status>('status')).loaded.length === 0);
   });
 
@@ -772,12 +890,11 @@ describe('daemon', () => {
     // Shut down mid-stream: requests sent after it are refused and resent to
     // the successor, while none is reported as lost.
     const stopping = first.shutdown();
-    const reads = Array.from({ length: 4 }, () =>
-      c.request<ToolResult>('tool', { instance: dir, name: 'query_entries', args: {} }, { read: true }));
+    const reads = Array.from({ length: 4 }, () => entries(c, dir));
     const results = await Promise.all(reads);
     await stopping;
     daemons.splice(daemons.indexOf(first), 1);
-    for (const r of results) expect(r.text).toContain('Before');
+    for (const r of results) expect(r).toEqual(['Before']);
     expect(launches.count).toBe(1);
   });
 
@@ -785,7 +902,8 @@ describe('daemon', () => {
     await startDaemon();
     const c = client();
     await expect(c.request('nope')).rejects.toThrow(/unknown method nope/);
-    await expect(c.request('tool', { name: 'capture', args: { content: 'Note', description: 'Note' } })).rejects.toThrow(/No instance named/);
+    await expect(c.request('tool', { instance: '', name: 'query_artifacts', args: {} })).rejects.toThrow(/No instance named/);
+    await expect(c.request('tool', { name: 'query_artifacts', args: {} })).rejects.toThrow(/instance/);
     await expect(c.request('instance.info', { instance: join(root, 'missing') })).rejects.toThrow(/Not an aside instance/);
   });
 });
@@ -961,10 +1079,10 @@ describe.skipIf(!existsSync(BUNDLE))('daemon (bundle)', () => {
     let conn: Awaited<ReturnType<typeof tryConnect>> = null;
     try {
       await until(async () => { conn = await tryConnect(paths); return conn !== null; });
-      const result = await conn!.peer.request<{ text: string }>('tool', { instance: null, name: 'calendar_info', args: {} });
-      expect(result.text).toContain('category: "helper-exited"');
-      expect(result.text).toContain('exit_code: 7');
-      expect(result.text).toContain(`log_path: ${JSON.stringify(paths.log)}`);
+      const session = { workspace: [], encountered: [], active: null, configIssues: [], discovery: false, cwd: root };
+      const { result } = await conn!.peer.request<GraphQLReply>('graphql', { session, mode: 'query', args: { document: '{ systemInfo { calendar { diagnostics { category exitCode logPath } } } }' } });
+      expect(result.errors).toBeUndefined();
+      expect(result.data.systemInfo.calendar.diagnostics).toEqual([{ category: 'helper-exited', exitCode: 7, logPath: paths.log }]);
     } finally {
       conn?.peer.close();
       child.kill('SIGTERM');

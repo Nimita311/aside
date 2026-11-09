@@ -100,7 +100,7 @@ describe('date picker focus', () => {
     original.focus();
     f.latch.dataset.date = '2026-10-05'; await vi.advanceTimersByTimeAsync(0);
     const replacement = document.querySelector<HTMLButtonElement>('.cal-day[data-date="2026-10-20"]')!;
-    expect(replacement).not.toBe(original);
+    expect(replacement).toBe(original);
     expect(document.activeElement).toBe(replacement);
     expect(document.querySelector('.cal-day.is-current')?.getAttribute('data-date')).toBe('2026-10-05');
   });
@@ -111,7 +111,8 @@ describe('date picker focus', () => {
     f.latch.dataset.date = '2026-11-05'; await vi.advanceTimersByTimeAsync(0);
     expect(document.querySelector('.cal-title')?.textContent).toBe('Oct 2026');
     expect(document.activeElement).toBe(document.querySelector('.cal-day[data-date="2026-10-20"]'));
-    expect(document.querySelector('.cal-day.is-current')).toBeNull();
+    expect(document.querySelector('.cal-day.is-current')?.getAttribute('data-date')).toBe('2026-11-05');
+    expect(document.querySelector('.cal-day.is-current')?.classList.contains('is-adjacent')).toBe(true);
     const next = monthArrow('Next month'); next.focus(); next.click();
     expect(document.querySelector('.cal-title')?.textContent).toBe('Nov 2026');
     expect(document.activeElement).toBe(monthArrow('Next month'));
@@ -168,6 +169,13 @@ describe('date picker focus', () => {
     if (state === 'disabled') f.trigger.setAttribute('aria-disabled', 'true');
     if (state === 'display') f.latch.style.display = 'none';
     escape(f.input); expect(document.activeElement).toBe(f.fallback);
+  });
+
+  it('uses the pill when a replaced date control and the parked app link are unavailable', () => {
+    const f = fixture(); f.latch.hidden = true; f.fallback.parentElement!.hidden = true;
+    const pill = document.createElement('button'); pill.id = 'btn-workspace-views'; document.body.append(pill);
+    escape(f.input);
+    expect(document.activeElement).toBe(pill);
   });
 
   it('restores on programmatic dismissal only while the picker owns focus', () => {

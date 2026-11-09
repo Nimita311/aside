@@ -41,7 +41,7 @@ export interface DirResolution {
 // A directory is auto-selected in precedence order: an explicit --dir, then
 // the config default, then $PWD
 // itself, then a sole candidate. Zero or multiple candidates leave none active
-// — the agent selects one via selectInstance (select_instance in legacy mode).
+// — the agent selects one via selectInstance.
 // Step 3, tracking the encountered set across the session, lives in InstanceRegistry.
 //
 // `discovery: false` in the config turns off the structural scan: $PWD and its
@@ -77,5 +77,5 @@ export async function runMcp(args: CommandInput): Promise<void> {
   if (invalidDir) {
     throw new InstancePathError(`Not an aside directory (no aside.md manifest): ${invalidDir}`);
   }
-  await startServer(dataDir, candidates, configIssues, discovery, undefined, { graphql: !parsed.has('--legacy') });
+  await startServer(dataDir, candidates, configIssues, discovery);
 }

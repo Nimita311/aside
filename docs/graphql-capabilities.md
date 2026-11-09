@@ -7,7 +7,7 @@ MCP `query` → `Query`; MCP `mutate` → `Mutation`. Selected fields below;
 
 | Type | Purpose | Selected fields |
 | --- | --- | --- |
-| `Instance` | Record collection | `id`, `path`, `active`, `settings`, `body`, `automations`, `automationLog`, `execution`, `validation` |
+| `Instance` | Record collection | `id`, `path`, `active`, `settings`, `body`, `automations`, `automationLog`, `execution`, `calendarSync`, `validation` |
 | `Entry` | Captured context | `id`, `filePath`, `content`, `description`, `created`, `projects`, `actions`, `artifacts` |
 | `Project` | Ongoing effort | `id`, `filePath`, `name`, `body`, `status`, `ended`, `relatedProjects`, `actions`, `entries`, `artifacts`, `automations` |
 | `Action` | Work / recurrence template / occurrence | `id`, `filePath`, `name`, `body`, `status`, `scheduled`, `deadline`, `calendar`, `recurrence`, `occurrence`, `delegation`, `delegationLog`, `projects`, `entries`, `artifacts` |
@@ -24,6 +24,25 @@ MCP `query` → `Query`; MCP `mutate` → `Mutation`. Selected fields below;
 | `ProjectStatus` | `OPEN`, `CLOSED` |
 | `ActionStatus` | `BACKLOG`, `SCHEDULED`, `DONE`, `CANCELLED` |
 
+## System information
+
+`Query.systemInfo` gathers system status without selecting or loading an instance.
+Each selected section is collected once per request; unrelated sections do not
+run their probes.
+
+| Section | Existing exposed information |
+| --- | --- |
+| `SystemInfo.build` | Aside version and build timestamp |
+| `SystemInfo.daemon` | PID, client/tab counts, log path, startup job and logging diagnostics |
+| `SystemInfo.installation` | CLI/build paths and checks; agent plugin registration, installation, enabled state and loading diagnostics |
+| `SystemInfo.search` → `SystemSearchInfo.semantic` | Semantic prerequisites, failure reason and recovery |
+| `SystemInfo.calendar` | Calendar authorization, helper path, available destinations and diagnostics |
+
+Instance discovery, selection, content, model catalogs and action synchronization
+remain on their existing content APIs or `Instance.calendarSync`. CLI APIs are
+unchanged. Standard GraphQL introspection and the schema resource retain their
+normal entry points.
+
 ## Record queries
 
 | Single record | Collection | Result types |
@@ -32,12 +51,13 @@ MCP `query` → `Query`; MCP `mutate` → `Mutation`. Selected fields below;
 | `Query.project(id)` | `Query.projects` | `Project`, `ProjectPage` |
 | `Query.action(id)` | `Query.actions` | `Action`, `ActionPage` |
 | `Query.artifact(id)` | `Query.artifacts` | `Artifact`, `ArtifactPage` |
+| — | `Query.search(where, rankBy, offset, limit)` | `SearchPage`, globally ordered `SearchHit` results and typed source `record` |
 
 Collection arguments: `where`, `offset`, `limit`, `orderBy`.
 
 | Schema names | Fields / granularity |
 | --- | --- |
-| `EntryWhere`, `ProjectWhere`, `ActionWhere`, `ArtifactWhere` | IDs, search, dates, relationships; `and`, `or`, `not` |
+| `EntryWhere`, `ProjectWhere`, `ActionWhere`, `ArtifactWhere` | IDs, explicit `regex`, dates, relationships; `and`, `or`, `not`; deprecated `search` aliases `regex` |
 | `EntryRelationFilter`, `ProjectRelationFilter`, `ActionRelationFilter`, `ArtifactRelationFilter` | `some`, `none` |
 | `ActionWhere` → `OccurrenceWhere` | `recurrenceExists`; `occurrence { template, original, projected }` |
 | `EntryPage`, `ProjectPage`, `ActionPage`, `ArtifactPage` | `nodes`, `offset`, `count`, `totalCount` |
@@ -47,6 +67,48 @@ Collection arguments: `where`, `offset`, `limit`, `orderBy`.
 | `RecordOrder` | `CREATED_ASC`, `CREATED_DESC` |
 | `ActionOrder` | Creation, schedule, deadline: `CREATED_*`, `SCHEDULED_*`, `DEADLINE_*` (`ASC` / `DESC`) |
 | `Date` | `YYYY-MM-DD`; inclusive date bounds |
+
+Unified search keeps eligibility and ranking separate: `SearchWhere` groups
+reuse `EntryWhere`, `ProjectWhere`, `ActionWhere`, and `ArtifactWhere`, including
+regex. Omit groups for all kinds, or specify only the non-null groups to search.
+`SearchRanking` selects exactly one of `semantic` (natural language) or `order`
+(`SearchOrder`, creation/schedule/deadline). Default order is `CREATED_DESC`.
+`SearchPage` exposes `hits`, `totalCount`, `count`, `offset`, `model`, and
+`indexedChunks`. Counts describe filter membership before ranking. Semantic
+ranking requires local inference and never falls back to regex. Search excludes
+attachment bytes and unsaved projections; typed entity queries retain their
+existing behavior.
+
+Registered instances maintain their derived semantic indexes in the background.
+The daemon's shared mutation journal notifies the instance lifecycle after saved
+changes, including partial writes and failed readback. Watcher events, startup,
+periodic reconciliation, and bounded retries cover changes outside that interface.
+One owner delivers changes to semantic search, Calendar, automation, and identity
+features; a failed feature leaves a diagnostic and does not stop the others.
+It also discovers model changes and publishes completed
+indexes bound to immutable model digests. Semantic retrieval compares the loaded
+content hash with the persisted indexed hash and embeds query text with that
+index's model digest. It waits for lifecycle indexing or returns an explicit
+failure. Warm retrieval checks the published binding in memory; durable
+certificate/native-version checks run in lifecycle maintenance. Retrieval performs
+no source reads, model discovery, or index updates. Query diagnostics and Calendar
+sync status use loaded/cached observations without a source scan. Unseen file edits
+and exceptional races can lag until watcher or periodic repair, preserving nominal
+read performance. Actual write guards and external-operation validation remain.
+Empty semantic pages still wait for loaded-snapshot readiness, without embedding query
+text. Counts-only reads and field ordering do not force inference.
+
+`SystemSearchInfo.semantic` through `Query.systemInfo` checks native support,
+endpoint connectivity, installed embedding support, and immutable digest access
+(Ollama 0.40 or newer) without selecting/loading an instance, inference, or index writes.
+This reports global prerequisites, not the freshness of any instance index.
+`SemanticAvailabilityReason` distinguishes availability, unsupported platforms,
+missing native support, unreachable Ollama, a missing model, invalid
+configuration, and service errors. An unavailable semantic request reports
+`errors[].extensions.code = SEMANTIC_SEARCH_UNAVAILABLE`, plus `reason`,
+`recovery`, and `model`; model-service failures use `SEMANTIC_SEARCH_FAILED`.
+Neither checks nor failures install, start, download, or silently change the
+search method.
 
 ## Create and update
 
@@ -85,8 +147,8 @@ Omitted update fields are preserved; bodies accept replacement text.
 | `Mutation.updateOccurrence(input)` → `ActionPayload` | `UpdateOccurrenceInput`: `template`, `original`, individual action edits |
 
 Template: `recurrence != null`, `status = null`; find with `recurrenceExists: true`.
-`Query.actions` includes projections within `recurrenceLookaheadDays`.
-`Occurrence.projected = true` means computed, unsaved future work; editing saves it and
+`Query.actions` includes unsaved occurrences using [projection schedule ranges](../design/graphql.md#projection-schedule-ranges).
+`Occurrence.projected = true` means computed, unsaved work; editing saves it and
 returns `projected = false`. Templates define commitments; automations execute work.
 
 ## Delegation
@@ -150,7 +212,7 @@ Schema discovery and metadata-only instance reads are passive; the schema is sta
 
 | Type | Selected fields / values |
 | --- | --- |
-| `Instance.settings` → `InstanceSettings` | Effective `recurrenceLookaheadDays`, `scheduledEventTitlePrefix`, `doneEventTitlePrefix`, including defaults |
+| `Instance.settings` → `InstanceSettings` | Effective `webapp`, `scheduledEventTitlePrefix`, `doneEventTitlePrefix`, including defaults |
 | `UpdateInstanceInput.settings` → `InstanceSettingsInput` | Patch selected settings; omission preserves, null title prefixes restore defaults |
 | `ShowOutcome` | `OPENED`, `UNAVAILABLE` |
 
@@ -165,7 +227,9 @@ prepare fresh automatic authorization and redirect to the requested view. See
 | --- | --- |
 | `Instance.validation` → `InstanceValidation` | `passed`, `dataChecksRun`, `checks` |
 | `ValidationCheck` | `name`, `passed`, `details` |
-| `Mutation.calendarInfo` → `CalendarInfoPayload` | `authorization`, `calendars`, `syncStates`, `diagnostics`, `failures`, `issues`, `changes`, `error` |
+| `SystemInfo.calendar` → `SystemCalendarInfo` | `authorization`, `helperPath`, `calendars`, `diagnostics`, `error` |
+| `Mutation.requestCalendarAccess` → `SystemCalendarInfo` | Explicit permission request; same global status fields |
+| `Instance.calendarSync` → `CalendarSyncInfo` | `syncStates`, `failures`, `issues`, `changes`, `error` |
 | `Calendar` | `name`, `account`, `writable` |
 | `CalendarActionState` | `id`, `status`, `diagnostic` |
 | `CalendarDiagnostic` | `category`, `reason`, `recovery` |
@@ -184,4 +248,5 @@ Response metadata (outside the type schema):
 message describing saved effects, failure, and recovery. Full failure returns no
 payload or durable changes. Writes are serial; earlier successful operations
 remain saved. Failed instance activation stops later writes.
-`calendarInfo` may request Calendar permission.
+`SystemInfo.calendar` never requests permission; `requestCalendarAccess` may
+request Calendar permission.

@@ -1,18 +1,19 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { execFileSync } from 'node:child_process';
-import { chmodSync, createWriteStream, mkdirSync, mkdtempSync, readFileSync, realpathSync, renameSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
-import { delimiter, join, relative } from 'node:path';
+import { chmodSync, createWriteStream, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { delimiter, join } from 'node:path';
 import { Writable } from 'node:stream';
 import { setTimeout as delay } from 'node:timers/promises';
-import { AutomationRunner, modelCommand, resolvePrompt } from '../src/automation/execution.js';
+import { AutomationRunner, modelCommand } from '../src/automation/execution.js';
 import { RunStorage } from '../src/automation/storage.js';
 import { compileSchedule } from '../src/automation/schedule.js';
 import * as models from '../src/automation/models.js';
 import { validateDefinition } from '../src/core/automation.js';
 import type { ScheduledJob } from '../src/automation/scheduler.js';
+import {readExecutionContextSnapshot} from '../src/source/execution-context.js';
 import { parseProjectFile, parseManifest, parseConfig } from '../src/core/parser.js';
-import { serializeProject } from '../src/mcp/tools/serialize.js';
-import { Store } from '../src/mcp/store.js';
+import { serializeProject } from '../src/source/serialize.js';
+import { Store } from '../src/source/store.js';
 import { handleUpdateProject } from '../src/mcp/tools/update.js';
 
 vi.mock('node:fs', async importOriginal => {
@@ -32,7 +33,7 @@ afterEach(async () => { vi.useRealTimers(); await runner.close(); vi.unstubAllEn
   rmSync(root, { recursive: true, force: true }); });
 function job(run: unknown, timeout?: string): ScheduledJob {
   const definition = validateDefinition({ schedule: { at: '2026-10-08T12:00Z' }, run, ...(timeout ? { timeout } : {}) });
-  return { key: 'test', root, instance: 'work', definedIn: '#project/2026-10-08-notes', declaration: definition, definition, schedule: compileSchedule(definition.schedule) };
+  return { key: 'test', root, instance: 'work', definedIn: '#project/2026-10-08-notes', declaration: definition, definition, schedule: compileSchedule(definition.schedule), executionContext: readExecutionContextSnapshot(root) };
 }
 function script(name: string, body: string): string {
   const path = join(root, name); writeFileSync(path, '#!/usr/bin/env node\n' + body); chmodSync(path, 0o700); return path;
@@ -86,6 +87,17 @@ function cleanFixture(pids: {pid: number; leader: number} | undefined): void {
   try { process.kill(pids.pid, 'SIGKILL'); } catch {}
 }
 describe('automation execution', () => {
+  it('records missing lifecycle settings as a failure without reopening instance configuration or launching work', async () => {
+    const marker = join(root, 'launched');
+    const command = script('must-not-launch.cjs', `require('node:fs').writeFileSync(${JSON.stringify(marker)}, 'launched');`);
+    const task = job({script: command});
+    delete task.executionContext;
+    writeFileSync(join(root, '.aside'), 'execution: [invalid]\n');
+    await runner.run(task, Date.now());
+    expect(storage.history()).toEqual([expect.objectContaining({status: 'failed', error: expect.stringContaining('Lifecycle execution context is unavailable')})]);
+    expect(() => readFileSync(marker)).toThrow();
+  });
+
   it('starts in the instance root, passes script arguments without shell interpretation and records output', async () => {
     script('script.js', "console.log(JSON.stringify({cwd:process.cwd(), args:process.argv.slice(2)}));");
     await runner.run(job({ script: './script.js', args: ['$(touch should-not-exist)', 'a b'] }), Date.now());
@@ -93,7 +105,7 @@ describe('automation execution', () => {
     expect(JSON.parse(readFileSync(join(run.directory, 'stdout.log'), 'utf8'))).toEqual({ cwd: root, args: ['$(touch should-not-exist)', 'a b'] });
     expect(run.cwd).toBe(root);
   });
-  it('passes only source and artifact pointers and rereads .aside execution settings at every launch', async () => {
+  it('passes source and artifact pointers with explicitly published execution settings', async () => {
     mkdirSync(join(root, 'artifacts', '2026'), { recursive: true });
     const artifact = join(root, 'artifacts', '2026', '2026-10-08-instructions.md');
     writeFileSync(artifact, '---\nname: Instructions\ncreated: 2026-10-08T12:00\n---\n\nOrganize this project.');
@@ -110,6 +122,7 @@ describe('automation execution', () => {
     expect(first.prompt).toBe(output.prompt);
     mkdirSync(join(root, 'elsewhere')); config('elsewhere');
     writeFileSync(artifact, '---\nname: Instructions\ncreated: 2026-10-08T12:00\n---\n\nUse current instructions.');
+    task.executionContext = readExecutionContextSnapshot(root);
     await runner.run(task, Date.now());
     const second = storage.history().find(run => run.id !== first.id)!;
     expect(second.cwd).toBe(join(root, 'elsewhere')); expect(second.prompt).toBe(first.prompt);
@@ -146,10 +159,10 @@ describe('automation execution', () => {
     const vendorModel = engine === 'codex' ? 'gpt-6.1-sol' : 'claude-sonnet-5';
     const discover = vi.fn(async (provider: string) => provider === engine ? [{ model: vendorModel }] : []);
     const catalog = new models.ModelCatalog({ discover });
-    const initial = await catalog.for(root);
+    const initial = await catalog.for(root, {executionContext: readExecutionContextSnapshot(root)});
     const name = initial.models.find(model => model.engine === engine)!.name;
     discover.mockImplementation(async () => []);
-    expect((await catalog.for(root, { refresh: true })).models).not.toContainEqual(expect.objectContaining({ name }));
+    expect((await catalog.for(root, {executionContext: readExecutionContextSnapshot(root), refresh: true })).models).not.toContainEqual(expect.objectContaining({ name }));
     discover.mockClear();
     await runner.run(job({ model: name, prompt: '#artifact/2026-10-08-instructions' }), Date.now());
     expect(discover).not.toHaveBeenCalled();
@@ -158,7 +171,7 @@ describe('automation execution', () => {
     expect(args.slice(args.indexOf('--model'), args.indexOf('--model') + 2)).toEqual(['--model', vendorModel]);
     expect(run.model).toEqual({ name, engine, model: vendorModel });
   });
-  it('resolves named built-in choices and honors launch-time cwd without replacing vendor aliases', async () => {
+  it('resolves named built-in choices and honors published cwd without replacing vendor aliases', async () => {
     vi.spyOn(models, 'builtinModel').mockReturnValue({ engine: 'claude', model: 'sonnet' });
     script('claude', "let prompt=''; process.stdin.on('data', chunk=>prompt+=chunk); process.stdin.on('end',()=>console.log(JSON.stringify({cwd:process.cwd(),args:process.argv.slice(2)}))); ");
     vi.stubEnv('PATH', root + delimiter + process.env.PATH);
@@ -196,33 +209,6 @@ describe('automation execution', () => {
       expect(run.status).toBe('failed'); expect(run.error).toContain('ENOENT');
       expect(run.command).toBe('claude');
     }
-  });
-  it('uses the artifact’s single primary UTF-8 attachment as prompt content', () => {
-    const dir = join(root, 'artifacts', '2026'); mkdirSync(join(dir, '2026-10-08-prompt'), { recursive: true });
-    writeFileSync(join(dir, '2026-10-08-prompt.md'), '---\nname: Prompt\ncreated: 2026-10-08T12:00\nattachments: [prompt.md]\n---\n');
-    writeFileSync(join(dir, '2026-10-08-prompt', 'prompt.md'), 'Attached instructions');
-    expect(resolvePrompt(root, '#artifact/2026-10-08-prompt')).toBe('Attached instructions');
-    expect(resolvePrompt(relative(process.cwd(), root), '#artifact/2026-10-08-prompt')).toBe('Attached instructions');
-    expect(() => resolvePrompt(root, '#artifact/2026-10-08-prompt/prompt.md')).toThrow(/primary artifact handle/);
-    expect(() => resolvePrompt(root, '#artifact/2026-10-08-missing')).toThrow();
-  });
-  it('rejects prompt record and attachment-directory symlinks even within the instance', () => {
-    const dir = join(root, 'artifacts', '2026');
-    const record = join(dir, '2026-10-08-prompt.md');
-    const saved = join(root, 'saved.md');
-    writeFileSync(saved, '---\nname: Prompt\ncreated: 2026-10-08T12:00\n---\nInstructions');
-    symlinkSync(saved, record);
-    expect(() => resolvePrompt(root, '#artifact/2026-10-08-prompt')).toThrow(/Symlinks are not allowed/);
-    rmSync(record);
-    writeFileSync(record, '---\nname: Prompt\ncreated: 2026-10-08T12:00\nattachments: [prompt.md]\n---\n');
-    mkdirSync(join(root, 'sources'));
-    writeFileSync(join(root, 'sources', 'prompt.md'), 'Attached instructions');
-    symlinkSync(join(root, 'sources'), join(dir, '2026-10-08-prompt'));
-    expect(() => resolvePrompt(root, '#artifact/2026-10-08-prompt')).toThrow(/Symlinks are not allowed/);
-    rmSync(join(dir, '2026-10-08-prompt'));
-    renameSync(dir, join(root, 'saved-year'));
-    symlinkSync(join(root, 'saved-year'), dir);
-    expect(() => resolvePrompt(root, '#artifact/2026-10-08-prompt')).toThrow(/Symlinks are not allowed/);
   });
   it('records missing named models and bad configuration as failed, without invoking an agent', async () => {
     await runner.run(job({ model: 'external', prompt: '#artifact/2026-10-08-instructions' }), Date.now());

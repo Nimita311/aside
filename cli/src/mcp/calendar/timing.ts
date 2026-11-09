@@ -37,7 +37,7 @@ export function eventTimingDiagnostic(event: CalEvent): CalendarDiagnostic | und
   }
   return reason ? {
     category: 'event-time-unrepresentable', reason,
-    recovery: 'Sync is blocked for this action in both directions; its record and calendar event are preserved. Correct the Calendar event to a first-occurrence whole-minute time, or explicitly change scheduled/timezone to an unambiguous start through update_action (UTC can express a repeated-hour instant). Name, notes, and duration-only edits do not unblock it. If timing metadata is missing, rebuild the calendar helper and restart the daemon, then check calendar_info.',
+    recovery: 'Sync is blocked for this action in both directions; its record and calendar event are preserved. Correct the Calendar event to a first-occurrence whole-minute time, or explicitly change scheduled/timezone to an unambiguous start through updateAction (UTC can express a repeated-hour instant). Name, notes, and duration-only edits do not unblock it. If timing metadata is missing, rebuild the calendar helper and restart the daemon, then check Instance.calendarSync through query.',
   } : undefined;
 }
 

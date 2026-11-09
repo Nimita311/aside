@@ -3,9 +3,10 @@ import { mkdirSync, writeFileSync, readFileSync, rmSync, existsSync } from 'node
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { parse as parseYaml } from 'yaml';
-import { Store } from '../src/mcp/store.js';
+import { Store } from '../src/source/store.js';
 import { handleCapture, type CaptureArgs } from '../src/mcp/tools/capture.js';
 import { handleUpdateEntry } from '../src/mcp/tools/update.js';
+import { executeGraphQL } from '../src/graphql/schema.js';
 
 // Capture with a default entry description, so tests that don't assert on the
 // timeline headline stay terse. Pass `description` to override it.
@@ -22,21 +23,20 @@ describe('handleCapture', () => {
   let tempDir: string;
   let store: Store;
 
-  it('returns a reusable quoted file path for instances with newline and control characters', () => {
+  it('reads back a reusable file path for instances with newline and control characters', async () => {
     const unusualDir = join(tempDir, 'instance\nid: forged\t\u001b[0m');
     mkdirSync(unusualDir, { recursive: true });
     writeFileSync(join(unusualDir, 'aside.md'), '---\nid: unusual-path\nname: Unusual path\n---\n');
     const unusualStore = new Store(unusualDir);
     try {
       const result = cap(unusualStore, { content: 'Captured safely.' }, new Date(2026, 9, 3, 9, 0));
-      expect(result.text).not.toContain('\nid: forged');
-      expect(result.text).not.toContain('\t');
-      expect(result.text).not.toContain('\u001b');
-      const returnedPath = JSON.parse(result.text.match(/^file: (.+)$/m)![1]);
+      const path = async () => (await executeGraphQL(unusualStore, 'query', { document: `{ entry(id: "${result.entryId}") { filePath } }` })).data as { entry: { filePath: string } };
+      const returnedPath = (await path()).entry.filePath;
       expect(returnedPath).toBe(unusualStore.getEntryFile(result.entryId));
+      expect(returnedPath.startsWith(unusualDir)).toBe(true);
       expect(readFileSync(returnedPath, 'utf8')).toContain('Captured safely.');
-      const updated = handleUpdateEntry(unusualStore, { id: result.entryId, description: 'Updated safely.' });
-      expect(JSON.parse(updated.text.match(/^file: (.+)$/m)![1])).toBe(returnedPath);
+      handleUpdateEntry(unusualStore, { id: result.entryId, description: 'Updated safely.' });
+      expect((await path()).entry.filePath).toBe(returnedPath);
     } finally {
       unusualStore.close();
     }
@@ -94,7 +94,7 @@ describe('handleCapture', () => {
       content: 'A brand new entry for today',
     }, now);
 
-    expect(result.text).toContain('entry: 2026-05-06T14:30');
+    expect(result.entryId).toBe('2026-05-06T14:30');
 
     // Should be in the same weekly file (Monday 2026-05-04)
     const weekFile = join(tempDir, 'notes', '2026', '2026-05-04.md');
@@ -120,8 +120,7 @@ describe('handleCapture', () => {
   it('returns the entry weekly-file path', () => {
     const now = new Date(2026, 4, 6, 14, 30); // same week as 2026-05-04
     const result = cap(store, { content: 'Path check' }, now);
-    expect(result.text).toContain('file:');
-    expect(result.text).toContain('notes/2026/2026-05-04.md');
+    expect(store.getEntryFile(result.entryId)).toBe(join(tempDir, 'notes', '2026', '2026-05-04.md'));
   });
 
   it('creates a new weekly file if none exists for the current week', () => {
@@ -131,7 +130,7 @@ describe('handleCapture', () => {
       content: 'Entry in a new week',
     }, now);
 
-    expect(result.text).toContain('entry: 2026-05-11T09:15');
+    expect(result.entryId).toBe('2026-05-11T09:15');
 
     const weekFile = join(tempDir, 'notes', '2026', '2026-05-11.md');
     expect(existsSync(weekFile)).toBe(true);
@@ -149,7 +148,7 @@ describe('handleCapture', () => {
       projects: [{ name: 'My New Project', description: 'A brand new project', body: 'Project details here' }],
     }, now);
 
-    expect(result.text).toContain('projects_created: [2026-05-08-my-new-project]');
+    expect(result.createdProjectIds).toEqual(['2026-05-08-my-new-project']);
 
     // Check project file exists
     const projFile = join(tempDir, 'projects', '2026', '2026-05-08-my-new-project.md');
@@ -176,7 +175,7 @@ describe('handleCapture', () => {
       actions: [{ name: 'Fix Bug', description: 'Fix the login bug for real', body: 'Fix the login bug', scheduled: '2026-05-10', deadline: '2026-05-15' }],
     }, now);
 
-    expect(result.text).toContain('actions_created: [2026-05-08-fix-bug]');
+    expect(result.createdActionIds).toEqual(['2026-05-08-fix-bug']);
 
     // Check action file exists
     const actFile = join(tempDir, 'actions', '2026', '2026-05-08-fix-bug.md');
@@ -207,9 +206,11 @@ describe('handleCapture', () => {
       actions: ['existing-action', { name: 'New Act', description: 'A new action' }],
     }, now);
 
-    expect(result.text).toContain('entry: 2026-05-08T11:00');
-    expect(result.text).toContain('projects_created: [2026-05-08-new-proj]');
-    expect(result.text).toContain('actions_created: [2026-05-08-new-act]');
+    expect(result).toEqual({
+      entryId: '2026-05-08T11:00',
+      createdProjectIds: ['2026-05-08-new-proj'],
+      createdActionIds: ['2026-05-08-new-act'],
+    });
 
     // Check the weekly file contains references to all entities
     const weekFile = join(tempDir, 'notes', '2026', '2026-05-04.md');
@@ -236,7 +237,7 @@ describe('handleCapture', () => {
     }, now)).toThrow('Action "nonexistent-action" not found.');
   });
 
-  it('omits projects_created and actions_created lines when empty', () => {
+  it('reports no created IDs when only existing records are linked', () => {
     const now = new Date(2026, 4, 8, 11, 0);
     const result = cap(store, {
       content: 'Simple entry with no new entities',
@@ -244,9 +245,7 @@ describe('handleCapture', () => {
       actions: ['existing-action'],
     }, now);
 
-    expect(result.text).not.toContain('projects_created');
-    expect(result.text).not.toContain('actions_created');
-    expect(result.text).toContain('entry: 2026-05-08T11:00');
+    expect(result).toEqual({ entryId: '2026-05-08T11:00', createdProjectIds: [], createdActionIds: [] });
   });
 
   it('reflects new entry, project, and action in the same store synchronously', () => {
@@ -341,10 +340,7 @@ describe('handleCapture', () => {
   it('amend preserves the canonical delimiter on every entry', () => {
     // Prepend one entry, then amend the original — exercises the re-render path.
     cap(new Store(tempDir), { content: 'Second entry' }, new Date(2026, 4, 6, 14, 30));
-    cap(new Store(tempDir), {
-      id: '2026-05-04T10:00',
-      content: 'Amended original',
-    }, new Date(2026, 4, 6, 15, 0));
+    handleUpdateEntry(new Store(tempDir), { id: '2026-05-04T10:00', content: 'Amended original' });
 
     const content = readFileSync(join(tempDir, 'notes', '2026', '2026-05-04.md'), 'utf-8');
     expect(content).toContain('Amended original');
@@ -497,7 +493,7 @@ describe('handleCapture', () => {
       content: 'Colliding entry',
     }, now);
 
-    expect(result.text).toContain('entry: 2026-05-04T10:01');
+    expect(result.entryId).toBe('2026-05-04T10:01');
 
     const weekFile = join(tempDir, 'notes', '2026', '2026-05-04.md');
     const content = readFileSync(weekFile, 'utf-8');
@@ -564,7 +560,7 @@ describe('handleCapture', () => {
     const now = new Date(2026, 4, 8, 11, 0);
     const result = cap(store, { content: 'Content', projects: [{ name: 'Café résumé', description: 'desc' }] }, now);
     // Normalize both sides: accented letters survive, only punctuation/space become dashes.
-    expect(result.text.normalize('NFC')).toContain('2026-05-08-café-résumé'.normalize('NFC'));
+    expect(result.createdProjectIds[0].normalize('NFC')).toBe('2026-05-08-café-résumé'.normalize('NFC'));
   });
 
   it('derives readable IDs from CJK names', () => {
@@ -581,7 +577,7 @@ describe('handleCapture', () => {
       const result = cap(store, { content: 'Content', projects: [{ name, description: 'desc' }] }, now);
       // Compare normalized so the assertion is independent of how the source literal
       // and the on-disk filename happen to be Unicode-normalized.
-      expect(result.text.normalize('NFC')).toContain(expectedId.normalize('NFC'));
+      expect(result.createdProjectIds[0].normalize('NFC')).toBe(expectedId.normalize('NFC'));
     }
   });
 
@@ -735,7 +731,7 @@ describe('handleCapture', () => {
       projectIndex: idxMap(s.getProjectIndex()),
       actionIndex: idxMap(s.getActionIndex()),
       rels: s.getProjectIds().sort().map(id => [id, s.getActionsForProject(id).slice().sort()]),
-      revRels: s.getActionIds().sort().map(id => [id, s.getProjectsForAction(id).slice().sort()]),
+      revRels: s.getActionIds().sort().map(id => [id, [...(s.getRelations().projectsByAction.get(id) ?? [])].slice().sort()]),
     });
 
     cap(store, {

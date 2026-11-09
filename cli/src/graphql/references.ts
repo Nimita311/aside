@@ -1,7 +1,7 @@
 import { join, relative, resolve } from 'node:path';
-import { realpathSync } from 'node:fs';
 import { artifactHandle, artifactAttachmentRelativePath, assertArtifactId, assertAttachmentFilename } from '../core/artifact-reference.js';
-import { contentAttachmentPath } from '../core/content-attachment.js';
+import type {AttachmentFile} from '../core/attachment-metadata.js';
+import {attachmentFiles} from '../mcp/attachments.js';
 import { extractContentReferences, type ContentReference } from '../core/content-reference.js';
 import { entityFilePath, weekFilePath } from '../core/record-reference.js';
 import type { ParseIssue } from '../core/types.js';
@@ -35,10 +35,13 @@ export function referenceFilePath(root: string, node: RecordNode): string | null
   return existing === undefined ? join(root, node.kind === 'entry' ? weekFilePath(node.record.weekFile) : entityFilePath(node.kind, node.id)) : existing;
 }
 
-// Snapshot-owned record Markdown and metadata. Attachments are targets only:
-// validate their paths, but never inspect bytes to discover references.
-// No Store reload, housekeeping, scheduling, or record write occurs here.
-export function buildReferenceGraph(root: string, records: ReferenceRecords, signal?: AbortSignal): ReferenceGraph {
+// The source owner supplies record content, attachment observations and root
+// aliases from one generation. Graph construction is pure snapshot work.
+export function buildReferenceGraph(root: string, records: ReferenceRecords, options: {
+  attachments: ReadonlyMap<string, readonly AttachmentFile[]>;
+  roots: readonly string[];
+  signal?: AbortSignal;
+}): ReferenceGraph {
   const targets = new Map<string, ReferenceTarget>();
   const targetPaths = new Map<string, string>();
   const forward = new Map<string, Set<string>>();
@@ -47,7 +50,7 @@ export function buildReferenceGraph(root: string, records: ReferenceRecords, sig
   const issues: ParseIssue[] = [];
   const sources: { node: RecordNode; markdown: string; filePath: string; baseFile: string; projected: boolean }[] = [];
   const missing = new Set<string>();
-  const check = () => { if (signal?.aborted) throw new Error('GraphQL request cancelled.'); };
+  const check = () => { if (options.signal?.aborted) throw new Error('GraphQL request cancelled.'); };
   const add = (map: Map<string, Set<string>>, key: string, value: string) => {
     const values = map.get(key) ?? new Set();
     values.add(value); map.set(key, values);
@@ -58,7 +61,7 @@ export function buildReferenceGraph(root: string, records: ReferenceRecords, sig
     missing.add(key);
     issues.push({ severity: 'error', code, file, message });
   };
-  const roots = [...new Set([resolve(root), realpathSync(root)])];
+  const roots = options.roots;
   for (const kind of Object.keys(records) as Kind[]) for (const node of records[kind].values()) {
     check();
     targets.set(node.handle, node);
@@ -70,7 +73,9 @@ export function buildReferenceGraph(root: string, records: ReferenceRecords, sig
     sources.push({ node, markdown: body, filePath: sourcePath, baseFile: relative(root, sourcePath).split('\\').join('/'), projected: node.projected });
   }
   for (const artifact of records.artifact.values()) {
-    for (const filename of [...new Set<string>(artifact.record.frontMatter.attachments ?? [])].sort()) {
+    const filenames = [...new Set<string>(artifact.record.frontMatter.attachments ?? [])].sort();
+    for (const observed of attachmentFiles(options.attachments.get(artifact.id), artifact.id, filenames)) {
+      const filename = observed.filename;
       check();
       let handle: string;
       try { handle = artifactHandle(artifact.id, filename); }
@@ -78,13 +83,11 @@ export function buildReferenceGraph(root: string, records: ReferenceRecords, sig
         report(referenceFilePath(root, artifact)!, `Artifact ${artifact.id} has an invalid attachment ${filename}: ${(error as Error).message}`, 'content_reference_invalid');
         continue;
       }
-      let path: string;
-      try { path = contentAttachmentPath(root, artifact.id, filename); }
-      catch (error) {
-        report(referenceFilePath(root, artifact)!, `Attachment ${handle} cannot be resolved: ${(error as Error).message}`, 'content_reference_attachment');
+      if (!observed.path || observed.error) {
+        report(referenceFilePath(root, artifact)!, `Attachment ${handle} cannot be resolved: ${observed.error ?? 'No published attachment path'}`, 'content_reference_attachment');
         continue;
       }
-      const node: AttachmentNode = { __typename: 'Attachment', filename, handle, filePath: path };
+      const node: AttachmentNode = { __typename: 'Attachment', filename, handle, filePath: observed.path };
       const baseFile = artifactAttachmentRelativePath(artifact.id, filename);
       targets.set(handle, node); targetPaths.set(handle, baseFile);
     }

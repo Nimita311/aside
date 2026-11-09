@@ -5,9 +5,9 @@ import { join } from 'node:path';
 import { request as httpRequest } from 'node:http';
 import { prepareWebQuery } from '../src/web/query.js';
 import { AsideWebServer, type WebBackend } from '../src/web/server.js';
-import { availableInstances } from '../src/web/catalogue.js';
+import {availableInstances} from '../src/source/instance-admission.js';
 import { executeGraphQL } from '../src/graphql/schema.js';
-import { Store } from '../src/mcp/store.js';
+import { Store } from '../src/source/store.js';
 import { WEB_QUERY_MAX_RESPONSE_BYTES, WEB_QUERY_TIMEOUT_MS } from '../src/core/web-query.js';
 
 const rejected = (query: string, variables?: Record<string, unknown>) => {
@@ -24,6 +24,7 @@ describe('webpage GraphQL policy', () => {
     expect('args' in prepared).toBe(true);
   });
   it.each(['{ instances { id } }', '{ activeInstance { id } }', '{ __schema { types { name } } }',
+    '{ geocodeAddress(input:{query:"10 Downing Street, London, UK"}) {status} }',
     '{ __type(name:"Action") { name } }', '{ project(id:"x") { automations { nodes { name } } } }',
     '{ projects { nodes { automationLog { nodes { id } } } } }',
     'query { hidden: activeInstance @skip(if:true) { execution { models { name } } } }',

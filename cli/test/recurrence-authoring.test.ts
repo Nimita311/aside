@@ -1,17 +1,18 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { init } from '../src/commands/init.js';
-import { Store } from '../src/mcp/store.js';
+import { dirname, join } from 'node:path';
+import { init } from '../src/source/bootstrap.js';
+import { Store } from '../src/source/store.js';
 import { handleCapture } from '../src/mcp/tools/capture.js';
-import { handleUpdateOccurrence, handlePlanningActions } from '../src/mcp/tools/recurrence.js';
+import { handleUpdateOccurrence } from '../src/mcp/tools/recurrence.js';
 import { handleUpdateAction } from '../src/mcp/tools/update.js';
-import type { RecurrenceSchedule } from '../src/core/recurrence.js';
-import { handleUpdateInstance } from '../src/mcp/tools/instance.js';
+import { planningActions, projectionId, resolveProjection, type RecurrenceSchedule } from '../src/core/recurrence.js';
 import { CalClient } from '../src/mcp/calendar/client.js';
 import { InstanceHost } from '../src/daemon/host.js';
-import { recurrenceHistoryPath } from '../src/mcp/recurrence-history.js';
-import { serializeAction } from '../src/mcp/tools/serialize.js';
-import * as indexFiles from '../src/mcp/tools/index-file.js';
+import { recurrenceHistoryPath } from '../src/source/recurrence-history.js';
+import { serializeAction } from '../src/source/serialize.js';
+import * as indexFiles from '../src/storage/atomic-file.js';
+import {hostGraphQL} from './support/graphql-host.js';
 
 let dir: string, store: Store, template: string, project: string;
 const recurrence = [{ dtstart: '2026-01-01', rrule: 'FREQ=DAILY' }];
@@ -34,14 +35,26 @@ describe('recurrence authoring', () => {
   it('allocates IDs using materialization date and edited names without making entries', () => {
     const entryCount = store.getEntries().length;
     const now = new Date(2026, 9, 9, 12, 30);
+    expect(resolveProjection(store.getActions(), projectionId({ template, original: '2026-12-01' }))!.frontMatter)
+      .not.toHaveProperty('created');
     const first = handleUpdateOccurrence(store, { template, original: '2026-12-01', name: 'Long walk', resolution: 'done' }, now);
     const second = handleUpdateOccurrence(store, { template, original: '2026-12-02', name: 'Long walk', resolution: 'cancelled' }, now);
     expect(first.id).toBe('2026-10-09-long-walk'); expect(second.id).toBe('2026-10-09-long-walk-2');
     expect(store.getAction(first.id)?.frontMatter.created).toBe('2026-10-09T12:30');
-    expect(store.getProjectsForAction(first.id)).toContain(project);
+    expect([...(store.getRelations().projectsByAction.get(first.id) ?? [])]).toContain(project);
     expect(store.getEntries()).toHaveLength(entryCount);
     expect(handleUpdateOccurrence(store, { template, original: '2026-12-01', name: 'Renamed' }, now).id).toBe(first.id);
-    store.rebuild(); expect(store.getProjectsForAction(first.id)).toContain(project);
+    store.rebuild(); expect([...(store.getRelations().projectsByAction.get(first.id) ?? [])]).toContain(project);
+  });
+  it('warns when a saved occurrence has no index row for its description', () => {
+    const { id } = handleUpdateOccurrence(store, { template, original: '2026-12-01', resolution: 'done' });
+    const index = join(dirname(store.getActionFile(id)!), 'index.yaml');
+    writeFileSync(index, '[]\n'); store.rebuild();
+    const result = handleUpdateOccurrence(store, { template, original: '2026-12-01', name: 'Renamed', description: 'Lost summary' });
+    expect(result.id).toBe(id);
+    expect(result.warning).toContain('Description not saved');
+    expect(store.getAction(id)?.frontMatter.name).toBe('Renamed');
+    expect(readFileSync(index, 'utf8')).toBe('[]\n');
   });
   it('rejects no-op materialization, immutable provenance changes, and history rewrites', () => {
     expect(() => handleUpdateOccurrence(store, { template, original: '2026-12-01' })).toThrow('edit is required');
@@ -97,11 +110,11 @@ describe('recurrence authoring', () => {
     handleUpdateAction(store, { id: template, recurrence: { remove: selector } });
     store.close(); store = new Store(dir);
     expect(store.getAction(template)?.frontMatter.recurrence).toEqual([]);
-    expect(store.getProjectsForAction(saved)).toContain(project);
-    expect(store.getProjectsForAction(future)).toContain(project);
-    const page = JSON.parse(handlePlanningActions(store, { from: '2026-01-01', to: '2099-01-04' }));
-    expect(page.nodes.map((row: { id: string }) => row.id).sort()).toEqual([saved, future].sort());
-    expect(page.nodes.every((row: { projected: boolean }) => !row.projected)).toBe(true);
+    expect([...(store.getRelations().projectsByAction.get(saved) ?? [])]).toContain(project);
+    expect([...(store.getRelations().projectsByAction.get(future) ?? [])]).toContain(project);
+    const page = planningActions(store.getActions(), { from: '2026-01-01', to: '2099-01-04' });
+    expect(page.nodes.map(row => row.id).sort()).toEqual([saved, future].sort());
+    expect(page.nodes.every(row => !row.projected)).toBe(true);
     expect(handleUpdateOccurrence(store, { template, original: '2026-01-03', name: 'Renamed saved work' }).id).toBe(saved);
     handleUpdateAction(store, { id: template, recurrence: { append: { dtstart: '2099-01-01', rrule: 'FREQ=WEEKLY' } } });
     expect(store.getAction(template)?.frontMatter.recurrence).toHaveLength(1);
@@ -188,23 +201,23 @@ describe('recurrence authoring', () => {
   });
   it('paginates all history and filters projects before selecting a page', () => {
     const count = store.getActions().size;
+    const templates = store.getActionsForProject(project);
     const ids = new Set<string>(); let after: string | undefined;
-    do { const page = JSON.parse(handlePlanningActions(store, { projects: [project], from: '2026-01-01', to: '2026-12-31', limit: 17, after })); for (const row of page.nodes) { expect(ids.has(row.id)).toBe(false); ids.add(row.id); } after = page.next ?? undefined; } while (after);
+    do { const page = planningActions(store.getActions(), { templates, savedIds: templates, from: '2026-01-01', to: '2026-12-31', limit: 17, after }); for (const row of page.nodes) { expect(ids.has(row.id)).toBe(false); ids.add(row.id); } after = page.next ?? undefined; } while (after);
     expect(ids.size).toBe(365); expect(store.getActions().size).toBe(count);
-    handleUpdateInstance(store, { recurrenceLookaheadDays: 30 }); expect(store.getInstance()?.manifest.config?.recurrenceLookaheadDays).toBe(30);
   });
   it('exposes typed recurrence and projected occurrences through the ordinary action query', async () => {
     vi.spyOn(Store.prototype, 'watch').mockImplementation(() => {});
     const host = new InstanceHost(new CalClient(null));
     try {
-      const query = JSON.parse((await host.tool(dir, 'query', { document: '{ saved: actions(where: {not: {occurrence: {projected: true}}}) { totalCount } actions(where: {occurrence: {projected: true}}, limit: 2) { nodes { occurrence { template { id } original projected } scheduled projects { nodes { id } } } offset count totalCount } }' })).text);
+      const query = JSON.parse((await hostGraphQL(host, dir, 'query', { document: '{ saved: actions(where: {not: {occurrence: {projected: true}}}) { totalCount } actions(where: {occurrence: {projected: true}}, limit: 2) { nodes { occurrence { template { id } original projected } scheduled projects { nodes { id } } } offset count totalCount } }' })).text);
       expect(query.errors).toBeUndefined(); expect(query.data.saved.totalCount).toBe(1);
       expect(query.data.actions).toMatchObject({offset: 0, count: 2});
       expect(query.data.actions.nodes).toHaveLength(2);
       expect(query.data.actions.totalCount).toBeGreaterThanOrEqual(2);
       expect(query.data.actions.nodes[0].occurrence.projected).toBe(true);
       expect(query.data.actions.nodes[0].projects.nodes[0].id).toBe(project);
-      const result = JSON.parse((await host.tool(dir, 'mutate', { document: `mutation { updateOccurrence(input: {template: "${template}", original: "2026-12-01", status: DONE}) { action { id occurrence { original projected } } } }` })).text);
+      const result = JSON.parse((await hostGraphQL(host, dir, 'mutate', { document: `mutation { updateOccurrence(input: {template: "${template}", original: "2026-12-01", status: DONE}) { action { id occurrence { original projected } } } }` })).text);
       expect(result.errors).toBeUndefined(); expect(result.data.updateOccurrence.action.occurrence).toEqual({original: '2026-12-01', projected: false});
     } finally { await host.close(); }
   });

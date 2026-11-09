@@ -4,9 +4,9 @@ import { mkdtempSync, realpathSync, mkdirSync, writeFileSync, rmSync } from 'nod
 import crypto from 'node:crypto';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { Store } from '../src/mcp/store.js';
+import { Store } from '../src/source/store.js';
 import { AsideWebServer } from '../src/web/server.js';
-import { availableInstances } from '../src/web/catalogue.js';
+import {availableInstances} from '../src/source/instance-admission.js';
 import type { DataSnapshot } from '../src/core/data-snapshot.js';
 
 let dir: string;

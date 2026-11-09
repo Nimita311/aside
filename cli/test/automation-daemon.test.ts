@@ -8,6 +8,7 @@ import { CalClient } from '../src/mcp/calendar/client.js';
 import { daemonPaths } from '../src/daemon/paths.js';
 import { ownHello, type HelloResult } from '../src/daemon/protocol.js';
 import type { AutomationInspection } from '../src/automation/controller.js';
+import {hostGraphQL} from './support/graphql-host.js';
 
 let root: string, daemon: Daemon, host: InstanceHost;
 beforeEach(() => { root = realpathSync(mkdtempSync('/tmp/aside-auto-d-')); });
@@ -123,21 +124,24 @@ process.stdin.on('end', async () => {
     expect(run.prompt).not.toContain(instructions);
     expect(run.prompt).toContain('Instance: work');
   }, 10000);
-  it('ingests GraphQL and entity-tool automation writes and disables them immediately', async () => {
+  it('ingests GraphQL automation writes and disables them immediately', async () => {
     const instance = join(root, 'instance'); mkdirSync(instance); manifest(instance, {});
     await start(instance);
     const automations = { digest: { schedule: { cron: '0 8 * * *', timezone: 'UTC' }, run: { script: 'echo', args: ['digest'] } } };
-    const result = JSON.parse((await host.tool(instance, 'mutate', {
+    const result = JSON.parse((await hostGraphQL(host, instance, 'mutate', {
       document: 'mutation($jobs: [CreateAutomationInput!]!) { updateInstance(input: {automations: {set: $jobs}}) { instance { automations { nodes { name run { script args } } } } error } }', variables: { jobs: Object.entries(automations).map(([name, definition]) => ({name, ...definition})) },
     })).text);
     expect(result.errors).toBeUndefined();
     await until(async () => { const report = await host.automationStatus(); return report.jobs.length === 1 && !!report.jobs[0].next; });
-    const capture = await host.tool(instance, 'capture', { content: 'Setup digest', description: 'Setup digest', projects: [{ name: 'Digest', description: 'Digest', automations }] });
-    expect(capture.text).toContain('digest');
+    const named = (enabled?: boolean) => Object.entries(automations).map(([name, definition]) => ({name, ...definition, ...(enabled === undefined ? {} : {enabled})}));
+    const mutate = async (document: string, variables: Record<string, unknown>) => JSON.parse((await hostGraphQL(host, instance, 'mutate', { document, variables })).text);
+    const capture = await mutate('mutation($input: CaptureInput!) { capture(input: $input) { createdProjects { automations { nodes { name } } } } }',
+      { input: { content: 'Setup digest', description: 'Setup digest', projects: [{ create: { name: 'Digest', description: 'Digest', automations: named() } }] } });
+    expect(capture.data.capture.createdProjects[0].automations.nodes).toEqual([{ name: 'digest' }]);
     await until(async () => (await host.automationStatus()).jobs.length === 2);
     const project = (await host.automationStatus()).jobs.find(job => job.definedIn.startsWith('#project/'))!.definedIn.slice('#project/'.length);
-    await host.tool(instance, 'update_project', { id: project, automations: { digest: { ...automations.digest, enabled: false } } });
-    await host.tool(instance, 'update_instance', { automations: null });
+    expect((await mutate('mutation($id: ID!, $jobs: [CreateAutomationInput!]!) { updateProject(id: $id, input: {automations: {set: $jobs}}) { error } }', { id: project, jobs: named(false) })).errors).toBeUndefined();
+    expect((await mutate('mutation { updateInstance(input: {automations: {set: []}}) { error } }', {})).errors).toBeUndefined();
     await until(async () => { const report = await host.automationStatus(); return report.jobs.length === 1 && !report.jobs[0].next; });
     expect((await host.automationStatus()).runs).toHaveLength(0);
   });
@@ -161,7 +165,8 @@ process.stdin.on('end', async () => {
     const file = join(projectDir, '2026-10-08-notes.md');
     writeFileSync(file, `---\n${stringify({ name: 'Notes', created: '2026-10-08T12:00', automations: { daily: { schedule: { cron: '0 8 * * *', timezone: 'UTC' }, run: { script: './work.js' } } } })}---\n`);
     await until(async () => (await host.automationStatus()).jobs.some(job => job.definedIn === '#project/2026-10-08-notes'));
-    await host.tool(instance, 'update_project', { id: '2026-10-08-notes', ended: '2026-10-08T12:00' });
+    const ended = JSON.parse((await hostGraphQL(host, instance, 'mutate', { document: 'mutation { updateProject(id: "2026-10-08-notes", input: {ended: "2026-10-08T12:00"}) { error } }' })).text);
+    expect(ended.errors).toBeUndefined();
     await until(async () => !(await host.automationStatus()).jobs.some(job => job.definedIn === '#project/2026-10-08-notes'));
     await daemon.shutdown(); await start(instance);
     await until(async () => (await host.automationStatus()).jobs.length === 2);

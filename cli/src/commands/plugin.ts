@@ -9,11 +9,10 @@ import { delimiter, dirname, isAbsolute, join, resolve } from 'node:path';
 import { publishReceipt, publishReport, type Report } from './output.js';
 import { parseCommand, type CommandInput } from './options.js';
 import { ownProgram } from '../daemon/client.js';
-import { formatScalar } from '../mcp/format.js';
+import { formatScalar } from '../core/text.js';
 
 const SKILL = 'aside';
-type Surface = 'graphql' | 'legacy';
-const pluginDirectory = (surface: Surface) => join('agent', surface);
+const PLUGIN_DIRECTORY = join('agent', 'graphql');
 const PACKAGE_FILES = ['.claude-plugin/marketplace.json', '.claude-plugin/plugin.json', '.mcp.json', `skills/${SKILL}/SKILL.md`];
 
 export interface RunResult {
@@ -43,13 +42,14 @@ export interface PluginContext {
   codexHome?: string;
   // The source checkout this bundle was built in.
   root: string;
-  surface?: Surface;
   node: string;
   script: string;
   // An agent's CLI, by name; null when it is not installed.
   find(name: 'claude' | 'codex'): string | null;
   // The CLI the plugins launch from PATH; injectable without changing PATH.
   findAside?(): string | null;
+  // Alternate bounded reader for status consumers hosted inside a long-lived process.
+  readTree?(directory: string): Map<string, Buffer>;
   out(line: string): void;
   report?: { value: Report; section: string; events: string[]; states: Record<string, unknown>; operations: Array<{ command: string; args: string[]; cwd?: string; print: boolean; result?: RunResult }> };
 }
@@ -83,8 +83,8 @@ function findAgent(name: 'claude' | 'codex', home: string): string | null {
 // by the files the plugin command hands to the agents.
 export function checkoutRoot(script: string): string {
   const root = resolve(dirname(script), '..', '..');
-  for (const surface of ['graphql', 'legacy'] as const) for (const file of PACKAGE_FILES) {
-    const needed = join(pluginDirectory(surface), file);
+  for (const file of PACKAGE_FILES) {
+    const needed = join(PLUGIN_DIRECTORY, file);
     if (!existsSync(join(root, needed))) {
       throw new Error(`aside plugin works from a source checkout: ${join(root, needed)} is missing.`);
     }
@@ -92,7 +92,7 @@ export function checkoutRoot(script: string): string {
   return root;
 }
 
-function defaultContext(): PluginContext {
+export function defaultPluginContext(): PluginContext {
   const { node, script } = ownProgram();
   const home = homedir();
   return {
@@ -108,6 +108,32 @@ function defaultContext(): PluginContext {
     findAside: () => onPath('aside'),
     out: (line) => console.log(line),
   };
+}
+
+export interface PluginStatusSnapshot {
+  checkout: string;
+  information: Report['sections'];
+  checks: Report['checks'];
+  agents: { claude?: ClaudeState; codex?: CodexState };
+}
+
+/** Read the same status as the CLI without publishing a report or changing registration. */
+export async function inspectPluginStatus(original: PluginContext = defaultPluginContext()): Promise<PluginStatusSnapshot> {
+  const report: Report = { title: 'Aside plugin status', data: {}, sections: [], checks: [] };
+  const ctx: PluginContext = { ...original,
+    report: { value: report, section: 'CLI', events: [], states: {}, operations: [] }, out: line => {
+      if (!line.trim()) return;
+      const check = [...report.checks].reverse().find(check => !check.passed);
+      if (check && /^\s/.test(line)) (check.problems ??= []).push(line.trim());
+    } };
+  try { await status(ctx); }
+  catch (error) {
+    report.checks.push({ code: 'plugin_operation', label: 'Plugin status', passed: false,
+      problems: [error instanceof Error ? error.message : String(error)],
+      ...(error instanceof PluginRecoveryError ? { fixes: error.fixes } : {}) });
+  }
+  return { checkout: ctx.root, information: report.sections,
+    checks: report.checks, agents: ctx.report!.states as PluginStatusSnapshot['agents'] };
 }
 
 function samePath(a: string, b: string): boolean {
@@ -166,7 +192,6 @@ async function json<T>(ctx: PluginContext, command: string, args: string[]): Pro
 // Both agents read the same Claude-compatible marketplace and plugin files.
 interface PluginNames {
   marketplace: string;
-  surface: Surface;
   directory: string;
   plugin: string;
   // plugin@marketplace
@@ -174,43 +199,21 @@ interface PluginNames {
 }
 
 function pluginNames(ctx: PluginContext): PluginNames {
-  const surface = ctx.surface ?? 'graphql';
-  const directory = join(ctx.root, pluginDirectory(surface));
+  const directory = join(ctx.root, PLUGIN_DIRECTORY);
   const manifest = JSON.parse(readFileSync(join(directory, '.claude-plugin', 'marketplace.json'), 'utf8')) as {
     name?: string;
     plugins?: Array<{ name?: string }>;
   };
   const plugin = manifest.plugins?.[0]?.name;
-  if (!manifest.name || !plugin) throw new Error(`The checkout's ${pluginDirectory(surface)}/.claude-plugin/marketplace.json names no marketplace or plugin.`);
-  return { marketplace: manifest.name, surface, directory, plugin, id: `${plugin}@${manifest.name}` };
+  if (!manifest.name || !plugin) throw new Error(`The checkout's ${PLUGIN_DIRECTORY}/.claude-plugin/marketplace.json names no marketplace or plugin.`);
+  return { marketplace: manifest.name, directory, plugin, id: `${plugin}@${manifest.name}` };
 }
 
-
-// Switching the selected surface (or migrating the old package in this same
-// checkout) is explicitly requested by install. Other checkouts still need --force.
+// Moving from a former package directory in this same checkout is explicitly
+// requested by install. Other checkouts still need --force.
 function sameCheckoutPackage(ctx: PluginContext, path: string): boolean {
-  return [join(ctx.root, 'agent'), ...(['graphql', 'legacy'] as const).map(surface => join(ctx.root, pluginDirectory(surface)))].some(candidate => samePath(path, candidate));
-}
-
-function registeredSurface(ctx: PluginContext, directory: string): Surface | null {
-  if (samePath(directory, join(ctx.root, 'agent')) || samePath(directory, join(ctx.root, pluginDirectory('graphql')))) return 'graphql';
-  if (samePath(directory, join(ctx.root, pluginDirectory('legacy')))) return 'legacy';
-  try {
-    const config = JSON.parse(readFileSync(join(directory, '.mcp.json'), 'utf8'));
-    const server = config?.mcpServers?.aside;
-    if (server?.command === 'aside' && Array.isArray(server.args) && server.args[0] === 'mcp' && server.args.every((arg: unknown) => typeof arg === 'string')) {
-      return server.args.includes('--legacy') ? 'legacy' : 'graphql';
-    }
-  } catch { /* An unavailable or unfamiliar package does not establish its mode. */ }
-  return null;
-}
-
-function checkRemovalSurface(ctx: PluginContext, names: PluginNames, marketplacePath: string | null): void {
-  const surface = marketplacePath === null ? null : registeredSurface(ctx, marketplacePath);
-  if (surface !== null && surface !== names.surface) {
-    const legacy = surface === 'legacy';
-    throw new Error(`Aside is registered for ${legacy ? 'legacy' : 'GraphQL'} MCP. Remove that package with aside plugin remove --agent <claude|codex>${legacy ? ' --legacy' : ''}. No changes were made.`);
-  }
+  const agent = join(ctx.root, 'agent');
+  return samePath(path, agent) || samePath(dirname(path), agent);
 }
 
 // --- Claude Code ---
@@ -224,7 +227,7 @@ export interface ClaudeState {
   userDisabled: boolean;
   // The plugin is installed at some other scope too.
   otherScopes: boolean;
-  // The installed source, skill, or MCP mode differs from the selected package.
+  // The installed source, skill, or MCP command differs from this checkout's package.
   needsRefresh: boolean;
   installations: ClaudeInstallation[];
   otherMarketplacePlugins: string[];
@@ -239,6 +242,12 @@ interface ClaudeInstallation {
   installPath?: string;
   readFromFolder?: string;
   mcpServers?: Record<string, { command?: string; args?: string[] }>;
+}
+
+// Whether this CLI can run an installed MCP entry, including any instance arguments.
+function runnableServer(server: { command?: string; args?: string[] }): boolean {
+  if (server.command !== 'aside' || server.args?.[0] !== 'mcp') return false;
+  try { parseCommand('mcp', server.args.slice(1)); return true; } catch { return false; }
 }
 
 async function claudeState(ctx: PluginContext, bin: string, names: PluginNames): Promise<ClaudeState> {
@@ -262,8 +271,8 @@ async function claudeState(ctx: PluginContext, bin: string, names: PluginNames):
     needsRefresh: mine.some((p) => {
       const server = p.mcpServers?.aside;
       return p.readFromFolder !== undefined && !samePath(p.readFromFolder, names.directory)
-        || server !== undefined && (server.command !== 'aside' || server.args?.[0] !== 'mcp' || server.args.includes('--legacy') !== (names.surface === 'legacy'))
-        || p.installPath !== undefined && existsSync(p.installPath) && !sameFiles(tree(names.directory), tree(p.installPath));
+        || server !== undefined && !runnableServer(server)
+        || p.installPath !== undefined && existsSync(p.installPath) && !sameFiles((ctx.readTree ?? tree)(names.directory), (ctx.readTree ?? tree)(p.installPath));
     }),
     installations: mine,
     otherMarketplacePlugins: plugins.filter(p => p.id !== names.id && p.id.endsWith(`@${names.marketplace}`)).map(p => p.id),
@@ -364,7 +373,6 @@ async function manageClaudePlugin(ctx: PluginContext, opts: Options): Promise<vo
   const changes = new Changes(ctx, opts.print);
 
   if (opts.remove) {
-    checkRemovalSurface(ctx, names, state.marketplacePath);
     if (state.userInstalled) {
       await changes.run(bin, ['plugin', 'uninstall', names.id, '--scope', 'user'], `claude: uninstalled ${names.id} for your user`);
     }
@@ -433,9 +441,9 @@ async function manageClaudePlugin(ctx: PluginContext, opts: Options): Promise<vo
 
 // --- Codex ---
 
-// Both agents install only the selected agent/graphql or agent/legacy package.
-// Its MCP entry runs `aside mcp` (with --legacy for the legacy package)
-// from PATH; no runtime build outputs or launcher scripts belong in its cache.
+// Both agents install only the agent/graphql package. Its MCP entry runs
+// `aside mcp` from PATH; no runtime build outputs or launcher scripts belong in
+// its cache.
 interface CodexNames extends PluginNames {
   // Where Codex keeps its copy of the installed plugin.
   cache: string;
@@ -526,7 +534,7 @@ async function codexState(ctx: PluginContext, bin: string, names: CodexNames, re
     marketplaceHere: marketplacePath !== null && samePath(marketplacePath, names.directory),
     installed: mine !== undefined,
     disabled: mine?.enabled === false,
-    current: mine !== undefined && sameFiles(tree(names.directory), tree(names.cache)),
+    current: mine !== undefined && sameFiles((ctx.readTree ?? tree)(names.directory), (ctx.readTree ?? tree)(names.cache)),
     otherMarketplacePlugins: plugins.installed.filter(p => typeof p?.pluginId === 'string' && p.pluginId !== names.id && p.pluginId.endsWith(`@${names.marketplace}`)).map(p => p.pluginId),
   };
 }
@@ -547,7 +555,6 @@ async function manageCodexPlugin(ctx: PluginContext, opts: Options): Promise<voi
   const changes = new Changes(ctx, opts.print);
 
   if (opts.remove) {
-    checkRemovalSurface(ctx, names, state.marketplacePath);
     if (state.installed) {
       await changes.run(bin, ['plugin', 'remove', names.id], `codex: uninstalled ${names.id}`);
     }
@@ -601,7 +608,7 @@ function pluginCommand(ctx: PluginContext, agent: 'claude' | 'codex', operation:
   const aside = asideOnPath(ctx);
   const linkedRoot = aside ? pathCheckout(aside) : null;
   const command = linkedRoot && !samePath(linkedRoot, ctx.root) ? [ctx.node, ctx.script] : ['aside'];
-  return [...command, 'plugin', operation, '--agent', agent, ...(ctx.surface === 'legacy' ? ['--legacy'] : []), ...(force ? ['--force'] : [])].map(shellQuote).join(' ');
+  return [...command, 'plugin', operation, '--agent', agent, ...(force ? ['--force'] : [])].map(shellQuote).join(' ');
 }
 
 function pathCheckout(command: string): string | null {
@@ -610,7 +617,7 @@ function pathCheckout(command: string): string | null {
     const root = resolve(dirname(script), '..', '..');
     // PATH can still point at an older checkout while this checkout is upgraded.
     // Recognize its former package for diagnostics, without accepting it as an
-    // installable source for the current split-package command.
+    // installable source for the current command.
     if (PACKAGE_FILES.every(file => existsSync(join(root, 'agent', file)))) return root;
     return checkoutRoot(script);
   } catch { return null; }
@@ -662,15 +669,14 @@ function reportBuilds(ctx: PluginContext): void {
   }
   if (missingBuild) reportFix(ctx, `rebuild missing files with ${build}`);
   if (process.platform === 'darwin') {
-    reportInformation(ctx, 'calendar helper', join(ctx.root, 'cli/dist/aside-cal'));
-    const present = existsSync(join(ctx.root, 'cli/dist/aside-cal'));
-    reportCheck(ctx, present, 'calendar helper', present ? 'present' : 'missing; calendar sync unavailable');
+    reportInformation(ctx, 'native helper', join(ctx.root, 'cli/dist/aside-native'));
+    const present = existsSync(join(ctx.root, 'cli/dist/aside-native'));
+    reportCheck(ctx, present, 'native helper', present ? 'present' : 'missing; native integrations unavailable');
     if (!present) reportFix(ctx, `bash ${shellQuote(join(ctx.root, 'cli/native/build.sh'))}`);
   }
 }
 
 function reportMarketplace(ctx: PluginContext, names: PluginNames, state: Pick<ClaudeState, 'marketplacePath' | 'marketplaceHere'>): void {
-  reportInformation(ctx, 'MCP interface', names.surface);
   reportInformation(ctx, 'Marketplace', state.marketplacePath);
   reportInformation(ctx, 'Expected marketplace', names.directory);
   reportCheck(ctx, state.marketplaceHere, 'Marketplace', state.marketplacePath === null ? 'not registered'
@@ -684,7 +690,7 @@ function reportClaude(ctx: PluginContext, names: PluginNames, state: ClaudeState
   reportCheck(ctx, state.userInstalled && !state.userDisabled, 'Plugin', state.userInstalled
     ? state.userDisabled ? 'installed for your user, disabled' : 'installed for your user, enabled'
     : state.otherScopes ? 'installed for a project only' : 'not installed');
-  if (state.needsRefresh) reportCheck(ctx, false, 'Plugin source', 'out of date; the installed package, skill, or MCP command differs from the selected surface');
+  if (state.needsRefresh) reportCheck(ctx, false, 'Plugin source', 'out of date; the installed package, skill, or MCP command differs from this checkout');
   const failed = state.installations.filter(installation => installation.errors?.length);
   if (state.installations.length) reportCheck(ctx, failed.length === 0, 'Plugin load', failed.length ? 'errors reported by Claude' : 'no errors reported by Claude');
   const sources = new Set<string>();
@@ -698,7 +704,7 @@ function reportClaude(ctx: PluginContext, names: PluginNames, state: ClaudeState
   }
   if (failed.length) {
     for (const source of sources) reportFix(ctx, shownCommand('claude', ['plugin', 'validate', source]));
-    reportFix(ctx, `fix the reported plugin error, then run /reload-plugins in an open Claude session or start a new session. Recheck with ${shownCommand(ctx.node, [ctx.script, 'plugin', 'status', ...(ctx.surface === 'legacy' ? ['--legacy'] : [])])}.`);
+    reportFix(ctx, `fix the reported plugin error, then run /reload-plugins in an open Claude session or start a new session. Recheck with ${shownCommand(ctx.node, [ctx.script, 'plugin', 'status'])}.`);
   }
   if (!state.marketplaceHere || !state.userInstalled || state.needsRefresh) reportFix(ctx, installCommand(ctx, 'claude', state.marketplacePath !== null && !state.marketplaceHere && !sameCheckoutPackage(ctx, state.marketplacePath)));
   if (state.userDisabled) reportFix(ctx, `claude plugin enable ${names.id}`);
@@ -760,10 +766,10 @@ export async function runPlugin(args: CommandInput, context?: PluginContext): Pr
   if (options.helpText) { (context?.out ?? console.log)(options.helpText); return; }
   const operation = options.operation!;
   const agent = options.get('--agent');
-  const original = context ?? defaultContext();
+  const original = context ?? defaultPluginContext();
   const report: Report = { title: `Aside plugin ${operation}`, data: {}, sections: [], checks: [] };
   const events: string[] = [];
-  const ctx: PluginContext = { ...original, surface: options.has('--legacy') ? 'legacy' : 'graphql', report: { value: report, section: 'CLI', events, states: {}, operations: [] }, out: line => {
+  const ctx: PluginContext = { ...original, report: { value: report, section: 'CLI', events, states: {}, operations: [] }, out: line => {
     if (!line.trim()) return;
     if (/^\s/.test(line)) {
       const check = [...report.checks].reverse().find(check => !check.passed);
@@ -792,7 +798,7 @@ export async function runPlugin(args: CommandInput, context?: PluginContext): Pr
     if (events.length) report.sections.push({ name: options.has('--print') ? 'Commands' : 'Results', entries: events.map(name => ({ name })) });
     if (failure) report.checks.push({ code: 'plugin_operation', label: `Plugin ${operation}`, passed: false, problems: [failure instanceof Error ? failure.message : String(failure)],
       ...(failure instanceof PluginRecoveryError ? { fixes: failure.fixes } : {}) });
-    report.data = { checkout: ctx.root, surface: ctx.surface, information: report.sections, agents: ctx.report!.states, operations: ctx.report!.operations, events };
+    report.data = { checkout: ctx.root, information: report.sections, agents: ctx.report!.states, operations: ctx.report!.operations, events };
     const out = options.has('--json') ? original.out : (text: string) => text.split('\n').forEach(original.out);
     if (operation === 'status') publishReport(report, `plugin ${operation}`, options.has('--json'), out);
     else {

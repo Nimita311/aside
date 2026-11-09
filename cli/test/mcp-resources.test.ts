@@ -77,7 +77,7 @@ describe('GraphQL MCP resources', () => {
     expect(guide('planning')).toContain('Action.occurrence');
     expect(guide('planning')).toContain('ActionWhere.occurrence');
     expect(guide('planning')).toContain('All action filters apply before pagination');
-    expect(guide('planning')).toContain('make `extensions.complete`');
+    expect(guide('planning')).toContain('makes `extensions.complete`');
     expect(guide('planning')).toContain('materializes that occurrence automatically');
     expect(guide('planning')).not.toContain('planningActions');
     expect(guide('planning')).not.toContain('FrontMatter');

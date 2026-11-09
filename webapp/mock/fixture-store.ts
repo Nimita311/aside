@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { DataCore } from '../../cli/src/core/data-core';
 import type { DataSnapshot } from '../../cli/src/core/data-snapshot';
 import type { DataSource, FileRead } from '../../cli/src/core/data-source';
+import {readAttachmentFiles, readReferenceRoots, type AttachmentFile} from '../../cli/src/core/attachment-metadata';
 
 export const FIXTURE_NAMES = ['showcase', 'empty', 'malformed'] as const;
 export type FixtureName = typeof FIXTURE_NAMES[number];
@@ -15,6 +16,7 @@ export const SHOWCASE_IDS = {
   typography: '2026-10-12-typography', diagrams: '2026-10-12-diagrams',
   diagramError: '2026-10-12-diagram-error',
   media: '2026-10-12-media', dashboard: '2026-10-12-dashboard',
+  entrySource: '2026-10-12-recent-decisions',
 } as const;
 
 const fixturesRoot = resolve(dirname(fileURLToPath(import.meta.url)), 'fixtures');
@@ -91,6 +93,8 @@ export interface LoadedFixture {
   snapshot: DataSnapshot;
   root: string;
   files: string[];
+  attachmentFiles: ReadonlyMap<string, readonly AttachmentFile[]>;
+  referenceRoots: readonly string[];
 }
 
 export async function loadFixture(name: FixtureName = 'showcase', options: { fixturesRoot?: string } = {}): Promise<LoadedFixture> {
@@ -99,5 +103,8 @@ export async function loadFixture(name: FixtureName = 'showcase', options: { fix
   const store = new DataCore(new FixtureSource(root, name));
   await store.init();
   await store.warmSearch();
-  return { store, snapshot: await store.snapshot(), root, files: await listFiles(root) };
+  const attachmentFiles = new Map([...store.getArtifacts()].map(([id, artifact]) =>
+    [id, readAttachmentFiles(root, id, artifact.frontMatter.attachments ?? [])]));
+  return {store, snapshot: await store.snapshot(), root, files: await listFiles(root), attachmentFiles,
+    referenceRoots: readReferenceRoots(root)};
 }

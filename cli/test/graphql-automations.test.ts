@@ -4,13 +4,15 @@ import { join } from 'node:path';
 import { AutomationView, executionView, type AutomationNode, type AutomationOwner } from '../src/graphql/automations.js';
 import type { AutomationJobRuntime, AutomationRunRuntime, AutomationRuntimeSnapshot } from '../src/graphql/automation-runtime.js';
 import type { ParseIssue } from '../src/core/types.js';
-import { init } from '../src/commands/init.js';
-import { Store } from '../src/mcp/store.js';
+import { init } from '../src/source/bootstrap.js';
+import { Store } from '../src/source/store.js';
 import { handleCapture } from '../src/mcp/tools/capture.js';
 import { handleUpdateInstance } from '../src/mcp/tools/instance.js';
 import { InstanceRegistry } from '../src/mcp/instance-registry.js';
 import { InstanceSession } from '../src/mcp/instance-session.js';
 import { executeGraphQL } from '../src/graphql/schema.js';
+import {readExecutionContextSnapshot} from '../src/source/execution-context.js';
+import {lifecycleMetadataFixture} from './lifecycle-metadata-fixture.js';
 
 const root = '/instance';
 const definition = { schedule: { cron: '0 8 * * *', timezone: 'UTC' }, run: { script: 'echo', args: ['hello'] } };
@@ -216,7 +218,7 @@ describe('instance execution view', () => {
     const diagnostics: ParseIssue[] = [];
     const models = [{ name: 'custom', label: 'Custom', builtin: false, availability: 'AVAILABLE' as const }];
     const catalog = vi.fn(async () => ({ models, diagnostics: ['Model discovery delayed'], revision: '1' }));
-    const execution = executionView(temporary, { diagnostics, catalog });
+    const execution = executionView(temporary, { diagnostics, catalog, executionContext: readExecutionContextSnapshot(temporary) });
     expect(execution.filePath).toBe(join(temporary, '.aside'));
     expect(execution.cwd()).toBe(join(temporary, 'work'));
     expect(catalog).not.toHaveBeenCalled();
@@ -230,7 +232,7 @@ describe('instance execution view', () => {
     temporary = realpathSync(mkdtempSync('/tmp/aside-graphql-automations-'));
     writeFileSync(join(temporary, '.aside'), 'execution:\n  cwd: missing\n');
     const diagnostics: ParseIssue[] = [];
-    const execution = executionView(temporary, { diagnostics });
+    const execution = executionView(temporary, { diagnostics, executionContext: readExecutionContextSnapshot(temporary) });
     expect(execution.cwd()).toBeNull();
     expect(diagnostics).toEqual([expect.objectContaining({ severity: 'error', code: 'execution_config', file: execution.filePath })]);
   });
@@ -245,11 +247,11 @@ describe('GraphQL automation owner relationships', () => {
       handleUpdateInstance(store, {automations: {digest: {schedule: definition.schedule,
         run: {model: 'RETIRED_SELECTION', prompt: '#artifact/2026-10-10-instructions'}}}});
       const registry = new InstanceRegistry([temporary]); registry.activate(temporary);
-      const session = new InstanceSession(registry, {knownInstances: async () => [temporary], issues: async () => []}, [], false, true);
+      const session = new InstanceSession(registry, {knownInstances: async () => [temporary], issues: async () => []}, [], false);
       const load = vi.fn((): Store => {throw new Error('Declaration metadata must not load records');});
       const runtime = vi.fn(async (): Promise<AutomationRuntimeSnapshot> => {throw new Error('Declaration metadata must not observe runtime');});
       const result = await executeGraphQL(load, 'query', {document: '{activeInstance {automations {totalCount nodes {name run {model}}}}}'},
-        {instances: session, automationRuntime: runtime});
+        {instances: session, automationRuntime: runtime, loadedInstance: path => path === temporary ? {value: store.getInstance()!, issues: store.getIssues()} : undefined});
       expect(result.errors).toBeUndefined();
       expect(result.data).toEqual({activeInstance: {automations: {totalCount: 1, nodes: [{name: 'digest', run: {model: 'RETIRED_SELECTION'}}]}}});
       expect(result.extensions).toMatchObject({complete: true, diagnostics: []});
@@ -317,13 +319,14 @@ describe('GraphQL automation owner relationships', () => {
     init(second, {name: 'Second', description: 'Second owner'});
     try {
       const registry = new InstanceRegistry([first, second]);
-      const session = new InstanceSession(registry, {knownInstances: async () => [first, second], issues: async () => []}, [], false, true);
+      const state = lifecycleMetadataFixture(first, second);
+      const session = new InstanceSession(registry, {knownInstances: async () => [first, second], issues: async () => []}, [], false);
       const runtime = vi.fn(async (): Promise<AutomationRuntimeSnapshot> => ({available: false,
         warning: 'Scheduler observation unavailable', jobs: [], runs: [],
       }));
       const result = await executeGraphQL(() => {throw new Error('History inspection must not load records');}, 'query', {
         document: '{ instances { path first: automationLog { totalCount } second: automationLog { totalCount } } }',
-      }, {instances: session, automationRuntime: runtime});
+      }, {instances: session, automationRuntime: runtime, loadedInstance: state.loadedInstance});
       expect(result.errors).toBeUndefined();
       expect(result.data?.instances).toEqual([
         {path: first, first: {totalCount: 0}, second: {totalCount: 0}},
@@ -357,8 +360,9 @@ describe('GraphQL automation owner relationships', () => {
       const otherProject = create(otherStore, 'Other project', 'other-script');
       handleUpdateInstance(selectedStore, {automations: {daily: {...definition, run: {script: 'selected-script'}}}});
       handleUpdateInstance(otherStore, {automations: {daily: {...definition, run: {script: 'other-script'}}}});
+      const stores = new Map([[selected, selectedStore], [other, otherStore]]);
       const registry = new InstanceRegistry([selected, other]); registry.activate(selected);
-      const session = new InstanceSession(registry, {knownInstances: async () => [selected, other], issues: async () => []}, [], false, true);
+      const session = new InstanceSession(registry, {knownInstances: async () => [selected, other], issues: async () => []}, [], false);
       const runtime = vi.fn(async (path: string): Promise<AutomationRuntimeSnapshot> => {
         const projectId = path === selected ? selectedProject : otherProject;
         const definedIn = `#project/${projectId}`;
@@ -373,7 +377,9 @@ describe('GraphQL automation owner relationships', () => {
           id name
           automation { name run { script } }
         } } }
-      }`}, {instances: session, automationRuntime: runtime});
+      }`}, {instances: session, automationRuntime: runtime,
+        loadedInstance: path => {const store = stores.get(path); return store && {value: store.getInstance()!, issues: store.getIssues()};},
+        resolveStore: path => stores.get(path)});
       expect(result.errors).toBeUndefined();
       const instances = result.data?.instances as any[];
       for (const [path, script] of [

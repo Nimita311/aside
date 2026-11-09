@@ -1,17 +1,16 @@
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
-import { init } from '../src/commands/init.js';
+import { init } from '../src/source/bootstrap.js';
 import { buildClientSchema, buildSchema, getIntrospectionQuery, printSchema } from 'graphql';
 import { GRAPHQL_SERVER_INSTRUCTIONS } from '../src/mcp/resources.js';
 
 const bundle = join(__dirname, '..', 'dist', 'main.js');
 describe.skipIf(!existsSync(bundle))('bundled MCP GraphQL mode', () => {
   let dir: string;
-  let legacy: Client;
   let graph: Client;
   let cold: Client;
   let workspace: string;
@@ -41,9 +40,7 @@ describe.skipIf(!existsSync(bundle))('bundled MCP GraphQL mode', () => {
     init(dir, { name: 'MCP GraphQL', description: 'Transport integration' });
     workspace = mkdtempSync('/tmp/aside-graphql-workspace-');
     writeFileSync(join(workspace, '.aside'), 'discovery: false\n');
-    legacy = new Client({ name: 'legacy-test', version: '1' });
     graph = new Client({ name: 'graphql-test', version: '1' });
-    await legacy.connect(new StdioClientTransport({ command: process.execPath, args: [bundle, 'mcp', '--legacy', '--dir', dir], cwd: workspace, env }));
     await graph.connect(new StdioClientTransport({ command: process.execPath, args: [bundle, 'mcp', '--dir', dir], cwd: workspace, env }));
     cold = new Client({ name: 'cold-graphql-test', version: '1' });
     await cold.connect(new StdioClientTransport({ command: process.execPath, args: [bundle, 'mcp'], cwd: workspace, env }));
@@ -51,7 +48,7 @@ describe.skipIf(!existsSync(bundle))('bundled MCP GraphQL mode', () => {
 
   afterAll(async () => {
     try {
-      await Promise.all([legacy?.close(), graph?.close(), cold?.close()]);
+      await Promise.all([graph?.close(), cold?.close()]);
     } finally {
       try {
         if (env) execFileSync(process.execPath, [bundle, 'daemon', 'stop', '--force'], { env, stdio: 'pipe', timeout: 20_000 });
@@ -63,15 +60,7 @@ describe.skipIf(!existsSync(bundle))('bundled MCP GraphQL mode', () => {
     }
   }, 30_000);
 
-  it('defaults to only GraphQL tools and exposes the legacy surface only on request', async () => {
-    const legacyTools = (await legacy.listTools()).tools.map(tool => tool.name);
-    expect(legacyTools).toEqual([
-      'select_instance', 'create_instance', 'list_instances',
-      'query_models', 'query_instance', 'update_instance',
-      'query_entries', 'planning_actions', 'update_occurrence', 'query_actions', 'query_projects', 'query_artifacts',
-      'create_artifact', 'update_artifact', 'capture', 'update_action', 'update_project', 'update_entry',
-      'validate', 'show', 'calendar_info',
-    ]);
+  it('exposes only the GraphQL tools', async () => {
     expect((await graph.listTools()).tools.map(tool => tool.name)).toEqual([
       'query', 'mutate',
     ]);
@@ -84,8 +73,6 @@ describe.skipIf(!existsSync(bundle))('bundled MCP GraphQL mode', () => {
 
   it('discovers guides without selection and serves the same live schema as query introspection', async () => {
     expect(graph.getInstructions()).toBe(GRAPHQL_SERVER_INSTRUCTIONS);
-    expect(legacy.getInstructions()).toBeUndefined();
-    expect(legacy.getServerCapabilities()?.resources).toBeUndefined();
     const resources = (await cold.listResources()).resources;
     expect(resources.map(resource => resource.uri)).toEqual([
       'aside://docs/records', 'aside://docs/planning', 'aside://docs/automate',
@@ -123,6 +110,14 @@ describe.skipIf(!existsSync(bundle))('bundled MCP GraphQL mode', () => {
       const result = await graph.readResource({uri: 'aside://graphql/schema'});
       return (result.contents[0] as {text: string}).text;
     };
+    const modelDocument = '{ __type(name: "AutomationRunInput") { inputFields { name type { name } } } activeInstance { execution { models { name } } } }';
+    const originalModels = (await read('query', modelDocument)).data.activeInstance.execution.models;
+    const publishedModels = (models: Array<{name: string}>) => vi.waitFor(async () => {
+      const result = await read('query', modelDocument);
+      expect(result.isError).toBe(false);
+      expect(result.data.activeInstance.execution.models).toEqual(models);
+      return result;
+    }, {timeout: 3000, interval: 25});
     try {
       const originalSchema = await readSchema();
       expect(buildSchema(originalSchema).getType('Model')).toBeUndefined();
@@ -130,20 +125,21 @@ describe.skipIf(!existsSync(bundle))('bundled MCP GraphQL mode', () => {
         writeFileSync(config, JSON.stringify({execution: {models: {[name]: {command: executable}}}}));
         const sdl = await readSchema();
         expect(sdl).toBe(originalSchema);
-        const introspection = await read('query', '{ __type(name: "AutomationRunInput") { inputFields { name type { name } } } activeInstance { execution { models { name } } } }');
-        expect(introspection.isError).toBe(false);
+        // Direct edits publish through the instance watcher. Observe that
+        // publication instead of making this query refresh execution settings.
+        const introspection = await publishedModels([{name}]);
         expect(introspection.data.__type.inputFields).toContainEqual({name: 'model', type: {name: 'String'}});
-        expect(introspection.data.activeInstance.execution.models).toEqual([{name}]);
       }
     } finally {
       if (original === undefined) rmSync(config, {force: true});
       else writeFileSync(config, original);
-      rmSync(executable, {force: true});
+      try {await publishedModels(originalModels);}
+      finally {rmSync(executable, {force: true});}
     }
     expect(buildSchema(await readSchema()).getType('Model')).toBeUndefined();
-  });
+  }, 10_000);
 
-  it('executes GraphQL through the daemon and exposes the same writes to a legacy client', async () => {
+  it('executes GraphQL through the daemon, persists its writes, and rejects mutations through query', async () => {
     const result = await read('mutate', `mutation {
       capture(input: {content: "Connected context", description: "Kickoff",
         projects: [{create: {name: "GraphQL project", description: "Project"}}],
@@ -157,8 +153,8 @@ describe.skipIf(!existsSync(bundle))('bundled MCP GraphQL mode', () => {
       project(id: $id) { id actions { nodes { id entries { nodes { content } } } } }
     }`, { id: project });
     expect(context.data.project.actions.nodes[0]).toEqual({ id: action, entries: { nodes: [{ content: 'Connected context' }] } });
-    const oldQuery = await legacy.callTool({ name: 'query_actions', arguments: { ids: [action], detail: 'metadata' } });
-    expect(JSON.stringify(oldQuery.content)).toContain(action);
+    const saved = await read('query', 'query($ids: [ID!]) { actions(where: {ids: $ids}) { nodes { id name } } }', { ids: [action] });
+    expect(saved.data.actions.nodes).toEqual([{ id: action, name: 'GraphQL action' }]);
     expect(readFileSync(join(dir, 'actions', action.slice(0, 4), `${action}.md`), 'utf8')).toContain('name: GraphQL action');
     const rejected = await read('query', `mutation { updateAction(id: "${action}", input: {status: DONE}) { action { id } } }`);
     expect(rejected.isError).toBe(true);
@@ -207,17 +203,48 @@ describe.skipIf(!existsSync(bundle))('bundled MCP GraphQL mode', () => {
     expect(validation.isError).toBe(false);
     expect(validation.data.activeInstance.validation).toMatchObject({ passed: true, dataChecksRun: true });
     expect(validation.data.activeInstance.validation.checks.length).toBeGreaterThan(1);
-    const reply = await cold.callTool({ name: 'mutate', arguments: { document: 'mutation { calendarInfo { error authorization calendars { name } diagnostics { category recovery } syncStates { id status } } }' } });
+    const beforeInspection = await cold.callTool({name: 'query', arguments: {document: '{activeInstance{path} instances{path workspace}}'}});
+    const selection = (beforeInspection.structuredContent as any).data;
+    expect(selection.activeInstance).toBeNull();
+    expect(selection.instances.every((instance: any) => !instance.workspace)).toBe(true);
+    const inspected = await cold.callTool({name: 'query', arguments: {document: `{
+      systemInfo {
+        build { version }
+        daemon { pid connections tabs logPath startup { present } graphqlLogging { queuedBytes dropped errors } checks { code passed } }
+        calendar { authorization calendars { name } diagnostics { category recovery } }
+      }
+      activeInstance { path }
+      instances { path workspace }
+    }`}});
+    const status = inspected.structuredContent as any;
+    expect(status.errors).toBeUndefined();
+    expect(status.data.systemInfo).toMatchObject({
+      build: {version: expect.any(String)},
+      daemon: {
+        pid: expect.any(Number), connections: expect.any(Number), tabs: expect.any(Number),
+        logPath: expect.stringContaining(daemonDirectory), startup: {present: false},
+        graphqlLogging: {queuedBytes: expect.any(Number), dropped: expect.any(Number), errors: expect.any(Number)},
+        checks: expect.any(Array),
+      },
+      calendar: {authorization: 'UNAVAILABLE', calendars: null},
+    });
+    expect(status.data.systemInfo.daemon.pid).toBeGreaterThan(0);
+    expect(status.data.systemInfo.daemon.connections).toBeGreaterThan(0);
+    expect(status.data.activeInstance).toBe(selection.activeInstance);
+    expect(status.data.instances).toEqual(selection.instances);
+    expect(status.data.systemInfo).not.toHaveProperty('instances');
+    expect(status.extensions.mutations).toEqual([]);
+    const reply = await cold.callTool({ name: 'mutate', arguments: { document: 'mutation { requestCalendarAccess { error authorization calendars { name } diagnostics { category recovery } } }' } });
     const calendar = reply.structuredContent as any;
     expect(reply.isError).toBe(true);
-    expect(calendar.data.calendarInfo).toMatchObject({ authorization: 'UNAVAILABLE', calendars: null, syncStates: [] });
-    expect(calendar.data.calendarInfo.error).toMatch(/helper/i);
-    expect(calendar.extensions.mutations[0].operation).toBe('calendarInfo');
+    expect(calendar.data.requestCalendarAccess).toMatchObject({ authorization: 'UNAVAILABLE', calendars: null });
+    expect(calendar.data.requestCalendarAccess.error).toMatch(/helper/i);
+    expect(calendar.extensions.mutations[0].operation).toBe('requestCalendarAccess');
     const invalidShow = await read('mutate', 'mutation { show(input: {detail: true}) { url outcome } }');
     expect(invalidShow.isError).toBe(true);
     expect(invalidShow.errors[0].message).toContain('pass project or action');
     const mutationType = await read('query', '{ __type(name: "Mutation") { fields { name } } }');
-    expect(mutationType.data.__type.fields.map((field: any) => field.name)).toEqual(expect.arrayContaining(['show', 'showUrl', 'calendarInfo']));
+    expect(mutationType.data.__type.fields.map((field: any) => field.name)).toEqual(expect.arrayContaining(['show', 'showUrl', 'requestCalendarAccess']));
   });
 
   it('discovers and manages instances with no selection, preserving independent sessions and mutation order', async () => {
@@ -282,19 +309,21 @@ describe.skipIf(!existsSync(bundle))('bundled MCP GraphQL mode', () => {
     expect(readFileSync(join(workspace, '.aside'), 'utf8')).toBe('discovery: false\n');
   });
 
-  it('authors instance automation through either interface and reads the same configuration', async () => {
-    const automations = { digest: { schedule: { cron: '0 8 * * *', timezone: 'UTC' }, run: { model: 'digest', prompt: '#artifact/2026-10-08-instructions' } } };
-    const created = await legacy.callTool({ name: 'update_instance', arguments: { automations } });
-    expect(created.isError).not.toBe(true);
-    const queried = await read('query', '{ activeInstance { path automations { nodes { name schedule { cron timezone } run { model } } } } }');
-    expect(queried.data.activeInstance.automations.nodes).toEqual([{name: 'digest', schedule: automations.digest.schedule, run: {model: 'digest'}}]);
+  it('authors instance automation and reads the same configuration back', async () => {
+    const edit = 'mutation($automations: AutomationEditsInput!) { updateInstance(input: {automations: $automations}) { instance { automations { totalCount nodes { name } } } } }';
+    const digest = { name: 'digest', schedule: { cron: '0 8 * * *', timezone: 'UTC' }, run: { script: '/usr/bin/true' } };
+    const created = await read('mutate', edit, { automations: { upsert: [digest] } });
+    expect(created.isError).toBe(false);
+    const queried = await read('query', '{ activeInstance { path automations { nodes { name schedule { cron timezone } run { script } } } } }');
+    expect(queried.data.activeInstance.automations.nodes).toEqual([digest]);
+    expect(readFileSync(join(dir, 'aside.md'), 'utf8')).toContain('automations:');
     const changed = await read('mutate', 'mutation { updateInstance(input: {automations: {set: []}}) { instance { automations { totalCount nodes { name } } } } }');
     expect(changed.isError).toBe(false);
     expect(changed.data.updateInstance.instance.automations).toEqual({totalCount: 0, nodes: []});
-    const cleared = await legacy.callTool({ name: 'query_instance', arguments: {} });
-    const block = (cleared.content as any[]).find(item => item.type === 'text');
-    expect(JSON.parse(block.text).manifest.automations).toBeUndefined();
-    const rejected = await legacy.callTool({ name: 'update_instance', arguments: { automations: { wrong: { ...automations.digest, schedule: { cron: 'bad' } } } } });
+    const cleared = await read('query', '{ activeInstance { automations { totalCount } } }');
+    expect(cleared.data.activeInstance.automations.totalCount).toBe(0);
+    expect(readFileSync(join(dir, 'aside.md'), 'utf8')).not.toContain('automations:');
+    const rejected = await read('mutate', edit, { automations: { upsert: [{ ...digest, name: 'wrong', schedule: { cron: 'bad' } }] } });
     expect(rejected.isError).toBe(true);
     expect(readFileSync(join(dir, 'aside.md'), 'utf8')).not.toContain('automations:');
   });
@@ -307,8 +336,15 @@ describe.skipIf(!existsSync(bundle))('bundled MCP GraphQL mode', () => {
     }`);
     expect(created.isError).toBe(false);
     const id = created.data.capture.createdActions[0].id;
-    const appended = await legacy.callTool({ name: 'update_action', arguments: { id, recurrence: { append: { dtstart: '2100-01-01', rrule: 'FREQ=WEEKLY' } } } });
-    expect(appended.isError).not.toBe(true);
+    const appended = await read('mutate', `mutation {
+      updateAction(id: "${id}", input: {recurrence: {append: {dtstart: "2100-01-01", rrule: "FREQ=WEEKLY"}}}) {
+        action { recurrence { dtstart rrule } }
+      }
+    }`);
+    expect(appended.isError).toBe(false);
+    expect(appended.data.updateAction.action.recurrence).toEqual([
+      expect.objectContaining({dtstart: '2099-01-01'}), {dtstart: '2100-01-01', rrule: 'FREQ=WEEKLY'},
+    ]);
     const ended = await read('mutate', `mutation {
       updateAction(id: "${id}", input: {recurrence: {setEnd: {
         schedule: {dtstart: "2099-01-01"}, at: "2099-01-03T09:00:00Z"
@@ -317,8 +353,13 @@ describe.skipIf(!existsSync(bundle))('bundled MCP GraphQL mode', () => {
     expect(ended.isError).toBe(false);
     expect(ended.data.updateAction.action.recurrence).toHaveLength(2);
     expect(ended.data.updateAction.action.recurrence[0].rrule).toContain('UNTIL=');
-    const removed = await legacy.callTool({ name: 'update_action', arguments: { id, recurrence: { remove: { dtstart: '2099-01-01' } } } });
-    expect(removed.isError).not.toBe(true);
+    const removed = await read('mutate', `mutation {
+      updateAction(id: "${id}", input: {recurrence: {remove: {dtstart: "2099-01-01"}}}) {
+        action { recurrence { dtstart } }
+      }
+    }`);
+    expect(removed.isError).toBe(false);
+    expect(removed.data.updateAction.action.recurrence).toEqual([{dtstart: '2100-01-01'}]);
     const dormant = await read('mutate', `mutation {
       updateAction(id: "${id}", input: {recurrence: {remove: {dtstart: "2100-01-01"}}}) {
         action { recurrence { dtstart } }
@@ -326,7 +367,7 @@ describe.skipIf(!existsSync(bundle))('bundled MCP GraphQL mode', () => {
     }`);
     expect(dormant.isError).toBe(false);
     expect(dormant.data.updateAction.action.recurrence).toEqual([]);
-    const replacement = await legacy.callTool({ name: 'update_action', arguments: { id, recurrence: [] } });
+    const replacement = await read('mutate', `mutation { updateAction(id: "${id}", input: {recurrence: []}) { action { id } } }`);
     expect(replacement.isError).toBe(true);
   });
 });

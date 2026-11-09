@@ -38,8 +38,8 @@ Unavailable entity readbacks are null; they do not hide saved IDs or paths.
 Collections return `nodes`, `offset`, `count`, and `totalCount`. Request a
 nonnegative `offset` and a `limit` from 1 through 100 (default 20); to retrieve all matches,
 continue at `offset + count` while below `totalCount`, including for nested pages.
-Action collections include saved actions and
-future projections within the instance lookahead. Unfiltered collections include
+Action collections include saved actions and unsaved recurring occurrences;
+[Planning](aside://docs/planning) describes their schedule ranges. Unfiltered collections include
 templates. Direct status predicates exclude them; for task-only queries with a
 negated lifecycle predicate, also set `recurrenceExists: false`. For counts or
 absence, use `totalCount` with the completeness check above; fetching every

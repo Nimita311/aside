@@ -21,7 +21,7 @@ a project or the instance.
 - Use `automations.set` for deliberate complete replacement, validating every supplied job; `set: []` clears all jobs. It is exclusive with `patch`, `upsert`, and `remove`.
 - When asked to set up a job, save its configuration without performing the scheduled task.
 - Model jobs require `run.prompt: {existingId: "artifact-id"}` or `run.prompt: {create: {...}}`, using `ArtifactLinkInput`. Supply the exact Artifact ID without `#artifact/`, or a complete `CreateArtifactInput`. Inline creation saves an artifact and persists its handle directly in `run.prompt`. The agent reads the artifact's primary `content` through Aside; the harness passes its handle without copying content. The declaration's `prompt` returns the resolved `Artifact`; missing targets return null with diagnostics. Script jobs do not need a prompt.
-- Frontmatter and legacy inputs use a direct primary artifact handle in `run.prompt`, such as `"#artifact/2026-10-10-review-instructions"`. Literal text, wrapped `{artifact: ...}` references, and attachment-specific handles are invalid declarations. They remain saved for repair, with null configuration and diagnostics on reads. Replace the prompt by linking or creating a primary instruction artifact; omitted prompt data is preserved.
+- Frontmatter uses a direct primary artifact handle in `run.prompt`, such as `"#artifact/2026-10-10-review-instructions"`. Literal text, wrapped `{artifact: ...}` references, and attachment-specific handles are invalid declarations. They remain saved for repair, with null configuration and diagnostics on reads. Replace the prompt by linking or creating a primary instruction artifact; omitted prompt data is preserved.
 - The harness supplies execution context, the owning instance ID, a Project or Action handle where applicable, the automation name for instance/project jobs, and a pointer to the prompt artifact for the agent to read. Write only the user's requested instructions into the prompt artifact; do not invent reporting or completion requirements.
 
 ```graphql
@@ -124,7 +124,7 @@ GraphQL prompts link or create an instruction artifact. Omit an update to preser
 replace the full declaration to change it, or use null to clear.
 
 Delegation runs at the action's scheduled time. Templates supply it to every
-unsaved occurrence, independent of query lookahead. Saved occurrences retain their
+unsaved occurrence, independent of collection ranges. Saved occurrences retain their
 own declaration and current timing. Done/cancelled work never dispatches
 from scheduling or lifecycle edits. Date-only work starts at local midnight.
 

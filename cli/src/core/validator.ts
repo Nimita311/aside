@@ -1,6 +1,7 @@
 import { assertRecurrence, assertOccurrence, recurrenceIssues } from './recurrence.js';
 import { existsSync, realpathSync } from 'node:fs';
 import { isWallMinute, schedulingIssues } from './scheduling.js';
+import { assertLocationHandle } from './location-reference.js';
 import { join, resolve } from 'node:path';
 import type {
   CheckResult,
@@ -102,6 +103,15 @@ function checkRecurrence(actions: ActFile[]): CheckResult {
 function checkScheduling(actions: ActFile[]): CheckResult {
   const details = actions.flatMap(file => schedulingIssues(file.value.frontMatter).map(issue => `${file.name}: ${issue}`));
   return { name: 'Action scheduling fields are valid', passed: details.length === 0, details };
+}
+
+function checkActionLocations(actions: ActFile[]): CheckResult {
+  const details: string[] = [];
+  for (const file of actions) if (file.value.frontMatter.location !== undefined) {
+    try { assertLocationHandle(file.value.frontMatter.location); }
+    catch (error) { details.push(`${file.name}: ${(error as Error).message}`); }
+  }
+  return { name: 'Action locations are valid location handles', passed: details.length === 0, details };
 }
 
 // --- Format checks ---
@@ -223,8 +233,13 @@ function checkReferencedExist(allEntries: Entry[], ids: Set<string>, key: 'proje
   return { name: `Referenced ${key} have files`, passed: missing.length === 0, details: [...new Set(missing)] };
 }
 
-function checkActionsReferenced(actionIds: Set<string>, referencedActions: Set<string>): CheckResult {
-  const unreferenced = [...actionIds].filter((a) => !referencedActions.has(a)).sort();
+// A saved occurrence takes its context from its template, so it needs no entry
+// tag of its own.
+function checkActionsReferenced(actions: ActFile[], referencedActions: Set<string>): CheckResult {
+  const unreferenced = actions
+    .filter((a) => !a.value.frontMatter.occurrence && !referencedActions.has(a.id))
+    .map((a) => a.id)
+    .sort();
   return {
     name: 'All action files referenced by entries',
     passed: unreferenced.length === 0,
@@ -546,7 +561,7 @@ function checkNoEmptyEntityFields(files: NamedFile[], entity: string): CheckResu
 // report those); entities sharing a minute tie, so either order is accepted.
 function checkIndexCreatedOrder(
   indexFiles: InstanceFile<{ id: string }[]>[],
-  createdById: Map<string, string>,
+  createdById: ReadonlyMap<string, string | undefined>,
   entityType: string,
 ): CheckResult {
   const fmt = (id: string, ts: string) => (id === ts ? `'${id}'` : `'${id}' (created ${ts})`);
@@ -613,7 +628,7 @@ function checkParseIssues(data: InstanceData): CheckResult[] {
 
 // An aside instance is identified by an `aside.md` manifest. Validation defers
 // to isAsideDir for "is this an instance?" — the single definition shared with
-// discovery, resolution, and select_instance — then additionally reports any parse
+// discovery, resolution, and selectInstance — then additionally reports any parse
 // issues, so identity and data-health never disagree.
 function checkManifest(dataDir: string): { check: CheckResult; isInstance: boolean } {
   const name = 'Instance has an aside.md manifest';
@@ -669,6 +684,7 @@ export function validate(dataDir: string): ValidationResult {
     checkNoEmptyEntityFields(artifacts, 'artifact'),
     checkRequiredEntityFields(actions, 'Actions'),
     checkScheduling(actions),
+    checkActionLocations(actions),
     checkRecurrence(actions),
     checkRequiredEntityFields(projects, 'Projects'),
     checkRequiredEntityFields(artifacts, 'Artifacts'),
@@ -688,7 +704,7 @@ export function validate(dataDir: string): ValidationResult {
     checkValidEntryMetaFields(weeks),
     checkReferencedExist(allEntries, actionIds, 'actions'),
     checkReferencedExist(allEntries, projectIds, 'projects'),
-    checkActionsReferenced(actionIds, referencedActions),
+    checkActionsReferenced(actions, referencedActions),
     checkNoteIndexCount(noteIndexItems, allEntries),
     checkNoteIndexIds(noteIndexItems, allEntries),
     checkEntityIndexMatch(projectIndexItems, projectIds, 'Project'),

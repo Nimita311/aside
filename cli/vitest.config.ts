@@ -33,6 +33,8 @@ export default defineConfig({
     globalSetup: ['./test/global-setup.ts'],
     // No calendar helper: the suite's daemon must never reach the real calendar.
     // Tests that exercise sync point ASIDE_CAL_BIN at a stub and run their own daemon.
-    env: { ASIDE_DAEMON_HOME: daemonHome, ASIDE_CAL_BIN: '/nonexistent/aside-cal' },
+    env: { ASIDE_DAEMON_HOME: daemonHome, ASIDE_CAL_BIN: '/nonexistent/aside-cal',
+      // Automatic indexing tests must never contact a user's real Ollama service.
+      ASIDE_EMBEDDING_URL: 'http://127.0.0.1:1' },
   },
 });

@@ -6,7 +6,7 @@ import type { NativeRecurrenceRule } from './protocol.js';
 export interface NativeSeries { key: string; schedule: RecurrenceSchedule; rule: NativeRecurrenceRule }
 const weekdays = ['SU', 'MO', 'TU', 'WE', 'TH', 'FR', 'SA'];
 // Only pass fields EventKit preserves. A rejected translation leaves Aside's
-// complete RRULE untouched and is surfaced in calendar_info.
+// complete RRULE untouched and is surfaced in Instance.calendarSync.
 export function nativeSeries(schedule: RecurrenceSchedule): NativeSeries[] {
   assertRecurrence([schedule]);
   const parts: Record<string, string> = Object.fromEntries(schedule.rrule.replace(/^RRULE:/, '').split(';').map(p => p.split('=')));

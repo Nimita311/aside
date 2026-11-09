@@ -9,63 +9,23 @@
 </head>
 <body>
 
-  <div class="top-bar">
-    <header class="app-header">
-      <div class="header-left">
-        <h1 class="app-title"><a href="/" title="Choose an instance">Aside</a></h1>
-        <span class="instance-context-divider" aria-hidden="true">/</span>
-        <div id="instance-switcher" class="instance-switcher">
-          <button id="btn-instance-switch" class="instance-switch-trigger" type="button" aria-haspopup="dialog" aria-expanded="false" aria-controls="instance-switch-menu"><span id="instance-name">Choose an instance</span><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg></button>
-          <div id="instance-switch-menu" class="instance-switch-menu" role="dialog" aria-label="Switch instance" hidden>
-            <div class="instance-menu-heading"><span>Switch instance</span><button id="btn-close-instance-switch" class="btn-icon" type="button" aria-label="Close instance switcher">×</button></div>
-            <input id="instance-switch-search" type="search" placeholder="Find an instance…" aria-label="Find an instance" autocomplete="off">
-            <div id="instance-switch-list" role="listbox" aria-label="Instances"></div>
-            <div class="instance-menu-footer"><button id="btn-all-instances" type="button">All instances</button></div>
-          </div>
-        </div>
-      </div>
-      <div class="header-center">
-        <div class="search-wrapper">
-          <input
-            type="search"
-            class="search-input"
-            placeholder="Search entries, projects, actions, artifacts..."
-            aria-label="Search"
-            role="combobox"
-            aria-autocomplete="list"
-            aria-haspopup="listbox"
-            aria-controls="search-listbox"
-            aria-expanded="false"
-            autocomplete="off"
-          >
-          <div id="search-results" class="search-results" hidden>
-            <div id="search-listbox" role="listbox" aria-label="Search results"></div>
-          </div>
-        </div>
-      </div>
-      <div class="header-right">
-        <button class="btn-icon connection-indicator" id="connection-status" aria-label="Offline" title="Offline. Click to reconnect." hidden>
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m2 2 20 20M8.5 8.5a16 16 0 0 1 13 1M2.5 9.5a16 16 0 0 1 3-1.6M5 13a10 10 0 0 1 4-2m5-0.2A10 10 0 0 1 19 13M8.5 16.5a5 5 0 0 1 7 0M12 20h.01"/></svg>
-        </button>
-        <button class="btn-icon" id="btn-settings" aria-label="Settings" title="Settings">
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/>
-            <circle cx="12" cy="12" r="3"/>
-          </svg>
-        </button>
-        <button class="btn-icon" id="btn-theme-toggle" aria-label="Toggle dark mode" title="Toggle dark mode">
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <circle cx="12" cy="12" r="4"/>
-            <path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/>
-          </svg>
-        </button>
-      </div>
-    </header>
-
+  <div class="layout workspace-frame" id="workspace-frame" data-frame="compact" data-reader="chooser">
     <details class="data-diagnostics" id="data-diagnostics" hidden><summary id="data-diagnostics-summary"></summary><div id="data-diagnostics-files"></div></details>
-  </div>
-
-  <div class="layout">
+    <aside id="navigation-sidebar-host" class="navigation-sidebar-host" aria-label="Navigation" hidden>
+      <div id="navigation-sidebar" class="navigation-sidebar"></div>
+      <div class="navigation-footer">
+        <div id="navigation-timeline-slot">
+          <section id="workspace-timeline-controls" class="workspace-timeline-controls" aria-label="Timeline controls" hidden>
+            <div id="navigation-filter-slot"></div>
+            <div id="timeline-calendar-inline"></div>
+          </section>
+        </div>
+        <div class="workspace-actions">
+          <button class="workspace-search-trigger" id="btn-navigation-search" type="button" aria-label="Search" aria-haspopup="dialog" aria-expanded="false" aria-controls="workspace-popover"><span aria-hidden="true">⌕</span> Search <kbd>/</kbd></button>
+          <button class="btn-icon" id="btn-navigation-more" type="button" aria-label="More options" aria-haspopup="dialog" aria-expanded="false" aria-controls="workspace-popover">•••</button>
+        </div>
+      </div>
+    </aside>
     <section id="instance-chooser" class="instance-chooser" aria-label="Instance picker" hidden>
       <div id="instance-notice"></div>
       <ul id="instance-list" aria-label="Instances"></ul>
@@ -89,36 +49,124 @@
       </form>
       <button class="notice-action" id="btn-retry-instances" hidden>Retry</button>
     </section>
-    <!-- The app frame is fixed; the flow scrolls inside its own pane -->
     <div class="flow-scroll" id="flow-scroll">
       <main class="flow" id="flow" aria-label="Entries"></main>
     </div>
-
-    <aside class="side-panel" id="side-panel" aria-label="Details panel" hidden>
-      <div class="side-panel-resize" id="side-panel-resize" role="separator" tabindex="0" aria-orientation="vertical" aria-label="Details panel width" aria-controls="side-panel" aria-describedby="panel-resize-help" title="Drag or Left/Right to resize · Enter to retract · Shift+Enter or double-click to fit the margin"></div>
-      <span id="panel-resize-help" hidden>Left and Right arrows resize the panel by 10 pixels; hold Shift for 50 pixels. Home and End set the minimum and maximum width. Enter retracts the panel. Shift+Enter or double-click fits the panel to the margin.</span>
-      <div class="side-panel-actions">
-        <button class="btn-icon" id="btn-side-panel-collapse" aria-expanded="true" aria-controls="side-panel-body" aria-label="Retract panel" title="Retract panel">
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 17 5-5-5-5"/><path d="m13 17 5-5-5-5"/></svg>
-        </button>
-        <button class="btn-icon side-panel-close" id="btn-side-panel-close" aria-label="Close panel">
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg>
-        </button>
+    <section class="doc-backdrop" id="doc-backdrop" aria-label="Document" tabindex="-1" hidden>
+      <button id="btn-doc-close" type="button" hidden aria-label="Return to flow"></button>
+      <div class="doc-window"><main class="doc-body" id="doc-body" aria-label="Document content" tabindex="-1"></main></div>
+    </section>
+    <aside class="side-panel" id="side-panel" aria-label="Context panel" data-extent="summary" data-detail="summary" hidden inert>
+      <div class="context-panel-navigation" role="group" aria-label="Context navigation">
+        <button id="btn-context-back" class="btn-icon" type="button" aria-label="Previous context" title="Previous context" disabled><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m12 19-7-7 7-7M5 12h14"/></svg></button>
+        <button id="btn-context-forward" class="btn-icon" type="button" aria-label="Next context" title="Next context" disabled><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m12 5 7 7-7 7M5 12h14"/></svg></button>
+      </div>
+      <button id="btn-context-timeline" class="btn-icon context-timeline-toggle context-panel-action" type="button" aria-label="Filter timeline" title="Filter timeline" hidden><svg class="context-filter-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M3 6h18M7 12h10M10 18h4"/></svg><svg class="context-jump-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="7"/><path d="M12 2v4m0 12v4M2 12h4m12 0h4"/></svg></button>
+      <div id="context-panel-view" class="context-panel-view" role="tablist" aria-label="Panel view" hidden>
+        <button id="btn-context-content" type="button" role="tab" aria-controls="side-panel-body" aria-selected="false">Content</button>
+        <button id="btn-context-overview" type="button" role="tab" aria-controls="side-panel-body" aria-selected="true">Overview</button>
+      </div>
+      <div class="context-panel-tools" role="group" aria-label="Context panel controls">
+        <button id="btn-context-fullscreen" class="btn-icon" type="button" aria-label="Full screen" title="Full screen" disabled><svg class="context-fullscreen-enter" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 3h6v6M21 3l-7 7M9 21H3v-6M3 21l7-7"/></svg><svg class="context-fullscreen-exit" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 14h6v6M10 14l-7 7M20 10h-6V4M14 10l7-7"/></svg></button>
+        <button id="btn-context-expand" class="btn-icon" type="button" aria-label="Expand details" title="Expand details" aria-expanded="false" aria-controls="side-panel-body"><svg class="context-expand-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m11 17-5-5 5-5M18 17l-5-5 5-5"/></svg><svg class="context-contract-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 17 5-5-5-5M13 17l5-5-5-5"/></svg></button>
+        <button id="btn-side-panel-close" class="btn-icon" type="button" aria-label="Close context" title="Close context"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18"/></svg></button>
       </div>
       <div class="side-panel-body" id="side-panel-body"></div>
+      <button id="side-panel-resize" class="side-panel-resize" type="button" role="separator" aria-label="Resize context panel" aria-orientation="vertical" aria-controls="side-panel" aria-valuemin="280" aria-valuenow="304"></button>
     </aside>
-
-    <div class="filter-pill" id="filter-pill" hidden></div>
-  </div>
-
-  <dialog class="doc-backdrop" id="doc-backdrop" aria-label="Document" tabindex="-1" hidden>
-    <div class="doc-window">
-      <button class="btn-icon doc-close" id="btn-doc-close" aria-label="Close document">
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg>
-      </button>
-      <div class="doc-body" id="doc-body"></div>
+    <div id="workspace-control-surface" role="group" aria-label="Workspace controls">
+    <div class="control-pill" id="control-pill" role="group" aria-label="Workspace controls">
+      <div class="control-pill-actions">
+        <button id="btn-workspace-views" class="control-pill-view" type="button" aria-label="Choose view" aria-describedby="workspace-pill-label" aria-haspopup="dialog" aria-expanded="false" aria-controls="workspace-popover"><span id="workspace-pill-label">Aside</span><span aria-hidden="true">⌃</span></button>
+        <span class="control-pill-divider" aria-hidden="true"></span>
+        <button id="btn-pill-search" class="btn-icon" type="button" aria-label="Search" aria-haspopup="dialog" aria-expanded="false" aria-controls="workspace-popover"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 5 5"/></svg></button>
+        <button id="btn-workspace-calendar" class="btn-icon" type="button" aria-label="Timeline calendar" aria-haspopup="dialog" aria-expanded="false" aria-controls="workspace-popover"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M16 3v4M8 3v4M3 11h18"/></svg></button>
+        <button id="btn-pill-more" class="btn-icon" type="button" aria-label="More options" aria-haspopup="dialog" aria-expanded="false" aria-controls="workspace-popover">•••</button>
+      </div>
+      <div id="pill-filter-slot"></div>
     </div>
-  </dialog>
+    <button id="workspace-popover-dismiss" class="workspace-popover-dismiss" type="button" tabindex="-1" aria-hidden="true" hidden></button>
+    <section id="workspace-popover" class="workspace-popover" role="region" aria-labelledby="workspace-popover-title" tabindex="-1" hidden>
+      <div class="workspace-popover-heading"><span id="workspace-popover-title">Views</span><button id="btn-workspace-popover-close" class="btn-icon" type="button" aria-label="Close controls">×</button></div>
+      <div id="workspace-popover-body" class="workspace-popover-body"></div>
+    </section>
+    </div>
+    <div id="workspace-parking" hidden inert>
+      <div id="workspace-view-content">
+        <h1 class="app-title"><a href="/" title="Choose an instance">Aside</a></h1>
+        <div id="instance-switcher" class="instance-switcher">
+          <button id="btn-instance-switch" class="instance-switch-trigger" type="button" aria-haspopup="dialog" aria-expanded="false" aria-controls="instance-switch-menu"><span id="instance-name">Choose an instance</span><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg></button>
+          <div id="instance-switch-menu" class="instance-switch-menu" role="dialog" aria-label="Switch instance" hidden>
+            <div class="instance-menu-heading"><span>Switch instance</span><button id="btn-close-instance-switch" class="btn-icon" type="button" aria-label="Close instance switcher">×</button></div>
+            <input id="instance-switch-search" type="search" placeholder="Find an instance…" aria-label="Find an instance" autocomplete="off">
+            <div id="instance-switch-list" role="listbox" aria-label="Instances"></div>
+            <div class="instance-menu-footer"><button id="btn-all-instances" type="button">All instances</button></div>
+          </div>
+        </div>
+        <p class="workspace-current-label" id="workspace-current-label">Entries</p>
+        <div id="workspace-navigation-list" class="workspace-navigation-list"><nav id="workspace-core-views" aria-label="Views">
+          <a id="nav-entries" class="navigation-link" href="/"><span class="navigation-entry-icon" aria-hidden="true"></span><span>Entries</span></a>
+          <a id="nav-overview" class="navigation-link" href="/"><span>Overview</span></a>
+        </nav>
+        <div id="workspace-sections" hidden></div>
+        </div>
+      </div>
+      <div class="search-wrapper">
+          <select id="search-mode" class="search-mode" aria-label="Search mode" aria-describedby="search-help">
+            <option value="text">Text</option>
+            <option value="regex">Regex</option>
+            <option value="semantic">Semantic</option>
+          </select>
+          <div class="search-field">
+
+            <input
+              type="search"
+              class="search-input"
+              placeholder="Search entries, projects, actions, artifacts..."
+              aria-label="Search"
+              aria-describedby="search-help"
+              role="combobox"
+              aria-autocomplete="list"
+              aria-haspopup="listbox"
+              aria-controls="search-listbox"
+              aria-expanded="false"
+              autocomplete="off"
+            >
+          </div>
+          <span id="search-help" class="sr-only">Text: all words must match. Use type prefixes or date ranges.</span>
+          <div id="search-results" class="search-results" hidden>
+            <div id="search-listbox" role="listbox" aria-label="Search results"></div>
+          </div>
+        </div>
+      <div id="workspace-more-content" class="workspace-menu">
+        <button id="btn-workspace-pin" type="button">Pin this view</button>
+        <div id="workspace-sort" class="workspace-menu" role="group" aria-label="Entry order" hidden><button id="btn-sort-newest" type="button" aria-pressed="false">Newest first</button><button id="btn-sort-oldest" type="button" aria-pressed="false">Oldest first</button></div>
+        <button id="btn-workspace-summary" type="button">Summary</button>
+        <button id="btn-inspect-view" type="button">View details</button>
+        <button id="btn-workspace-back" type="button" hidden>Return to flow</button>
+        <button class="btn-icon" id="btn-settings" aria-label="Settings" title="Settings">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/>
+            <circle cx="12" cy="12" r="3"/>
+          </svg>
+        <span>Settings</span></button>
+        <button class="btn-icon" id="btn-theme-toggle" aria-label="Toggle dark mode" title="Toggle dark mode">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="12" cy="12" r="4"/>
+            <path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/>
+          </svg>
+        <span>Appearance</span></button>
+      </div>
+      <div id="workspace-inspection-content"><button id="btn-workspace-inspection-back" class="workspace-back" type="button">← More</button><div id="workspace-inspection" class="workspace-inspection"></div></div>
+      <div id="workspace-filter-group" class="workspace-filter-group"><div class="filter-pill" id="source-filter" role="group" aria-label="Entry view filter" hidden></div><div class="filter-pill" id="filter-pill" hidden></div><span class="flow-search-chip" id="flow-search" role="group" aria-label="Flow search filter" hidden>
+              <button id="btn-edit-flow-search" type="button"></button>
+              <button id="btn-clear-flow-search" type="button" aria-label="Clear flow search" title="Clear flow search">×</button>
+            </span></div>
+      <button class="btn-icon connection-indicator" id="connection-status" aria-label="Offline" title="Offline. Click to reconnect." hidden>
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m2 2 20 20M8.5 8.5a16 16 0 0 1 13 1M2.5 9.5a16 16 0 0 1 3-1.6M5 13a10 10 0 0 1 4-2m5-0.2A10 10 0 0 1 19 13M8.5 16.5a5 5 0 0 1 7 0M12 20h.01"/></svg>
+        </button>
+    </div>
+  </div>
 
   <dialog class="modal-backdrop" id="modal-backdrop" aria-labelledby="modal-datasource-title" tabindex="-1" hidden>
     <div class="modal" id="modal-datasource">
@@ -161,6 +209,18 @@
           <div class="form-row date-time-preview">
             <span class="form-label">Preview</span>
             <output id="setting-date-time-preview" aria-live="polite" aria-atomic="true"></output>
+          </div>
+          <div class="form-row">
+            <label class="form-label" for="setting-week-start">Week starts on</label>
+            <select class="form-select" id="setting-week-start">
+              <option value="0">Sunday</option>
+              <option value="1" selected>Monday</option>
+              <option value="2">Tuesday</option>
+              <option value="3">Wednesday</option>
+              <option value="4">Thursday</option>
+              <option value="5">Friday</option>
+              <option value="6">Saturday</option>
+            </select>
           </div>
           <div class="form-row">
             <label class="form-label" for="setting-anim-speed">Animation</label>

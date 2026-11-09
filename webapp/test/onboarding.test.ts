@@ -59,7 +59,7 @@ describe('verified empty views', () => {
     expect(host.textContent).toContain('Ask your agent to capture a note, organize a project, or plan an action. Your records will appear here.');
     expect(host.textContent).toContain(instance.path);
     host.querySelector<HTMLButtonElement>('button')!.click(); await vi.waitFor(() => expect(copy).toHaveBeenCalledOnce());
-    expect(copy).toHaveBeenCalledWith(starterPrompt(instance)); expect(copy.mock.calls[0][0]).toContain('select_instance tool with path "/fixtures/Aside work"');
+    expect(copy).toHaveBeenCalledWith(starterPrompt(instance)); expect(copy.mock.calls[0][0]).toContain('selectInstance mutation with path "/fixtures/Aside work"');
     expect(copy.mock.calls[0][0]).toContain('browser selection is independent');
     await vi.waitFor(() => expect(host.querySelector('[role="status"]')?.textContent).toBe('Starter prompt copied.'));
     const guide = host.querySelector('details')!; expect(guide.querySelector('summary')?.textContent).toBe('Getting started');

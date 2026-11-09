@@ -4,15 +4,28 @@ import { join } from 'node:path';
 import { AutomationModelWarmup } from '../src/automation/model-warmup.js';
 import { ModelCatalog, type ModelCatalogSnapshot } from '../src/automation/models.js';
 import type { AutomationSource } from '../src/automation/scheduler.js';
+import {readExecutionContextSnapshot} from '../src/source/execution-context.js';
 
 let root: string, warmup: AutomationModelWarmup;
 beforeEach(() => { root = realpathSync(mkdtempSync('/tmp/aside-model-warm-')); });
 afterEach(async () => { await warmup?.close(); vi.unstubAllEnvs(); rmSync(root, { recursive: true, force: true }); });
 const snapshot = (models: ModelCatalogSnapshot['models'] = [], diagnostics: string[] = []): ModelCatalogSnapshot => ({ models, diagnostics, revision: 'test' });
 function source(key: string, run: unknown, extra: unknown = {}): AutomationSource {
-  return { key, root, instance: 'work', definedIn: '#project/2026-10-08-work', declaration: { schedule: { cron: '0 8 * * *' }, run, ...(extra as object) } };
+  return { key, root, executionContext: readExecutionContextSnapshot(root), instance: 'work', definedIn: '#project/2026-10-08-work', declaration: { schedule: { cron: '0 8 * * *' }, run, ...(extra as object) } };
 }
 describe('model metadata warmup during automation ingestion', () => {
+  it('reports every missing lifecycle context instead of borrowing another job context or reading configuration', () => {
+    const lookup = vi.fn(async () => snapshot());
+    warmup = new AutomationModelWarmup(() => {}, lookup);
+    const first = source('provided', {model: 'CODEX_TEST', prompt: '#artifact/2026-10-08-instructions'});
+    const missing = source('missing', {model: 'CODEX_TEST', prompt: '#artifact/2026-10-08-instructions'});
+    delete missing.executionContext;
+    writeFileSync(join(root, '.aside'), 'execution: [invalid]\n');
+    warmup.replace([first, missing]);
+    expect(lookup).not.toHaveBeenCalled();
+    expect(warmup.warnings()).toContainEqual(expect.objectContaining({key: 'missing', message: expect.stringContaining('Lifecycle execution context is unavailable')}));
+  });
+
   it('skips script, custom-only, disabled, invalid and blocked work', () => {
     writeFileSync(join(root, '.aside'), 'execution:\n  models:\n    external:\n      command: third-agent\n');
     const lookup = vi.fn(async () => snapshot());

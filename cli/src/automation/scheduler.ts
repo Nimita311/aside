@@ -3,8 +3,9 @@ import { performance } from 'node:perf_hooks';
 import { compileSchedule, type Schedule } from './schedule.js';
 import { validateDefinition, type AutomationDefinition } from '../core/automation.js';
 import { compileDelegation, type DelegationSource } from './delegation.js';
+import type {ExecutionContextSnapshot} from '../core/execution-context.js';
 
-export interface AutomationSource { key: string; root: string; instance: string; definedIn: string; declaration: unknown; blocked?: string; delegation?: DelegationSource }
+export interface AutomationSource { key: string; root: string; instance: string; definedIn: string; declaration: unknown; blocked?: string; delegation?: DelegationSource; executionContext?: ExecutionContextSnapshot }
 export interface ScheduledJob extends AutomationSource { definition: AutomationDefinition; schedule: Schedule }
 interface Job extends ScheduledJob { revision: number; next?: number; active: boolean; pending?: number }
 interface Deadline { key: string; revision: number; at: number }

@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync,
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { basename, delimiter, join } from 'node:path';
-import { init } from '../src/commands/init.js';
+import { init } from '../src/source/bootstrap.js';
 import { runShow, type ShowContext } from '../src/commands/show.js';
 import { parseShowTarget } from '../src/commands/show-target.js';
 import { Daemon, writeKnown } from '../src/daemon/daemon.js';
@@ -12,9 +12,11 @@ import { InstanceHost, type ToolResult } from '../src/daemon/host.js';
 import { ownHello, type HelloResult } from '../src/daemon/protocol.js';
 import { daemonPaths, ensureDirs } from '../src/daemon/paths.js';
 import { CalClient } from '../src/mcp/calendar/client.js';
-import { availableInstances } from '../src/web/catalogue.js';
+import {availableInstances} from '../src/source/instance-admission.js';
 
 describe('show targets', () => {
+  const source = '#artifact/2026-10-05-review/decisions.json';
+  const query = new URLSearchParams({ source }).toString();
   it.each([
     ['#project/2026-10-05-launch', { project: '2026-10-05-launch', detail: true }],
     ['#action/2026-10-05-review', { action: '2026-10-05-review', detail: true }],
@@ -28,6 +30,12 @@ describe('show targets', () => {
     ['aside://work/action/2026-10-05-%E4%BF%AE%E8%AE%A2', { action: '2026-10-05-修订', detail: true }],
     ['aside://work/entry/2026-10-05T12%3A30%3A15', { entry: '2026-10-05T12:30:15' }],
     ['aside://work/2026-10-05T12:30', { entry: '2026-10-05T12:30' }],
+    [`aside://work/?${query}`, { source }],
+    [`aside://work?${query}`, { source }],
+    [`aside://work/project/2026-10-05-launch/detail?${query}`, { project: '2026-10-05-launch', detail: true, source }],
+    [`aside://work/action/2026-10-05-review/done?${query}`, { action: '2026-10-05-review', detail: true, source }],
+    [`aside://work/?${query}&search=release+review`, { source, search: 'release review' }],
+    ['aside://work/?search=++C%2B%2B+%5Bx%5D++', { search: 'C++ [x]' }],
   ])('resolves %s to a show target', (target, args) => {
     expect(parseShowTarget(target)).toEqual({ ...(target.startsWith('aside://') ? { instanceId: 'work' } : {}), args });
   });
@@ -38,6 +46,10 @@ describe('show targets', () => {
     'aside://work/action/%2Foutside', 'aside://work/action/%ZZ', 'aside://work/action/a/unknown',
     '#action/../outside', '#entry/2026-02-30T12:00', '#entry/2026-10-05T25:00',
     '#artifact/not-an-id', '#artifact/2026-10-05-brief/%2Foutside', '#artifact/2026-10-05-brief/..',
+    'aside://work/?source=bad', 'aside://work/?source=2026-10-05-decisions&source=2026-10-05-other',
+    'aside://work/?source=2026-10-05-decisions&change=done', 'aside://work/?source=',
+    `aside://work/?source=${encodeURIComponent('#artifact/2026-10-05-review')}`,
+    'aside://work/?search=one&search=two',
   ])('rejects malformed targets %j', target => {
     expect(() => parseShowTarget(target)).toThrow();
   });
@@ -51,7 +63,8 @@ describe('show command', () => {
     root = realpathSync(mkdtempSync('/tmp/aside-show-'));
     work = join(root, 'work');
     init(work, { name: 'Work', description: 'Show targets' });
-    request = vi.fn(async method => method === 'status' ? { known: [work] } : { port: 24800, route: method === 'show' ? 'work/action/2026-10-05-review/detail' : '' });
+    const catalogue = availableInstances([work]);
+    request = vi.fn(async method => method === 'instances' ? catalogue : { port: 24800, route: method === 'show' ? 'work/action/2026-10-05-review/detail' : '' });
     close = vi.fn();
     context = { cwd: work, client: vi.fn(() => ({ request, close })), open: vi.fn(async () => true), out: vi.fn() };
   });
@@ -75,6 +88,16 @@ describe('show command', () => {
     await runShow(['#action/2026-10-05-review'], context);
     expect(request).toHaveBeenCalledExactlyOnceWith('show', { instance: work, args: { action: '2026-10-05-review', detail: true } });
     expect(context.open).toHaveBeenCalledWith('http://localhost:24800/work/action/2026-10-05-review/detail');
+  });
+
+  it('opens an entry source alone, with a content handle, or as an explicit-directory URL', async () => {
+    const source = '#artifact/2026-10-05-review/decisions.json';
+    await runShow(['--source', source, '--dir', work], context);
+    expect(request).toHaveBeenLastCalledWith('show', { instance: work, args: { source } });
+    await runShow(['#action/2026-10-05-review', '--source', source], context);
+    expect(request).toHaveBeenLastCalledWith('show', { instance: work, args: { action: '2026-10-05-review', detail: true, source } });
+    await runShow(['--source', source, '--dir', work, '--url'], context);
+    expect(request).toHaveBeenLastCalledWith('show', { instance: work, args: { source }, navigate: false }, { read: true });
   });
 
   it.each([false, true])('prints the selector URL without opening a browser and closes the connection (json: %s)', async json => {
@@ -107,7 +130,15 @@ describe('show command', () => {
 
   it('resolves a URL from the known catalogue outside its workspace', async () => {
     await runShow(['aside://work/action/2026-10-05-review'], { ...context, cwd: '/nonexistent/aside-workspace' });
+    expect(request).toHaveBeenNthCalledWith(1, 'instances', {paths: []}, {read: true});
     expect(request).toHaveBeenLastCalledWith('show', { instance: work, args: { action: '2026-10-05-review', detail: true } });
+  });
+
+  it('uses the owner catalogue for explicit directory identity while disk is ahead', async () => {
+    writeFileSync(join(work, 'aside.md'), '---\nid: unobserved-identity\nname: Unobserved identity\n---\n');
+    await runShow(['aside://work/action/2026-10-05-review', '--dir', work], context);
+    expect(request).toHaveBeenNthCalledWith(1, 'instances', {paths: [work]}, {read: true});
+    expect(request).toHaveBeenLastCalledWith('show', {instance: work, args: {action: '2026-10-05-review', detail: true}});
   });
 
   it('uses the sole known instance for a handle outside its workspace', async () => {
@@ -118,7 +149,7 @@ describe('show command', () => {
   it('reports ambiguity and lets --dir select a handle explicitly', async () => {
     const personal = join(root, 'personal');
     init(personal, { name: 'Personal', description: 'Other records' });
-    request.mockResolvedValueOnce({ known: [work, personal] });
+    request.mockResolvedValueOnce(availableInstances([work, personal]));
     await expect(runShow(['#action/2026-10-05-review'], { ...context, cwd: root })).rejects.toThrow(/Pass --dir/);
     expect(context.open).not.toHaveBeenCalled();
     await runShow(['#action/2026-10-05-review', `--dir=${personal}`], context);
@@ -127,13 +158,13 @@ describe('show command', () => {
 
   it('rejects a mismatched URL directory and duplicate instance identity', async () => {
     await expect(runShow(['aside://personal/action/a', '--dir', work], context)).rejects.toThrow(/URL names instance/);
-    expect(request).not.toHaveBeenCalled();
+    expect(request).toHaveBeenCalledExactlyOnceWith('instances', {paths: [work]}, {read: true});
     const duplicate = join(root, 'duplicate');
     init(duplicate, { name: 'Work', description: 'Duplicate identity' });
-    request.mockResolvedValueOnce({ known: [work, duplicate] });
+    request.mockResolvedValueOnce(availableInstances([work, duplicate]));
     await expect(runShow(['aside://work/action/a'], context)).rejects.toThrow(/Instance "work" is unavailable/);
     expect(context.open).not.toHaveBeenCalled();
-    request.mockResolvedValueOnce({ known: [work, duplicate] });
+    request.mockResolvedValueOnce(availableInstances([work, duplicate]));
     const alias = availableInstances([work, duplicate]).find(instance => instance.path === duplicate)!.alias;
     await runShow([`aside://${alias}/action/a`], context);
     expect(request).toHaveBeenLastCalledWith('show', { instance: duplicate, args: { action: 'a', detail: true } });
@@ -161,6 +192,8 @@ describe('show command', () => {
   it.each([
     ['#action/a', '#action/b'], ['--target'], [''],
     ['https://example.com'], ['--dir', 'work'], ['--unknown'], ['#action/a', 'extra'],
+    ['--source', 'not-an-id'], ['--source', '2026-10-05-decisions', '--source', '2026-10-05-other'],
+    ['aside://work/?source=2026-10-05-decisions', '--source', '2026-10-05-other'],
   ])('rejects invalid syntax %j before daemon startup', async (...args) => {
     await expect(runShow(args, context)).rejects.toThrow();
     expect(context.client).not.toHaveBeenCalled();
@@ -199,6 +232,17 @@ it('opens an artifact through the real daemon and validates missing objects befo
     try {
       await runShow([`aside://work/artifact/${id}`, '--url'], context);
       expect(out).toHaveBeenCalledWith(url);
+      expect(navigate).not.toHaveBeenCalled();
+      expect(open).not.toHaveBeenCalled();
+      const definitionFile = join(root, 'decisions.json');
+      writeFileSync(definitionFile, JSON.stringify({ query: '{ entries { nodes { id } } }' }));
+      const sourceCreated = await owner.request<ToolResult>('tool', { instance: work, name: 'create_artifact', args: {
+        name: 'Decision flow', description: 'Agent-defined entry flow', files: [{ source: definitionFile }],
+      } });
+      const sourceId = sourceCreated.text.match(/#artifact\/([^\s]+)/)![1];
+      const source = `#artifact/${sourceId}/decisions.json`;
+      await runShow(['--source', source, '--dir', work, '--url'], context);
+      expect(out).toHaveBeenLastCalledWith(`${url.slice(0, url.indexOf('/artifact/') + 1)}?${new URLSearchParams({ source })}`);
       expect(navigate).not.toHaveBeenCalled();
       expect(open).not.toHaveBeenCalled();
       await expect(runShow(['#artifact/2026-10-05-missing', '--dir', work, '--url'], context)).rejects.toThrow(/not found/);

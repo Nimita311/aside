@@ -6,14 +6,14 @@ import { join } from 'node:path';
 import { runArtifact as runArtifactWith, type ArtifactExecutor } from '../src/commands/artifact.js';
 import { InstanceHost } from '../src/daemon/host.js';
 import { CalClient } from '../src/mcp/calendar/client.js';
-import { init } from '../src/commands/init.js';
+import { init } from '../src/source/bootstrap.js';
 
 describe('artifact CLI', () => {
   let root: string;
   let instance: string;
   let host: InstanceHost;
   // The command's operations run in an in-process host standing in for the daemon.
-  const local: ArtifactExecutor = (dir, name, args) => host.tool(dir, name, args, true);
+  const local: ArtifactExecutor = (dir, name, args) => host.tool(dir, name, args);
   const runArtifact = (args: string[], cwd?: string) => runArtifactWith(args, cwd, local);
 
   beforeEach(() => {

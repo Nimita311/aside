@@ -5,12 +5,12 @@ import { CalClient } from '../src/mcp/calendar/client.js';
 
 const valid: Record<string, object> = {
   query: { document: '{ projects { totalCount } }' }, mutate: { document: 'mutation { __typename }' },
-  select_instance: { path: '/tmp/aside' }, create_instance: { path: '/tmp/aside', name: 'Work', description: 'Work' },
-  list_instances: {}, query_entries: {}, query_actions: {}, query_projects: {}, query_artifacts: {},
+  create_instance: { path: '/tmp/aside', name: 'Work', description: 'Work' },
+  query_entries: {}, query_actions: {}, query_projects: {}, query_artifacts: {},
   create_artifact: { name: 'Plan', description: 'Plan' }, update_artifact: { id: '2026-10-04-plan' },
   capture: { content: 'Note', description: 'Note' }, update_action: { id: '2026-10-04-task' },
   update_project: { id: '2026-10-04-project' }, update_entry: { id: '2026-10-04T12:00' },
-  validate: {}, show: {}, calendar_info: {},
+  show: {},
 };
 
 describe('strict shared tool arguments', () => {
@@ -31,11 +31,12 @@ describe('strict shared tool arguments', () => {
     for (const nameValue of ['', '  ', null]) expect(() => validateToolArgs(name, { ...valid[name], name: nameValue })).toThrow(/name/);
     expect(validateToolArgs(name, { ...valid[name], name: 'New name' }).name).toBe('New name');
   });
-  it('rejects direct host arguments before loading an instance or invoking calendar access', async () => {
+  it('rejects direct host arguments and unknown operations before loading an instance', async () => {
     const host = new InstanceHost(new CalClient('/nonexistent/aside-cal'));
     try {
       await expect(host.tool('/nonexistent/aside', 'update_action', { id: 'a', typo: 'value' })).rejects.toThrow(/typo/);
-      await expect(host.tool(null, 'calendar_info', { unknown: true })).rejects.toThrow(/unknown/);
+      await expect(host.tool('/nonexistent/aside', 'update_artifact', { id: 'a', unknown: true })).rejects.toThrow(/unknown/);
+      await expect(host.tool('/nonexistent/aside', 'calendar_info', {})).rejects.toThrow('Unknown operation: calendar_info');
       await expect(host.show('/nonexistent/aside', { unknown: true } as any)).rejects.toThrow(/unknown/);
       expect(host.loadedPaths()).toEqual([]);
     } finally { host.close(); }

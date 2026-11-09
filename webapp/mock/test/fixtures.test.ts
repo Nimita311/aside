@@ -3,6 +3,7 @@ import { resolve } from 'node:path';
 import { marked, type Token, type Tokens } from 'marked';
 import { describe, expect, it } from 'vitest';
 import { FIXTURE_NAMES, loadFixture, SHOWCASE_IDS } from '../fixture-store';
+import { parseEntrySource } from '../../src/entry-source';
 
 describe('gallery fixture data', () => {
   it('parses the showcase using the real core, with linked records and a complete search index', async () => {
@@ -13,7 +14,7 @@ describe('gallery fixture data', () => {
     expect(snapshot.indexes.projects.length).toBeGreaterThanOrEqual(3);
     expect(snapshot.indexes.actions.length).toBeGreaterThanOrEqual(6);
     expect(snapshot.indexes.artifacts.map(item => item.id)).toEqual(expect.arrayContaining([
-      SHOWCASE_IDS.typography, SHOWCASE_IDS.diagrams, SHOWCASE_IDS.media, SHOWCASE_IDS.dashboard,
+      SHOWCASE_IDS.typography, SHOWCASE_IDS.diagrams, SHOWCASE_IDS.media, SHOWCASE_IDS.dashboard, SHOWCASE_IDS.entrySource,
     ]));
     expect(snapshot.weeks.flatMap(([, entries]) => entries).some(entry => entry.meta.created === SHOWCASE_IDS.entry)).toBe(true);
     const relations = await store.getRelations();
@@ -85,5 +86,17 @@ describe('gallery fixture data', () => {
       .map(file => readFile(resolve(root, file), 'utf8')))).join('\n');
     expect(dashboard).toContain('aside.query');
     expect(dashboard).not.toMatch(/https?:\/\/[^\s"']+\.(?:js|css)/);
+  });
+
+  it('declares a real query source with grouped conditions and ordinary browsing inputs', async () => {
+    const { root, snapshot } = await loadFixture('showcase');
+    const source = new Map(snapshot.artifacts).get(SHOWCASE_IDS.entrySource)!;
+    expect(source.frontMatter.name).toBe('Recent decisions');
+    expect(source.frontMatter.attachments).toContain('decisions.json');
+    expect(snapshot.instance?.manifest.config?.webapp?.sidebar?.[0].items[0]).toEqual({ label: 'Recent decisions', timeline: `#artifact/${SHOWCASE_IDS.entrySource}/decisions.json` });
+    const text = await readFile(resolve(root, `artifacts/2026/${SHOWCASE_IDS.entrySource}/decisions.json`), 'utf8');
+    parseEntrySource(text);
+    const base = JSON.parse(text).variables.where;
+    expect(base).toMatchObject({ or: expect.any(Array), not: expect.any(Object) });
   });
 });

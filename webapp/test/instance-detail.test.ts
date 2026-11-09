@@ -10,10 +10,9 @@ const options: RenderOptions = {
 };
 
 describe('instance detail configuration fields', () => {
-  it.each([21, 0])('renders a numeric recurrence lookahead of %i alongside string settings', recurrenceLookaheadDays => {
+  it('renders Calendar title prefix settings', () => {
     const root = renderInstanceDetail({
       id: 'work', name: 'Work', config: {
-        recurrenceLookaheadDays,
         scheduledEventTitlePrefix: '',
         doneEventTitlePrefix: 'done: ',
       },
@@ -22,7 +21,6 @@ describe('instance detail configuration fields', () => {
       .map(label => [label.textContent, label.nextElementSibling?.textContent]));
     expect(fields).toMatchObject({
       ID: 'work',
-      'config.recurrenceLookaheadDays': String(recurrenceLookaheadDays),
       'config.scheduledEventTitlePrefix': '',
       'config.doneEventTitlePrefix': 'done: ',
     });

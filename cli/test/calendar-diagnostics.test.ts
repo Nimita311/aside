@@ -1,17 +1,17 @@
-import { eventTimes, savedEvent } from './calendar-fixture.js';
+import { calendarMutationFixture, eventTimes, savedEvent } from './calendar-fixture.js';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import type { ChildProcessWithoutNullStreams } from 'node:child_process';
 import { once } from 'node:events';
 import { join } from 'node:path';
-import { parse } from 'yaml';
 import { CalClient, CalError, CalUnavailable } from '../src/mcp/calendar/client.js';
 import { diagnoseCalEnvironment } from '../src/mcp/calendar/diagnostics.js';
-import { handleCalendarInfo } from '../src/mcp/calendar/info.js';
-import { Store } from '../src/mcp/store.js';
+import { calendarReport } from './support/calendar-report.js';
+import { Store } from '../src/source/store.js';
 import { handleCapture } from '../src/mcp/tools/capture.js';
 import { buildMarker } from '../src/mcp/calendar/markers.js';
-import { CalSync, storeAction, type SyncAction } from '../src/mcp/calendar/sync.js';
+import {storeAction, type SyncAction} from '../src/mcp/calendar/sync.js';
+import {CalendarSyncFixture as CalSync} from './calendar-fixture.js';
 import type { CalAuthStatus } from '../src/mcp/calendar/protocol.js';
 import { CALENDAR_HELPER_EXIT_DRAIN_MS } from '../src/core/system-config.js';
 const dirs: string[] = [], clients: CalClient[] = [], syncers: CalSync[] = [];
@@ -44,30 +44,31 @@ describe('calendar diagnostics and source recovery', () => {
     expect(diagnoseCalEnvironment('darwin', '23.0', '/fake', true)).toBeUndefined();
   });
   it('reports source build, cached daemon detection, and regrant guidance for a missing helper', async () => {
-    const parsed = parse(await handleCalendarInfo(new CalClient(null)));
-    expect(parsed.category).toBe('helper-missing'); expect(parsed.helper_path).toBeTruthy();
-    expect(parsed.recovery).toContain('cli/native/build.sh'); expect(parsed.recovery).toContain('restart the shared daemon'); expect(parsed.recovery).toContain('new calendar grant');
+    const info = await calendarReport(new CalClient(null)), [diagnostic] = info.diagnostics;
+    expect(info.authorization).toBe('unavailable'); expect(diagnostic.category).toBe('helper-missing'); expect(diagnostic.helper_path).toBeTruthy();
+    expect(diagnostic.recovery).toContain('cli/native/build.sh'); expect(diagnostic.recovery).toContain('restart the shared daemon'); expect(diagnostic.recovery).toContain('new calendar grant');
+    expect(diagnostic.recovery).toContain('cli/dist/aside-native');
   });
   it.each(['notDetermined', 'writeOnly'] as const)('requests full access from %s and resumes reporting calendars', async status => {
-    const f = mocked(status), parsed = parse(await handleCalendarInfo(f.cal));
-    expect(f.request).toHaveBeenCalledOnce(); expect(parsed.auth).toBe('fullAccess'); expect(parsed.calendars).toContain('Work');
+    const f = mocked(status), info = await calendarReport(f.cal);
+    expect(f.request).toHaveBeenCalledOnce(); expect(info.authorization).toBe('fullAccess'); expect(info.calendars?.map(calendar => calendar.name)).toEqual(['Work']); expect(info.diagnostics).toEqual([]);
   });
   it.each(['denied', 'restricted'] as const)('does not re-prompt %s and reports distinct recovery', async status => {
-    const f = mocked(status), parsed = parse(await handleCalendarInfo(f.cal));
-    expect(f.request).not.toHaveBeenCalled(); expect(parsed.category).toBe(`authorization-${status}`);
-    expect(parsed.recovery).toContain(status === 'denied' ? 'System Settings' : 'administrator');
+    const f = mocked(status), info = await calendarReport(f.cal), [diagnostic] = info.diagnostics;
+    expect(f.request).not.toHaveBeenCalled(); expect(info.authorization).toBe(status); expect(diagnostic.category).toBe(`authorization-${status}`);
+    expect(diagnostic.recovery).toContain(status === 'denied' ? 'System Settings' : 'administrator');
   });
   it('keeps an undecided response factual without guessing that a GUI is absent', async () => {
     const f = mocked('notDetermined'); f.request.mockResolvedValue({ granted: false, status: 'notDetermined' });
-    const parsed = parse(await handleCalendarInfo(f.cal)); expect(parsed.category).toBe('authorization-notDetermined');
-    expect(parsed.recovery).toContain('cause is unknown'); expect(parsed.reason).not.toContain('session');
+    const [diagnostic] = (await calendarReport(f.cal)).diagnostics; expect(diagnostic.category).toBe('authorization-notDetermined');
+    expect(diagnostic.recovery).toContain('cause is unknown'); expect(diagnostic.reason).not.toContain('session');
   });
   it('distinguishes a responding helper authorization failure from communication failure', async () => {
     const f = mocked('writeOnly'); f.request.mockRejectedValue(new CalError('EventKit refused the request', 'authorization-request-failed'));
-    const parsed = parse(await handleCalendarInfo(f.cal)); expect(parsed.auth).toBe('writeOnly'); expect(parsed.category).toBe('authorization-request-failed'); expect(parsed.reason).toContain('EventKit');
-    expect(parsed.reason).not.toContain('reach'); expect(parsed.helper_path).toBeTruthy(); expect(parsed.log_path).toBeTruthy();
+    const info = await calendarReport(f.cal), [diagnostic] = info.diagnostics; expect(info.authorization).toBe('writeOnly'); expect(diagnostic.category).toBe('authorization-request-failed'); expect(diagnostic.reason).toContain('EventKit');
+    expect(diagnostic.reason).not.toContain('reach'); expect(diagnostic.helper_path).toBeTruthy(); expect(diagnostic.log_path).toBeTruthy();
     f.request.mockRejectedValue(new CalUnavailable('process died', { category: 'helper-exited', reason: 'process died', recovery: 'Retry' }));
-    expect(parse(await handleCalendarInfo(f.cal)).category).toBe('helper-exited');
+    expect((await calendarReport(f.cal)).diagnostics[0].category).toBe('helper-exited');
   });
   it('retains bounded stderr, helper path, log path, and exit code after a crash', async () => {
     const f = fake(`require('readline').createInterface({input:process.stdin}).on('line',()=>{ process.stderr.write('old-prefix'+ 'x'.repeat(8000)+' final-native-cause\\n',()=>process.exit(7)); });`);
@@ -120,7 +121,7 @@ describe('calendar diagnostics and source recovery', () => {
   it('exposes observed authorization and recovery while retaining retries, then clears them on success', async () => {
     const f = mocked('denied'); const sync = new CalSync(f.cal, 'work'); syncers.push(sync);
     await sync.syncActions([action], [action]); expect(sync.status(action.id)).toMatchObject({ status: 'pending', retry: true, diagnostic: { category: 'authorization-denied', auth: 'denied' } });
-    const parsed = parse(await handleCalendarInfo(f.cal, sync)); expect(parsed.calendar_sync[0].category).toBe('authorization-denied'); expect(parsed.calendar_sync[0].recovery).toContain('System Settings');
+    const { syncStates } = await calendarReport(f.cal, sync); expect(syncStates[0].diagnostic?.category).toBe('authorization-denied'); expect(syncStates[0].diagnostic?.recovery).toContain('System Settings');
     vi.mocked(f.cal.authStatus).mockResolvedValue({ status: 'fullAccess' }); await sync.syncActions([], [action]);
     expect(sync.status(action.id)).toMatchObject({ status: 'synced', eventId: 'event' }); expect(sync.status(action.id)?.diagnostic).toBeUndefined(); expect(sync.report()).toEqual([]);
   });
@@ -136,11 +137,11 @@ describe('calendar diagnostics and source recovery', () => {
   it('preserves reverse failure diagnostics after the helper metadata call recovers', async () => {
     const dir = mkdtempSync('/tmp/aside-cal-reverse-diagnostic-'); dirs.push(dir); writeFileSync(join(dir, 'aside.md'), '---\nid: work\n---\n');
     const store = new Store(dir); handleCapture(store, { content: 'Deploy', description: 'Deploy', actions: [{ name: 'Deploy', description: 'Deploy', scheduled: '2026-05-15T10:00', calendar: 'Work' }] });
-    const f = mocked('fullAccess'), sync = new CalSync(f.cal, 'work', store); syncers.push(sync);
+    const f = mocked('fullAccess'), sync = new CalSync(f.cal, 'work', store, undefined, undefined, calendarMutationFixture(store)); syncers.push(sync);
     vi.mocked(f.cal.listCalendars).mockRejectedValueOnce(new CalUnavailable('crash', { category: 'helper-exited', reason: 'crash', recovery: 'Retry', stderr: 'reverse-native-error', exit_code: 8 }));
     const actions = store.getActionIds().map(id => ({ id, ...store.getAction(id)! }));
-    await sync.reconcile(actions); const parsed = parse(await handleCalendarInfo(f.cal, sync));
-    expect(parsed.auth).toBe('fullAccess'); expect(parsed.calendar_diagnostics[0]).toMatchObject({ scope: 'reverse sync', category: 'helper-exited', stderr: 'reverse-native-error', exit_code: 8 });
+    await sync.reconcile(actions); const info = await calendarReport(f.cal, sync);
+    expect(info.authorization).toBe('fullAccess'); expect(info.failures[0]).toMatchObject({ id: 'reverse sync', diagnostic: { category: 'helper-exited', stderr: 'reverse-native-error', exit_code: 8 } });
     await sync.reconcile(actions); expect(sync.failureDiagnostics()).toEqual([]);
   });
   it('retains duplicate-pruning diagnostics after the primary event sync succeeds', async () => {
@@ -149,10 +150,10 @@ describe('calendar diagnostics and source recovery', () => {
     vi.spyOn(f.cal, 'deleteEvent').mockRejectedValue(new CalUnavailable('duplicate removal crashed', { category: 'helper-exited', reason: 'duplicate removal crashed', recovery: 'Retry', stderr: 'duplicate-native-proof', helper_path: '/fake', exit_code: 7 }));
     const sync = new CalSync(f.cal, 'work'); syncers.push(sync); await sync.syncActions([action], [action]);
     expect(f.upsert).toHaveBeenCalledOnce();
-    const parsed = parse(await handleCalendarInfo(f.cal, sync));
-    expect(parsed.calendar_sync[0]).toMatchObject({ status: 'failed', category: 'helper-exited', stderr: 'duplicate-native-proof', exit_code: 7 });
+    const info = await calendarReport(f.cal, sync);
+    expect(info.syncStates[0]).toMatchObject({ status: 'failed', diagnostic: { category: 'helper-exited', stderr: 'duplicate-native-proof', exit_code: 7 } });
     expect(sync.failureDiagnostics()[0].diagnostic.stderr).toBe('duplicate-native-proof');
-    expect(JSON.stringify(parsed)).not.toContain('calendar_diagnostics'); // represented once in its action receipt
+    expect(info.failures).toEqual([]); // represented once in its action state
   });
   it('retains diagnostics when an event is relocated before a failed reverse update', async () => {
     const dir = mkdtempSync('/tmp/aside-cal-miss-diagnostic-'); dirs.push(dir); writeFileSync(join(dir, 'aside.md'), '---\nid: work\n---\n');
@@ -160,16 +161,16 @@ describe('calendar diagnostics and source recovery', () => {
     const id = capture.createdActionIds[0], a = storeAction(store, id)!, f = mocked('fullAccess');
     const ev = eventTimes({ id: 'primary', url: buildMarker('work', id, 'active'), calendar: 'Work', title: '▢ Deploy', start: '2026-05-15T10:00', end: '2026-05-15T10:30' });
     vi.mocked(f.cal.listEvents).mockResolvedValue({ events: [ev] });
-    const sync = new CalSync(f.cal, 'work', store); syncers.push(sync); await sync.syncActions([a], [a]);
+    const sync = new CalSync(f.cal, 'work', store, undefined, undefined, calendarMutationFixture(store)); syncers.push(sync); await sync.syncActions([a], [a]);
     vi.mocked(f.cal.getEvents).mockResolvedValue({ events: [] });
     vi.mocked(f.cal.listEvents).mockResolvedValue({ events: [{ ...ev, id: 'relocated', title: 'Wrong title' }] });
     f.upsert.mockRejectedValue(new CalUnavailable('relocated update crashed', { category: 'helper-exited', reason: 'relocated update crashed', recovery: 'Retry', stderr: 'relocated-native-proof', exit_code: 9 }));
-    await sync.reconcile([a]); const parsed = parse(await handleCalendarInfo(f.cal, sync));
-    expect(parsed.calendar_sync[0]).toMatchObject({ category: 'helper-exited', stderr: 'relocated-native-proof', exit_code: 9 });
+    await sync.reconcile([a]); const { syncStates } = await calendarReport(f.cal, sync);
+    expect(syncStates[0].diagnostic).toMatchObject({ category: 'helper-exited', stderr: 'relocated-native-proof', exit_code: 9 });
   });
-  it('retains helper failure diagnostics in queued sync after calendar_info recovers', async () => {
+  it('retains helper failure diagnostics in queued sync after authorization recovers', async () => {
     const f = mocked('fullAccess'); f.upsert.mockRejectedValue(new CalUnavailable('crashed', { category: 'helper-exited', reason: 'crashed', recovery: 'Retry', helper_path: '/fake', stderr: 'native-crash-line', exit_code: 9 }));
     const sync = new CalSync(f.cal, 'work'); syncers.push(sync); await sync.syncActions([action], [action]);
-    const parsed = parse(await handleCalendarInfo(f.cal, sync)); expect(parsed.auth).toBe('fullAccess'); expect(parsed.calendar_sync[0]).toMatchObject({ status: 'pending', retry: true, category: 'helper-exited', stderr: 'native-crash-line', exit_code: 9 });
+    const info = await calendarReport(f.cal, sync); expect(info.authorization).toBe('fullAccess'); expect(info.syncStates[0]).toMatchObject({ status: 'pending', retry: true, diagnostic: { category: 'helper-exited', stderr: 'native-crash-line', exit_code: 9 } });
   });
 });

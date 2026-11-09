@@ -5,6 +5,7 @@ import { Worker } from 'node:worker_threads';
 import { RunStorage, type RunRecord } from '../src/automation/storage.js';
 import { AUTOMATION_HISTORY_LIMIT, AUTOMATION_WORKER_TIMEOUT_MS, DIAGNOSTIC_RETENTION_DAYS } from '../src/core/system-config.js';
 import { delegationSource } from '../src/automation/delegation.js';
+import {readExecutionContextSnapshot} from '../src/source/execution-context.js';
 
 const day = 86_400_000, now = Date.parse('2026-10-17T12:00:00Z');
 let temporary: string, storagePath: string, storage: RunStorage;
@@ -134,6 +135,7 @@ describe('automation diagnostic retention', () => {
       name: 'Work', created: '2026-10-17T09:00',
       delegation: {run: {model: 'external', prompt: '#artifact/2026-10-17-instructions'}},
     }, body: ''});
+    source.executionContext = readExecutionContextSnapshot(root);
     for (let index = 0; index < AUTOMATION_HISTORY_LIMIT + 1; index++) {
       start(record(`prior-${index}`, 0, {key: source.key, started: new Date(Date.now() - 1_000 - index).toISOString(), root}));
     }

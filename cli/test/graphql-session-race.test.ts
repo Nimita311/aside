@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { mkdtempSync, realpathSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
-import { init } from '../src/commands/init.js';
+import { init } from '../src/source/bootstrap.js';
 import { startServer, type Backend } from '../src/mcp/server.js';
 import { buildGraphQLSchema } from '../src/graphql/schema.js';
 import { printSchema } from 'graphql';
@@ -43,8 +43,7 @@ describe('GraphQL session selection concurrency', () => {
       return { result, session };
     };
     const backend: Backend = {
-      knownInstances: async () => [a, b], issues: async () => [], show: vi.fn(), close() {},
-      tool: vi.fn(async path => String(path)),
+      issues: async () => [], close() {},
       graphql: async (session, mode) => mode === 'query'
         ? readBackend(session, { data: {} })
         : { result: { data: {} }, session: { ...session, active: b, encountered: [a, b] } },
@@ -73,7 +72,7 @@ describe('GraphQL session selection concurrency', () => {
     const mutationStarted = new Promise<void>(resolve => { started = resolve; });
     const reads: string[] = [];
     const backend: Backend = {
-      knownInstances: async () => [a, b], issues: async () => [], show: vi.fn(), close() {}, tool: vi.fn(),
+      issues: async () => [], close() {},
       graphql: async (session, mode) => {
         expect(mode).toBe('mutation');
         started();
@@ -111,7 +110,7 @@ describe('GraphQL session selection concurrency', () => {
     ]);
     const reads: Array<string | null> = [];
     const backend: Backend = {
-      knownInstances: async () => [a, b], issues: async () => [], show: vi.fn(), close() {}, tool: vi.fn(),
+      issues: async () => [], close() {},
       graphql: async (session, mode, args) => ({result: {data: {}}, session: mode === 'mutation'
         ? {...session, active: args.variables!.path as string, encountered: [a, b]} : session}),
       graphqlSchema: async session => {

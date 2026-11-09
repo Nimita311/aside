@@ -1,7 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { delimiter, join } from 'node:path';
-import { builtinModel, discoverClaudeModels, discoverCodexModels, executablePath, ModelCatalog, modelEnumName, readExecutionContext, type ModelDiscovery } from '../src/automation/models.js';
+import { builtinModel, discoverClaudeModels, discoverCodexModels, executablePath, ModelCatalog, modelEnumName, type ModelDiscovery } from '../src/automation/models.js';
+
+import {readExecutionContextSnapshot} from '../src/source/execution-context.js';
+import {resolveExecutionContext} from '../src/core/execution-context.js';
 
 const sdk = vi.hoisted(() => ({ query: vi.fn() }));
 vi.mock('@anthropic-ai/claude-agent-sdk', () => ({ query: sdk.query }));
@@ -19,11 +22,20 @@ function executable(name: string, body = ''): string {
 function catalog(discover: ModelDiscovery): ModelCatalog { return new ModelCatalog({ discover, env: () => env }); }
 
 describe('instance model catalogs', () => {
+  it('requires a published execution context before reading private state or discovering runtimes', async () => {
+    writeFileSync(join(root, '.aside'), 'execution: [invalid]\n');
+    const discover = vi.fn<ModelDiscovery>(async () => []), models = catalog(discover);
+    await expect(models.for(root, {} as any)).rejects.toThrow('Lifecycle execution context is unavailable');
+    await expect(models.for(root, undefined as any)).rejects.toThrow('Lifecycle execution context is unavailable');
+    expect(discover).not.toHaveBeenCalled();
+    expect(existsSync(state)).toBe(false);
+  });
+
   it('discovers only installed runtimes, exact vendor aliases and configured executable names', async () => {
     executable('claude'); executable('custom');
     writeFileSync(join(root, '.aside'), 'execution:\n  models:\n    digest: {model: CLAUDE_SONNET}\n    external: {command: custom, args: [run]}\n    missing: {command: nonexistent}\n');
     const discover = vi.fn<ModelDiscovery>(async () => [{ model: 'sonnet', label: 'Sonnet' }, { model: 'claude-sonnet-5' }]);
-    const result = await catalog(discover).for(root);
+    const result = await catalog(discover).for(root, {executionContext: readExecutionContextSnapshot(root)});
     expect(discover).toHaveBeenCalledTimes(1);
     expect(discover.mock.calls[0].slice(0, 3)).toEqual(['claude', join(root, 'bin', 'claude'), root]);
     expect(result.models.map(model => model.name)).toEqual(['CLAUDE_CLAUDE_SONNET_5', 'CLAUDE_SONNET', 'digest', 'external']);
@@ -35,19 +47,19 @@ describe('instance model catalogs', () => {
   it('caches requests, explicitly refreshes, and preserves exact removed model bindings across restart', async () => {
     executable('codex');
     const discover = vi.fn<ModelDiscovery>().mockResolvedValueOnce([{ model: 'gpt-6.1-sol', label: 'GPT-6.1 Sol' }]).mockResolvedValue([{ model: 'gpt-6.2-sol' }]);
-    const first = catalog(discover), snapshot = await first.for(root);
+    const first = catalog(discover), snapshot = await first.for(root, {executionContext: readExecutionContextSnapshot(root)});
     expect(snapshot.models[0]).toMatchObject({ name: 'CODEX_GPT_6_1_SOL', model: 'gpt-6.1-sol' });
     snapshot.models[0].label = 'mutated';
-    expect((await first.for(root)).models[0].label).toBe('GPT-6.1 Sol');
+    expect((await first.for(root, {executionContext: readExecutionContextSnapshot(root)})).models[0].label).toBe('GPT-6.1 Sol');
     expect(discover).toHaveBeenCalledTimes(1);
-    expect((await first.for(root, { refresh: true })).models.map(model => model.name)).toEqual(['CODEX_GPT_6_2_SOL']);
+    expect((await first.for(root, {executionContext: readExecutionContextSnapshot(root), refresh: true })).models.map(model => model.name)).toEqual(['CODEX_GPT_6_2_SOL']);
     expect(builtinModel('CODEX_GPT_6_1_SOL', root)).toEqual({ engine: 'codex', model: 'gpt-6.1-sol' });
-    expect((await catalog(discover).for(root)).models[0].name).toBe('CODEX_GPT_6_2_SOL');
+    expect((await catalog(discover).for(root, {executionContext: readExecutionContextSnapshot(root)})).models[0].name).toBe('CODEX_GPT_6_2_SOL');
   });
   it('retains persisted last-good choices as unknown when vendor discovery fails without leaking its error', async () => {
     executable('codex');
-    await catalog(async () => [{ model: 'gpt-6.1-sol' }]).for(root);
-    const result = await catalog(async () => { throw new Error('secret_api_key=credentials'); }).for(root);
+    await catalog(async () => [{ model: 'gpt-6.1-sol' }]).for(root, {executionContext: readExecutionContextSnapshot(root)});
+    const result = await catalog(async () => { throw new Error('secret_api_key=credentials'); }).for(root, {executionContext: readExecutionContextSnapshot(root)});
     expect(result.models[0]).toMatchObject({ name: 'CODEX_GPT_6_1_SOL', availability: 'UNKNOWN' });
     expect(JSON.stringify(result)).not.toContain('secret_api_key');
     expect(result.diagnostics).toEqual(['codex: Model discovery failed']);
@@ -55,62 +67,62 @@ describe('instance model catalogs', () => {
   it('does not invent aliases or show last-good choices when runtime is uninstalled', async () => {
     const path = executable('claude');
     const models = catalog(async () => [{ model: 'sonnet' }]);
-    await models.for(root); rmSync(path);
-    expect((await models.for(root)).models).toEqual([]);
+    await models.for(root, {executionContext: readExecutionContextSnapshot(root)}); rmSync(path);
+    expect((await models.for(root, {executionContext: readExecutionContextSnapshot(root)})).models).toEqual([]);
     expect(builtinModel('CLAUDE_SONNET', root)).toEqual({ engine: 'claude', model: 'sonnet' });
   });
   it('updates named CLI choices when its executable is installed or removed', async () => {
     writeFileSync(join(root, '.aside'), 'execution:\n  models:\n    external: {command: custom}\n');
     const models = catalog(async () => []);
-    expect((await models.for(root)).models).toEqual([]);
+    expect((await models.for(root, {executionContext: readExecutionContextSnapshot(root)})).models).toEqual([]);
     const path = executable('custom');
-    expect((await models.for(root)).models.map(model => model.name)).toEqual(['external']);
-    rmSync(path); expect((await models.for(root)).models).toEqual([]);
+    expect((await models.for(root, {executionContext: readExecutionContextSnapshot(root)})).models.map(model => model.name)).toEqual(['external']);
+    rmSync(path); expect((await models.for(root, {executionContext: readExecutionContextSnapshot(root)})).models).toEqual([]);
   });
   it('invalidates on effective cwd, named configuration, PATH and runtime replacement', async () => {
     executable('codex'); mkdirSync(join(root, 'work'));
     const discover = vi.fn<ModelDiscovery>(async () => [{ model: 'gpt-6.1-sol' }]);
-    const models = catalog(discover); await models.for(root);
-    writeFileSync(join(root, '.aside'), 'execution: {cwd: work}'); await models.for(root);
+    const models = catalog(discover); await models.for(root, {executionContext: readExecutionContextSnapshot(root)});
+    writeFileSync(join(root, '.aside'), 'execution: {cwd: work}'); await models.for(root, {executionContext: readExecutionContextSnapshot(root)});
     expect(discover.mock.calls.at(-1)?.[2]).toBe(join(root, 'work'));
-    writeFileSync(join(root, 'work', '.claude-settings.json'), 'unrelated'); await models.for(root);
+    writeFileSync(join(root, 'work', '.claude-settings.json'), 'unrelated'); await models.for(root, {executionContext: readExecutionContextSnapshot(root)});
     expect(discover).toHaveBeenCalledTimes(2);
-    mkdirSync(join(root, 'work', '.claude')); writeFileSync(join(root, 'work', '.claude', 'settings.json'), '{}'); await models.for(root);
-    executable('codex', '/* replacement */'); await models.for(root);
-    env = { ...env, PATH: env.PATH + ':/nonexistent' }; await models.for(root);
+    mkdirSync(join(root, 'work', '.claude')); writeFileSync(join(root, 'work', '.claude', 'settings.json'), '{}'); await models.for(root, {executionContext: readExecutionContextSnapshot(root)});
+    executable('codex', '/* replacement */'); await models.for(root, {executionContext: readExecutionContextSnapshot(root)});
+    env = { ...env, PATH: env.PATH + ':/nonexistent' }; await models.for(root, {executionContext: readExecutionContextSnapshot(root)});
     expect(discover).toHaveBeenCalledTimes(5);
   });
   it('rejects colliding vendor identifiers and never reinterprets historical selections', async () => {
     executable('codex');
-    const first = await catalog(async () => [{ model: 'gpt-6.1-sol' }, { model: 'gpt_6_1_sol' }]).for(root);
+    const first = await catalog(async () => [{ model: 'gpt-6.1-sol' }, { model: 'gpt_6_1_sol' }]).for(root, {executionContext: readExecutionContextSnapshot(root)});
     expect(first.models).toEqual([]); expect(first.diagnostics[0]).toContain('Ambiguous vendor model enum name');
-    await catalog(async () => [{ model: 'gpt-6.1-sol' }]).for(root);
-    const changed = await catalog(async () => [{ model: 'gpt_6_1_sol' }]).for(root);
+    await catalog(async () => [{ model: 'gpt-6.1-sol' }]).for(root, {executionContext: readExecutionContextSnapshot(root)});
+    const changed = await catalog(async () => [{ model: 'gpt_6_1_sol' }]).for(root, {executionContext: readExecutionContextSnapshot(root)});
     expect(changed.models[0]).toMatchObject({ model: 'gpt-6.1-sol', availability: 'UNKNOWN' });
     expect(builtinModel('CODEX_GPT_6_1_SOL', root)).toEqual({ engine: 'codex', model: 'gpt-6.1-sol' });
   });
   it('withholds new choices when metadata cannot be persisted and preserves malformed caches', async () => {
     executable('codex');
     writeFileSync(state, 'not a directory');
-    expect((await catalog(async () => [{ model: 'new-model' }]).for(root)).models).toEqual([]);
-    rmSync(state); await catalog(async () => [{ model: 'old-model' }]).for(root);
+    expect((await catalog(async () => [{ model: 'new-model' }]).for(root, {executionContext: readExecutionContextSnapshot(root)})).models).toEqual([]);
+    rmSync(state); await catalog(async () => [{ model: 'old-model' }]).for(root, {executionContext: readExecutionContextSnapshot(root)});
     const { readdirSync } = await import('node:fs');
     const path = join(state, 'models', readdirSync(join(state, 'models')).find(name => name.endsWith('.json'))!);
     writeFileSync(path, '{malformed');
-    const result = await catalog(async () => [{ model: 'new-model' }]).for(root);
+    const result = await catalog(async () => [{ model: 'new-model' }]).for(root, {executionContext: readExecutionContextSnapshot(root)});
     expect(result.models).toEqual([]); expect(readFileSync(path, 'utf8')).toBe('{malformed');
     expect(() => builtinModel('CODEX_OLD_MODEL', root)).toThrow();
   });
   it('preserves the last readable cache when cumulative historical identities reach its size limit', async () => {
     executable('codex'); let batch = 0;
     const models = catalog(async () => Array.from({ length: 500 }, (_, index) => ({ model: `batch${batch}-model${index}`, label: 'x'.repeat(1024) })));
-    await models.for(root);
-    batch = 1; await models.for(root, { refresh: true });
+    await models.for(root, {executionContext: readExecutionContextSnapshot(root)});
+    batch = 1; await models.for(root, {executionContext: readExecutionContextSnapshot(root), refresh: true });
     const { readdirSync } = await import('node:fs');
     const path = join(state, 'models', readdirSync(join(state, 'models')).find(name => name.endsWith('.json'))!);
     const previous = readFileSync(path, 'utf8');
     batch = 2;
-    const rejected = await models.for(root, { refresh: true });
+    const rejected = await models.for(root, {executionContext: readExecutionContextSnapshot(root), refresh: true });
     expect(rejected.diagnostics).toContain('Model cache exceeds its size limit');
     expect(rejected.models).toHaveLength(500);
     expect(rejected.models[0]).toMatchObject({ availability: 'UNKNOWN', reason: 'Model cache exceeds its size limit' });
@@ -123,50 +135,52 @@ describe('instance model catalogs', () => {
     executable('codex');
     let release!: (models: Array<{ model: string }>) => void;
     const discover = vi.fn<ModelDiscovery>(() => new Promise(resolveDone => { release = resolveDone; }));
-    const models = catalog(discover), first = models.for(root), second = models.for(root);
+    const models = catalog(discover), first = models.for(root, {executionContext: readExecutionContextSnapshot(root)}), second = models.for(root, {executionContext: readExecutionContextSnapshot(root)});
     release([{ model: 'sonnet' }]);
     expect(await first).toEqual(await second); expect(discover).toHaveBeenCalledTimes(1);
-    expect((await catalog(async () => Array.from({ length: 501 }, (_, index) => ({ model: `m${index}` }))).for(root)).diagnostics[0]).toContain('size limit');
+    expect((await catalog(async () => Array.from({ length: 501 }, (_, index) => ({ model: `m${index}` }))).for(root, {executionContext: readExecutionContextSnapshot(root)})).diagnostics[0]).toContain('size limit');
   });
   it('keeps shared discovery alive when its first caller cancels', async () => {
     executable('codex');
     let release!: (models: Array<{ model: string }>) => void;
     const discover = vi.fn<ModelDiscovery>(() => new Promise(resolveDone => { release = resolveDone; }));
     const models = catalog(discover), firstCaller = new AbortController();
-    const first = models.for(root, { signal: firstCaller.signal }), second = models.for(root);
+    const first = models.for(root, {executionContext: readExecutionContextSnapshot(root), signal: firstCaller.signal }), second = models.for(root, {executionContext: readExecutionContextSnapshot(root)});
     firstCaller.abort();
     await expect(first).rejects.toThrow();
     release([{ model: 'shared-model' }]);
     expect((await second).models[0].model).toBe('shared-model');
     expect(discover).toHaveBeenCalledOnce();
-    expect((await models.for(root)).models[0].model).toBe('shared-model');
+    expect((await models.for(root, {executionContext: readExecutionContextSnapshot(root)})).models[0].model).toBe('shared-model');
   });
   it('does not publish an old context after a newer probe completed, while preserving both identities', async () => {
     executable('codex'); mkdirSync(join(root, 'work'));
     const releases: Array<(models: Array<{ model: string }>) => void> = [];
     const discover = vi.fn<ModelDiscovery>(() => new Promise(resolveDone => releases.push(resolveDone)));
-    const models = catalog(discover), first = models.for(root);
+    const models = catalog(discover), first = models.for(root, {executionContext: readExecutionContextSnapshot(root)});
     writeFileSync(join(root, '.aside'), 'execution: {cwd: work}');
-    const second = models.for(root);
+    const second = models.for(root, {executionContext: readExecutionContextSnapshot(root)});
     releases[1]([{ model: 'current-cwd-model' }]); await second;
     releases[0]([{ model: 'previous-cwd-model' }]); await first;
     expect(builtinModel('CODEX_PREVIOUS_CWD_MODEL', root)?.model).toBe('previous-cwd-model');
     expect(builtinModel('CODEX_CURRENT_CWD_MODEL', root)?.model).toBe('current-cwd-model');
-    expect((await models.for(root)).models.map(model => model.model)).toEqual(['current-cwd-model']);
+    expect((await models.for(root, {executionContext: readExecutionContextSnapshot(root)})).models.map(model => model.model)).toEqual(['current-cwd-model']);
     expect(discover).toHaveBeenCalledTimes(2);
-    const fallback = await catalog(async () => { throw new Error('unavailable'); }).for(root);
+    const fallback = await catalog(async () => { throw new Error('unavailable'); }).for(root, {executionContext: readExecutionContextSnapshot(root)});
     expect(fallback.models.map(model => model.model)).toEqual(['current-cwd-model']);
   });
-  it('persists historical bindings from an obsolete probe without publishing them as current choices', async () => {
+  it('keeps a published generation current until a newer execution context is explicitly supplied', async () => {
     executable('codex'); mkdirSync(join(root, 'work'));
     let release!: (models: Array<{ model: string }>) => void;
     const models = catalog(() => new Promise(resolveDone => { release = resolveDone; }));
-    const first = models.for(root);
+    const first = models.for(root, {executionContext: readExecutionContextSnapshot(root)});
     writeFileSync(join(root, '.aside'), 'execution: {cwd: work}');
     release([{ model: 'old-context-model' }]);
-    expect((await first).models).toEqual([]);
+    expect((await first).models.map(model => model.model)).toEqual(['old-context-model']);
     expect(builtinModel('CODEX_OLD_CONTEXT_MODEL', root)?.model).toBe('old-context-model');
-    expect((await catalog(async () => { throw new Error('unavailable'); }).for(root)).models).toEqual([]);
+    const current = models.for(root, {executionContext: readExecutionContextSnapshot(root)});
+    release([{model: 'current-context-model'}]); await current;
+    expect((await catalog(async () => { throw new Error('unavailable'); }).for(root, {executionContext: readExecutionContextSnapshot(root)})).models.map(model => model.model)).toEqual(['current-context-model']);
   });
   it('publishes initialization metadata and caches against its final volatile file stamps', async () => {
     executable('codex');
@@ -177,16 +191,16 @@ describe('instance model catalogs', () => {
       return [{ model: 'initialized-model' }];
     });
     const models = catalog(discover);
-    expect((await models.for(root)).models[0].model).toBe('initialized-model');
+    expect((await models.for(root, {executionContext: readExecutionContextSnapshot(root)})).models[0].model).toBe('initialized-model');
     expect(builtinModel('CODEX_INITIALIZED_MODEL', root)?.model).toBe('initialized-model');
-    expect((await models.for(root)).models[0].model).toBe('initialized-model');
+    expect((await models.for(root, {executionContext: readExecutionContextSnapshot(root)})).models[0].model).toBe('initialized-model');
     expect(discover).toHaveBeenCalledOnce();
   });
   it('merges concurrent catalog writers without losing immutable historical bindings', async () => {
     executable('codex');
     let firstRelease!: (models: Array<{ model: string }>) => void, secondRelease!: (models: Array<{ model: string }>) => void;
-    const first = catalog(() => new Promise(resolveDone => { firstRelease = resolveDone; })).for(root);
-    const second = catalog(() => new Promise(resolveDone => { secondRelease = resolveDone; })).for(root);
+    const first = catalog(() => new Promise(resolveDone => { firstRelease = resolveDone; })).for(root, {executionContext: readExecutionContextSnapshot(root)});
+    const second = catalog(() => new Promise(resolveDone => { secondRelease = resolveDone; })).for(root, {executionContext: readExecutionContextSnapshot(root)});
     firstRelease([{ model: 'first-model' }]); await first;
     secondRelease([{ model: 'second-model' }]); await second;
     expect(builtinModel('CODEX_FIRST_MODEL', root)).toEqual({ engine: 'codex', model: 'first-model' });
@@ -194,13 +208,13 @@ describe('instance model catalogs', () => {
   });
   it('rejects array-shaped persisted mappings without silently losing new bindings', async () => {
     executable('codex');
-    await catalog(async () => [{ model: 'old-model' }]).for(root);
+    await catalog(async () => [{ model: 'old-model' }]).for(root, {executionContext: readExecutionContextSnapshot(root)});
     const { readdirSync } = await import('node:fs');
     const path = join(state, 'models', readdirSync(join(state, 'models')).find(name => name.endsWith('.json'))!);
     for (const field of ['bindings', 'catalogs']) {
       const malformed = { version: 1, root, bindings: {}, catalogs: {}, [field]: [] };
       writeFileSync(path, JSON.stringify(malformed));
-      expect((await catalog(async () => [{ model: 'new-model' }]).for(root)).models).toEqual([]);
+      expect((await catalog(async () => [{ model: 'new-model' }]).for(root, {executionContext: readExecutionContextSnapshot(root)})).models).toEqual([]);
       expect(JSON.parse(readFileSync(path, 'utf8'))).toEqual(malformed);
       expect(() => builtinModel('CODEX_NEW_MODEL', root)).toThrow('Invalid model cache');
     }
@@ -208,8 +222,8 @@ describe('instance model catalogs', () => {
   it('rejects a conflicting concurrent binding instead of overwriting its exact vendor identifier', async () => {
     executable('codex');
     let firstRelease!: (models: Array<{ model: string }>) => void, secondRelease!: (models: Array<{ model: string }>) => void;
-    const first = catalog(() => new Promise(resolveDone => { firstRelease = resolveDone; })).for(root);
-    const second = catalog(() => new Promise(resolveDone => { secondRelease = resolveDone; })).for(root);
+    const first = catalog(() => new Promise(resolveDone => { firstRelease = resolveDone; })).for(root, {executionContext: readExecutionContextSnapshot(root)});
+    const second = catalog(() => new Promise(resolveDone => { secondRelease = resolveDone; })).for(root, {executionContext: readExecutionContextSnapshot(root)});
     firstRelease([{ model: 'gpt-6.1-sol' }]); await first;
     secondRelease([{ model: 'gpt_6_1_sol' }]);
     const result = await second;
@@ -220,26 +234,26 @@ describe('instance model catalogs', () => {
   it('cancels discovery promptly and does not cache an aborted snapshot', async () => {
     executable('codex'); const controller = new AbortController();
     const discover = vi.fn<ModelDiscovery>().mockImplementationOnce(() => new Promise(() => {})).mockResolvedValue([{ model: 'gpt-6.1-sol' }]);
-    const models = catalog(discover), first = models.for(root, { signal: controller.signal });
+    const models = catalog(discover), first = models.for(root, {executionContext: readExecutionContextSnapshot(root), signal: controller.signal });
     controller.abort(); await expect(first).rejects.toThrow();
-    expect((await models.for(root)).models[0].model).toBe('gpt-6.1-sol');
+    expect((await models.for(root, {executionContext: readExecutionContextSnapshot(root)})).models[0].model).toBe('gpt-6.1-sol');
     expect(discover).toHaveBeenCalledTimes(2);
   });
   it('bounds a provider that ignores cancellation with an initialization timeout', async () => {
     executable('codex'); vi.useFakeTimers();
-    const work = catalog(() => new Promise(() => {})).for(root);
+    const work = catalog(() => new Promise(() => {})).for(root, {executionContext: readExecutionContextSnapshot(root)});
     await vi.advanceTimersByTimeAsync(15_000);
     expect((await work).diagnostics).toContain('codex: Model discovery interrupted or timed out');
   });
-  it('reads only instance .aside and resolves custom binaries in effective cwd', () => {
+  it('captures only instance .aside and resolves custom binaries in published cwd', () => {
     mkdirSync(join(root, 'work')); writeFileSync(join(root, 'work', '.aside'), 'execution: {cwd: bad}');
     writeFileSync(join(root, '.aside'), 'execution: {cwd: work}');
-    expect(readExecutionContext(root).cwd).toBe(join(root, 'work'));
+    expect(resolveExecutionContext(readExecutionContextSnapshot(root)).cwd).toBe(join(root, 'work'));
     const path = join(root, 'work', 'agent'); writeFileSync(path, ''); chmodSync(path, 0o700);
     expect(executablePath('./agent', join(root, 'work'), env)).toBe(path);
     expect(executablePath('agent', root, env)).toBeUndefined();
     writeFileSync(join(root, '.aside'), 'execution: {agents: {bad: {engine: codex}}}');
-    expect(() => readExecutionContext(root)).toThrow('Invalid execution config');
+    expect(() => resolveExecutionContext(readExecutionContextSnapshot(root))).toThrow('Invalid execution config');
   });
 
   it('ignores relative and empty PATH entries so the execution cwd cannot supply a vendor CLI', () => {
@@ -294,7 +308,7 @@ describe('inference-free runtime discovery', () => {
     const pidFile = join(root, 'owned-pid');
     executable('codex', `process.on('SIGTERM',()=>{});require('node:fs').writeFileSync(${JSON.stringify(pidFile)},String(process.pid));process.stdin.resume();setInterval(()=>{},1000);`);
     const models = new ModelCatalog({ env: () => env }), firstCaller = new AbortController(), lastCaller = new AbortController();
-    const first = models.for(root, { signal: firstCaller.signal }), last = models.for(root, { signal: lastCaller.signal });
+    const first = models.for(root, {executionContext: readExecutionContextSnapshot(root), signal: firstCaller.signal }), last = models.for(root, {executionContext: readExecutionContextSnapshot(root), signal: lastCaller.signal });
     await vi.waitFor(() => expect(existsSync(pidFile)).toBe(true), { timeout: 3000, interval: 20 });
     firstCaller.abort(); await expect(first).rejects.toThrow();
     let finished = false;

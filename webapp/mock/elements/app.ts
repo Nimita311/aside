@@ -3,6 +3,7 @@ import { renderPills } from './pills';
 import { showNotice } from '../../src/notice';
 import { showActionFailure } from '../../src/toast';
 import { setupInstanceTooltips, setInstanceTooltip, CALENDAR_OFF_ICON } from '../../src/instance-catalogue';
+import { ICON_SIZE, iconMarkup, iconStates, type IconKind } from '../../src/entity-icons';
 
 const $ = (id: string): HTMLElement => {
   const element = document.getElementById(id);
@@ -24,6 +25,17 @@ for (const icon of icons) {
   glyphs.innerHTML = icon.svg;
   item.append(glyphs, text('span', icon.label, 'element-sr-only'));
   $('icon-list').append(item);
+}
+
+for (const kind of ['instance', 'entry', 'project', 'action', 'content', 'date', 'location'] as IconKind[]) {
+  for (const state of iconStates(kind)) {
+    const item = document.createElement('li'); item.className = 'element-icon element-entity-icon';
+    item.dataset.kind = kind; item.title = `${kind} · ${state}`; item.tabIndex = 0;
+    const glyphs = document.createElement('div'); glyphs.className = 'element-icon-glyphs'; glyphs.setAttribute('aria-hidden', 'true');
+    glyphs.innerHTML = iconMarkup(kind, state, ICON_SIZE.pill) + iconMarkup(kind, state, ICON_SIZE.title);
+    item.append(glyphs, text('span', `${kind} ${state}`, 'element-sr-only'));
+    $('entity-icon-list').append(item);
+  }
 }
 
 $('pill-specimens').append(renderPills());

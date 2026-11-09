@@ -14,6 +14,9 @@ afterEach(() => { switcher?.dispose(); document.body.replaceChildren(); });
 function setup(instances: AvailableInstance[] = [primary, linked, sibling]) {
   document.body.innerHTML = readFileSync('index.html', 'utf8').replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, '').replace(/<link\b[^>]*>/gi, '');
   const root = document.querySelector<HTMLElement>('#instance-switcher')!;
+  // The frame mounts this live control in Navigation or the pill's Views UI.
+  // Exercise the switcher independently in a visible host.
+  document.body.append(root);
   const select = vi.fn(), all = vi.fn(), request = vi.fn().mockResolvedValue(instances);
   switcher = new InstanceSwitcher(root, select, all, request);
   switcher.setCatalogue(instances); switcher.setActive(linked);

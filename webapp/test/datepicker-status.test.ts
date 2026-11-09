@@ -1,123 +1,118 @@
 // @vitest-environment happy-dom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { dismissActionToast } from '../src/toast';
-import { createDatePicker } from '../src/datepicker';
+import { createDatePicker, type CalendarContext } from '../src/datepicker';
 
 let picker: ReturnType<typeof createDatePicker> | undefined;
+beforeEach(() => { vi.useFakeTimers(); vi.setSystemTime(new Date('2026-10-04T12:00:00')); });
+afterEach(() => { picker?.dispose(); picker = undefined; document.body.replaceChildren(); vi.restoreAllMocks(); vi.useRealTimers(); });
 
-beforeEach(() => vi.useFakeTimers());
-afterEach(() => {
-  dismissActionToast();
-  picker?.close(); picker?.close(); picker = undefined;
-  document.body.replaceChildren();
-  vi.restoreAllMocks();
-  vi.useRealTimers();
-});
-
-function fixture() {
-  const latch = document.createElement('div'); latch.id = 'date-latch'; latch.dataset.date = '2026-10-04';
-  const chip = document.createElement('button'); chip.className = 'date-latch-chip'; latch.append(chip);
-  document.body.append(latch);
-  const jumpNear = vi.fn(async () => false);
-  picker = createDatePicker({ jumpToDate: vi.fn(), jumpNear }); picker.toggle();
-  const status = document.querySelector<HTMLElement>('.date-jump-status')!;
-  const nav = document.querySelector<HTMLElement>('.date-jump-nav')!;
-  const newer = document.querySelector<HTMLButtonElement>('.date-jump-step[title="Newer"]')!;
-  const older = document.querySelector<HTMLButtonElement>('.date-jump-step[title="Older"]')!;
-  return { jumpNear, status, nav, newer, older };
+function fixture(getDayCounts = vi.fn(async (_from: string, _to: string) => new Map<string, number>())) {
+  const host = document.createElement('div'); document.body.append(host);
+  const context: CalendarContext = { key: 'entries:aurora', current: '2026-10-03', visibleRange: { start: '2026-10-01', end: '2026-10-03' } };
+  picker = createDatePicker({ getCalendarContext: () => context, getDayCounts, jumpToDate: vi.fn() }); picker.mountInline(host);
+  const day = (value: string) => host.querySelector<HTMLButtonElement>(`.cal-day[data-date="${value}"]`)!;
+  return { host, context, getDayCounts, day };
 }
+const settle = () => vi.advanceTimersByTimeAsync(0);
 
-describe('date picker navigation feedback', () => {
-  it.each(['newer', 'older'] as const)('keeps a %s boundary quiet while retaining focus', async direction => {
+describe('calendar activity feedback', () => {
+  it('keeps unknown counts distinct from known empty dates while loading', async () => {
     const f = fixture();
-    expect(f.status.textContent).toBe('');
-    expect(f.status.getAttribute('role')).toBe('status');
-    expect(f.status.getAttribute('aria-atomic')).toBe('true');
-    f[direction].focus(); f[direction].click();
-    expect(f.nav.getAttribute('aria-busy')).toBe('true');
-    await vi.advanceTimersByTimeAsync(0);
-    expect(f.jumpNear).toHaveBeenCalledWith(
-      direction === 'newer' ? '2026-10-11T12:00:00' : '2026-09-27T12:00:00',
-      '2026-10-04', direction === 'newer' ? 1 : -1,
-    );
-    expect(f.status.textContent).toBe('');
-    expect(f.nav.classList.contains('is-shaking')).toBe(false);
-    expect(f.nav.hasAttribute('aria-busy')).toBe(false);
-    expect(document.activeElement).toBe(f[direction]);
-    expect(picker!.isOpen()).toBe(true);
+    expect(f.host.querySelector('.cal-grid')?.getAttribute('aria-busy')).toBe('true');
+    expect(f.day('2026-10-03').hasAttribute('data-count')).toBe(false);
+    expect(f.day('2026-10-03').getAttribute('aria-label')).toContain('activity loading');
+    await settle();
+    expect(f.getDayCounts).toHaveBeenCalledWith('2026-09-28', '2026-11-08');
+    expect(f.host.querySelector('.cal-grid')?.hasAttribute('aria-busy')).toBe(false);
+    expect(f.day('2026-10-03').dataset.count).toBe('0');
+    expect(f.day('2026-10-03').getAttribute('aria-label')).toContain('0 matching entries');
   });
 
-  it('clears an obsolete failure at the start of a successful retry', async () => {
-    const f = fixture(); f.jumpNear.mockRejectedValueOnce(new Error('offline'));
-    f.newer.click(); await vi.advanceTimersByTimeAsync(0);
-    expect(f.status.textContent).toBe('');
-    expect(document.querySelector('#action-toast')?.textContent).toBe('Unable to jump to that date. Try again.');
-    let complete!: (found: boolean) => void;
-    f.jumpNear.mockReturnValueOnce(new Promise(resolve => { complete = resolve; }));
-    f.newer.click();
-    expect(document.querySelector<HTMLElement>('#action-toast')?.hidden).toBe(true);
-    expect(f.status.textContent).toBe('');
-    complete(true); await vi.advanceTimersByTimeAsync(0);
-    expect(f.status.textContent).toBe('');
+  it('encodes activity counts without altering the range or today markers', async () => {
+    const get = vi.fn(async (_from: string, _to: string) => new Map([['2026-10-02', 1], ['2026-10-03', 20], ['2026-10-04', 4]]));
+    const f = fixture(get); await settle();
+    expect(Number(f.day('2026-10-03').style.getPropertyValue('--cal-density')))
+      .toBeGreaterThan(Number(f.day('2026-10-02').style.getPropertyValue('--cal-density')));
+    expect(f.day('2026-10-03').classList.contains('range-end')).toBe(true);
+    expect(f.day('2026-10-04').classList.contains('is-today')).toBe(true);
+    expect(f.day('2026-10-04').getAttribute('aria-current')).toBe('date');
   });
 
-  it('clears a stale message on period change and passes the new target date', async () => {
-    const f = fixture(); f.jumpNear.mockRejectedValueOnce(new Error('offline'));
-    f.newer.click(); await vi.advanceTimersByTimeAsync(0);
-    document.querySelector<HTMLButtonElement>('.date-jump-unit[data-unit="month"]')!.click();
-    expect(f.status.textContent).toBe('');
-    f.newer.click(); await vi.advanceTimersByTimeAsync(0);
-    expect(f.jumpNear).toHaveBeenLastCalledWith('2026-11-04T12:00:00', '2026-10-04', 1);
-    expect(f.status.textContent).toBe('');
+  it('does not let a slower previous month replace the displayed month activity', async () => {
+    let finishOctober!: (value: Map<string, number>) => void;
+    let finishNovember!: (value: Map<string, number>) => void;
+    const get = vi.fn(async (_from: string, _to: string) => new Map<string, number>())
+      .mockReturnValueOnce(new Promise(resolve => { finishOctober = resolve; }))
+      .mockReturnValueOnce(new Promise(resolve => { finishNovember = resolve; }));
+    const f = fixture(get); await settle();
+    f.host.querySelector<HTMLButtonElement>('[aria-label="Next month"]')!.click(); await settle();
+    finishOctober(new Map([['2026-11-04', 99]])); await settle();
+    expect(f.host.querySelector('.cal-title')?.textContent).toBe('Nov 2026');
+    expect(f.day('2026-11-04').hasAttribute('data-count')).toBe(false);
+    finishNovember(new Map([['2026-11-04', 5]])); await settle();
+    expect(f.day('2026-11-04').dataset.count).toBe('5');
   });
 
-  it('rebases a subsequent step on the landed date across a large gap', async () => {
-    const f = fixture();
-    f.jumpNear.mockImplementationOnce(async () => {
-      document.getElementById('date-latch')!.dataset.date = '2025-03-01';
-      return true;
-    });
-    f.older.click(); await vi.advanceTimersByTimeAsync(0);
-    f.older.click(); await vi.advanceTimersByTimeAsync(0);
-    expect(f.jumpNear).toHaveBeenLastCalledWith('2025-02-22T12:00:00', '2025-03-01', -1);
+  it('ignores an old timeline result after the selection context changes', async () => {
+    let finishOld!: (value: Map<string, number>) => void;
+    const get = vi.fn(async (_from: string, _to: string) => new Map([['2026-10-03', 2]]))
+      .mockReturnValueOnce(new Promise(resolve => { finishOld = resolve; }));
+    const f = fixture(get); await settle();
+    f.context.key = 'entries:another-project'; picker!.refresh(); await settle();
+    finishOld(new Map([['2026-10-03', 90]])); await settle();
+    expect(f.day('2026-10-03').dataset.count).toBe('2');
   });
 
-  it('reports a recoverable error and allows another attempt', async () => {
-    const f = fixture(); f.jumpNear.mockRejectedValueOnce(new Error('offline'));
-    f.newer.click(); await vi.advanceTimersByTimeAsync(0);
-    expect(f.status.textContent).toBe('');
-    expect(document.querySelector('#action-toast')?.textContent).toBe('Unable to jump to that date. Try again.');
-    expect(f.nav.hasAttribute('aria-busy')).toBe(false);
-    f.jumpNear.mockResolvedValueOnce(true); f.newer.click(); await vi.advanceTimersByTimeAsync(0);
-    expect(f.jumpNear).toHaveBeenCalledTimes(2);
-    expect(f.status.textContent).toBe('');
+  it('reuses complete counts while scrolling and reloads after data invalidation', async () => {
+    const f = fixture(); await settle();
+    f.context.current = '2026-10-04'; picker!.refresh(); picker!.refresh(); await settle();
+    expect(f.getDayCounts).toHaveBeenCalledOnce();
+    picker!.refresh({ invalidateCounts: true }); await settle();
+    expect(f.getDayCounts).toHaveBeenCalledTimes(2);
   });
 
-  it.each(['miss', 'error'] as const)('does not leak an old %s into a reopened picker', async result => {
-    const f = fixture();
-    let complete!: (found: boolean) => void;
-    let fail!: (error: Error) => void;
-    f.jumpNear.mockReturnValueOnce(new Promise((resolve, reject) => { complete = resolve; fail = reject; }));
-    f.newer.click(); picker!.close(); picker!.toggle();
-    if (result === 'miss') complete(false);
-    else fail(new Error('offline'));
-    await vi.advanceTimersByTimeAsync(0);
-    expect(document.querySelector('.date-jump-status')!.textContent).toBe('');
-    expect(document.querySelector('#action-toast')).toBeNull();
-    expect(document.querySelector('.date-jump-nav')!.classList.contains('is-shaking')).toBe(false);
-    document.querySelector<HTMLButtonElement>('.date-jump-step[title="Newer"]')!.click();
-    await vi.advanceTimersByTimeAsync(0);
-    expect(document.querySelector('.date-jump-status')!.textContent).toBe('');
-    expect(f.jumpNear).toHaveBeenCalledTimes(2);
+  it('reports a recoverable count failure without presenting missing data as zero', async () => {
+    const get = vi.fn(async (_from: string, _to: string) => new Map([['2026-10-03', 3]]))
+      .mockRejectedValueOnce(new Error('offline'));
+    const f = fixture(get); await settle();
+    const status = f.host.querySelector<HTMLElement>('.date-jump-status')!;
+    expect(status.hidden).toBe(false); expect(status.textContent).toContain('Activity unavailable.');
+    expect(f.day('2026-10-03').hasAttribute('data-count')).toBe(false);
+    f.host.querySelector<HTMLButtonElement>('.cal-retry')!.click(); await settle();
+    expect(status.hidden).toBe(true); expect(f.day('2026-10-03').dataset.count).toBe('3');
   });
 
-  it('continues to suppress overlapping requests while waiting for a result', async () => {
-    const f = fixture(); let complete!: (found: boolean) => void;
-    f.jumpNear.mockReturnValueOnce(new Promise(resolve => { complete = resolve; }));
-    f.newer.click(); f.older.click();
-    expect(f.jumpNear).toHaveBeenCalledOnce();
-    complete(false); await vi.advanceTimersByTimeAsync(0);
-    expect(f.status.textContent).toBe('');
-    expect(f.nav.hasAttribute('aria-busy')).toBe(false);
+  it('does not fetch activity before an instance timeline is available', async () => {
+    const host = document.createElement('div'); document.body.append(host);
+    const context = { key: '', current: '2026-10-03' };
+    const getDayCounts = vi.fn(async () => new Map<string, number>());
+    picker = createDatePicker({ getCalendarContext: () => context, getDayCounts, jumpToDate: vi.fn() }); picker.mountInline(host);
+    await settle(); expect(getDayCounts).not.toHaveBeenCalled();
+    expect(host.querySelector('.cal-grid')?.hasAttribute('aria-busy')).toBe(false);
+    context.key = 'instance:ready'; picker.refresh(); await settle();
+    expect(getDayCounts).toHaveBeenCalledOnce();
+  });
+
+  it('loads activity only when the persistent control is connected and visible', async () => {
+    const host = document.createElement('div');
+    const getDayCounts = vi.fn(async () => new Map<string, number>());
+    picker = createDatePicker({ getCalendarContext: () => ({ key: 'entries:ready', current: '2026-10-03' }), getDayCounts, jumpToDate: vi.fn() });
+    picker.mountInline(host); await settle();
+    expect(getDayCounts).not.toHaveBeenCalled();
+    host.hidden = true; document.body.append(host); picker.refresh(); await settle();
+    expect(getDayCounts).not.toHaveBeenCalled();
+    host.hidden = false; host.inert = true; picker.refresh(); await settle();
+    expect(getDayCounts).not.toHaveBeenCalled();
+    host.inert = false; picker.refresh(); await settle();
+    expect(getDayCounts).toHaveBeenCalledOnce();
+  });
+
+  it('ignores pending responses after disposal', async () => {
+    let finish!: (value: Map<string, number>) => void;
+    const get = vi.fn(async (_from: string, _to: string) => new Map<string, number>())
+      .mockReturnValueOnce(new Promise(resolve => { finish = resolve; }));
+    const f = fixture(get); await settle(); picker!.dispose();
+    finish(new Map([['2026-10-03', 9]])); await settle();
+    expect(f.host.childElementCount).toBe(0);
   });
 });

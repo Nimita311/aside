@@ -1,30 +1,38 @@
+import {calendarMutationFixture} from './calendar-fixture.js';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { init } from '../src/commands/init.js';
-import { Store } from '../src/mcp/store.js';
+import { init } from '../src/source/bootstrap.js';
+import { Store } from '../src/source/store.js';
 import { handleCapture } from '../src/mcp/tools/capture.js';
 import { handleUpdateOccurrence } from '../src/mcp/tools/recurrence.js';
 import { handleUpdateAction } from '../src/mcp/tools/update.js';
 import { InstanceHost } from '../src/daemon/host.js';
+import { InstanceCalendarLifecycle } from '../src/daemon/calendar-lifecycle.js';
+import { InstanceLifecycle } from '../src/daemon/instance-lifecycle.js';
 import { nativeSeries } from '../src/mcp/calendar/recurrence-rule.js';
 import { RecurrenceCalSync, isNativeOccurrence } from '../src/mcp/calendar/recurrence-sync.js';
-import { CalSync, storeAction } from '../src/mcp/calendar/sync.js';
+import {storeAction} from '../src/mcp/calendar/sync.js';
+import {CalendarSyncFixture as CalSync} from './calendar-fixture.js';
+import {CalSync as BaseCalSync} from '../src/mcp/calendar/sync.js';
 import { RecurrenceMirror } from '../src/mcp/calendar/recurrence-state.js';
 import { CalClient } from '../src/mcp/calendar/client.js';
 import { scheduleInstant, wallTimeAt } from '../src/core/scheduling.js';
+import { CALENDAR_SYNC_RETRY_MS } from '../src/core/system-config.js';
 import type { CalEvent, UpsertEventArgs } from '../src/mcp/calendar/protocol.js';
+import { calendarLocation } from '../src/mcp/calendar/location.js';
+import {hostGraphQL} from './support/graphql-host.js';
 
 const schedule = { dtstart: '2026-10-09T09:00', timezone: 'UTC', rrule: 'FREQ=DAILY;COUNT=3' };
 let dir: string, store: Store, template: string, cal: CalClient, sync: RecurrenceCalSync;
 let events: CalEvent[];
 const originalTZ = process.env.TZ;
-function event(args: UpsertEventArgs, id = 'head'): CalEvent { const startInstant = scheduleInstant(args.start,args.timezone)!; const endInstant = startInstant + (args.durationMinutes ?? 0)*60000; return { id, url: args.marker, title: args.title, calendar: args.calendar, start: !args.timezone && !args.allDay ? wallTimeAt(startInstant) : args.start, end: !args.timezone && !args.allDay ? wallTimeAt(endInstant) : args.end, timezone: args.timezone ?? null, allDay: args.allDay, startInstant, endInstant, durationMinutes: args.durationMinutes }; }
+function event(args: UpsertEventArgs, id = 'head'): CalEvent { const startInstant = scheduleInstant(args.start,args.timezone)!; const endInstant = startInstant + (args.durationMinutes ?? 0)*60000; return { id, url: args.marker, title: args.title, calendar: args.calendar, start: !args.timezone && !args.allDay ? wallTimeAt(startInstant) : args.start, end: !args.timezone && !args.allDay ? wallTimeAt(endInstant) : args.end, timezone: args.timezone ?? null, allDay: args.allDay, startInstant, endInstant, durationMinutes: args.durationMinutes, location: args.location ?? null }; }
 const calendars = [{ id: 'work', name: 'Work', account: 'iCloud', writable: true, type: 'calDAV' }];
 beforeEach(() => {
   vi.useFakeTimers(); vi.setSystemTime(new Date('2026-10-01T00:00Z'));
   dir = mkdtempSync('/private/tmp/aside-recur-cal-'); init(dir, { name: 'Calendar recurrence', description: 'Fixture' }); store = new Store(dir);
   template = handleCapture(store, { content: 'Repeat', description: 'Repeat', actions: [{ name: 'Review', description: 'Review', recurrence: [schedule], calendar: 'Work' }] }).createdActionIds[0];
-  cal = new CalClient(null); sync = new RecurrenceCalSync(cal); events = [];
+  cal = new CalClient(null); sync = new RecurrenceCalSync(cal, calendarMutationFixture(store)); events = [];
   vi.spyOn(cal,'getSeries').mockImplementation(async args => { expect(args.start).toMatch(/^\d{4}-\d{2}-\d{2}(?:T\d{2}:\d{2})?$/); return { events: events.filter(e => e.url === args.marker || e.url.startsWith(args.marker + '/')) }; });
   vi.spyOn(cal,'getEvents').mockImplementation(async args => ({ events: events.filter(event => args.eventIds.includes(event.id)) }));
   vi.spyOn(cal,'listEvents').mockRejectedValue(new Error('Series discovery must not use a fixed date horizon.'));
@@ -32,21 +40,24 @@ beforeEach(() => {
   vi.spyOn(cal,'deleteSeries').mockImplementation(async args => { events = events.filter(e => e.url !== args.marker && !e.url.startsWith(args.marker + '/')); return { deleted: true }; });
   vi.spyOn(cal,'upsertEvent').mockImplementation(async args => ({ eventId: 'ordinary' }));
   vi.spyOn(cal,'upsertOccurrence').mockImplementation(async args => {
-    const index = events.findIndex(e => e.original === args.original);
+    const index = events.findIndex(e => args.eventId ? e.id === args.eventId : e.original === args.original);
     if (args.remove) { if (index >= 0) events.splice(index,1); return { eventId: '' }; }
-    const saved = { ...event(args, 'exception'), detached: true, recurring: true, original: args.original, seriesRule: events.find(e => !e.detached && e.url === args.marker.replace(/\/done$/,''))?.seriesRule ?? nativeSeries(schedule)[0].rule };
+    const saved = { ...event(args, args.eventId ?? 'exception'), detached: true, recurring: true, original: args.original, seriesRule: events.find(e => !e.detached && e.url === args.marker.replace(/\/done$/,''))?.seriesRule ?? nativeSeries(schedule)[0].rule };
     if (index >= 0) events[index] = saved; else events.push(saved);
     return { eventId: saved.id };
   });
 });
 afterEach(() => { store.close(); vi.restoreAllMocks(); vi.useRealTimers(); if (originalTZ === undefined) delete process.env.TZ; else process.env.TZ = originalTZ; rmSync(dir, { recursive: true, force: true }); });
+const updateAction = async (host: InstanceHost, id: string, input: object) => JSON.parse((await hostGraphQL(host, dir, 'mutate', { document: `mutation($id: ID!, $input: UpdateActionInput!) {
+  updateAction(id: $id, input: $input) { action { id } }
+}`, variables: { id, input } })).text);
 const run = (reverse = false) => sync.sync(store, store.getInstance()!.manifest.id!, calendars, { active: '', done: '✓ ' }, () => {}, reverse);
 function ordinaryForward(): CalSync {
   vi.spyOn(cal, 'available').mockReturnValue(true);
   vi.spyOn(cal, 'authStatus').mockResolvedValue({ status: 'fullAccess' });
   vi.spyOn(cal, 'listCalendars').mockResolvedValue({ calendars });
   vi.mocked(cal.listEvents).mockResolvedValue({ events: [] });
-  return new CalSync(cal, store.getInstance()!.manifest.id!, store);
+  return new CalSync(cal, store.getInstance()!.manifest.id!, store, undefined, undefined, calendarMutationFixture(store));
 }
 async function ordinaryFixture() {
   await run();
@@ -87,6 +98,156 @@ async function conversionFixture() {
 }
 
 describe('native recurrence Calendar mapping', () => {
+  it.each([true, false])('repairs a detached first occurrence without replacing its physical head (head first=%s)', async headFirst => {
+    const office = '#location/?postal=Office/', other = '#location/?postal=Other/';
+    handleUpdateAction(store, {id: template, location: office});
+    await run();
+    const master = events.find(event => event.seriesHead)!;
+    const detached = {...master, id: 'detached-first', seriesHead: false, detached: true, location: calendarLocation(other)};
+    events = headFirst ? [master, detached] : [detached, master];
+    const before = readFileSync(store.getActionFile(template)!, 'utf8');
+    await run(true);
+    expect(events).toHaveLength(2);
+    expect(events.find(event => event.id === master.id)).toEqual(master);
+    expect(events.find(event => event.id === detached.id)).toMatchObject({detached: true, location: calendarLocation(office)});
+    expect(cal.upsertOccurrence).toHaveBeenCalledWith(expect.objectContaining({eventId: detached.id, original: master.original}));
+    expect(store.getActions().size).toBe(1);
+    expect(readFileSync(store.getActionFile(template)!, 'utf8')).toBe(before);
+    await run(true);
+    expect(cal.upsertOccurrence).toHaveBeenCalledOnce();
+  });
+  it('repairs a location-only Calendar edit on an unsaved recurring exception without materializing an action', async () => {
+    const office = '#location/?postal=Office/', other = '#location/?postal=Other/';
+    handleUpdateAction(store, {id: template, location: office});
+    await run();
+    const master = events.find(event => event.seriesHead)!;
+    events.push({...master, id: 'unsaved-exception', seriesHead: false, detached: true,
+      start: '2026-10-10T09:00', end: '2026-10-10T09:30', original: '2026-10-10T09:00:00Z',
+      startInstant: Date.parse('2026-10-10T09:00Z'), endInstant: Date.parse('2026-10-10T09:30Z'),
+      location: calendarLocation(other)});
+    const before = readFileSync(store.getActionFile(template)!, 'utf8');
+    await run(true);
+    expect(events.find(event => event.detached)?.location).toEqual(calendarLocation(office));
+    expect(store.getActions().size).toBe(1);
+    expect(readFileSync(store.getActionFile(template)!, 'utf8')).toBe(before);
+    expect(cal.upsertOccurrence).toHaveBeenCalledOnce();
+    await run(true);
+    expect(cal.upsertOccurrence).toHaveBeenCalledOnce();
+  });
+  it('exports a changed template venue to an unsaved exception while preserving its pending Calendar move', async () => {
+    const office = '#location/?postal=Office/', other = '#location/?postal=Other/';
+    handleUpdateAction(store, {id: template, location: office});
+    await run();
+    const master = events.find(event => event.seriesHead)!;
+    events.push({...master, id: 'unsaved-exception', seriesHead: false, detached: true,
+      start: '2026-10-10T11:00', end: '2026-10-10T11:30', original: '2026-10-10T09:00:00Z',
+      startInstant: Date.parse('2026-10-10T11:00Z'), endInstant: Date.parse('2026-10-10T11:30Z')});
+    handleUpdateAction(store, {id: template, location: other});
+    await run();
+    expect(events.find(event => event.detached)).toMatchObject({start: '2026-10-10T11:00', location: calendarLocation(other)});
+    expect(store.getActions().size).toBe(1);
+  });
+  it('exports template locations and saved occurrence overrides or clears without importing Calendar venues', async () => {
+    const office = '#location/?geo=37.76,-122.42&postal=Office/San%20Francisco/';
+    const other = '#location/?postal=London/GB/';
+    handleUpdateAction(store, {id: template, location: office});
+    await run();
+    expect(events.find(event => event.seriesHead)?.location).toEqual(calendarLocation(office));
+    const saved = handleUpdateOccurrence(store, {template, original: '2026-10-10T09:00:00Z', location: other}).id;
+    await run();
+    expect(events.find(event => event.detached)?.location).toEqual(calendarLocation(other));
+    const actionSource = readFileSync(store.getActionFile(saved)!, 'utf8');
+    const templateSource = readFileSync(store.getActionFile(template)!, 'utf8');
+    events.find(event => event.detached)!.location = calendarLocation(office);
+    events.find(event => event.seriesHead)!.location = calendarLocation(other);
+    await run(true);
+    expect(events.find(event => event.seriesHead)?.location).toEqual(calendarLocation(office));
+    expect(events.find(event => event.detached)?.location).toEqual(calendarLocation(other));
+    expect(readFileSync(store.getActionFile(saved)!, 'utf8')).toBe(actionSource);
+    expect(readFileSync(store.getActionFile(template)!, 'utf8')).toBe(templateSource);
+    handleUpdateOccurrence(store, {template, original: '2026-10-10T09:00:00Z', location: null});
+    await run();
+    expect(events.find(event => event.detached)?.location).toBeNull();
+    const writes = vi.mocked(cal.upsertSeries).mock.calls.length + vi.mocked(cal.upsertOccurrence).mock.calls.length;
+    await run(true);
+    expect(vi.mocked(cal.upsertSeries).mock.calls.length + vi.mocked(cal.upsertOccurrence).mock.calls.length).toBe(writes);
+  });
+  it('preserves existing native families while a saved action location is malformed', async () => {
+    await run();
+    const file = store.getActionFile(template)!;
+    writeFileSync(file, readFileSync(file, 'utf8').replace('\n---\n', '\nlocation: invalid-address\n---\n'));
+    store.rebuild();
+    const before = structuredClone(events);
+    expect(await run(true)).toMatchObject([{id: template, status: 'error', reason: expect.stringContaining('location:')}]);
+    expect(cal.upsertSeries).toHaveBeenCalledOnce();
+    expect(cal.deleteSeries).not.toHaveBeenCalled();
+    expect(events).toEqual(before);
+  });
+  it('imports detached changes in multiple families in one reverse pass', async () => {
+    const current = store.getAction(template)!;
+    store.saveAction(template, {...current.frontMatter, recurrence: [schedule,
+      {dtstart: '2026-10-15T09:00', timezone: 'UTC', rrule: 'FREQ=DAILY;COUNT=3'}]}, current.body, store.getActionFile(template)!);
+    await run();
+    const first = handleUpdateOccurrence(store, {template, original: '2026-10-10T09:00:00Z', scheduled: '2026-10-10T11:00'}).id;
+    const second = handleUpdateOccurrence(store, {template, original: '2026-10-16T09:00:00Z', scheduled: '2026-10-16T11:00'}).id;
+    await run();
+    for (const [original, start, end] of [
+      ['2026-10-10T09:00:00Z', '2026-10-10T14:00', '2026-10-10T14:30'],
+      ['2026-10-16T09:00:00Z', '2026-10-16T15:00', '2026-10-16T15:30'],
+    ]) {
+      const exception = events.find(value => value.detached && value.original === original)!;
+      Object.assign(exception, event({calendar: 'Work', marker: exception.url, title: exception.title, timezone: 'UTC',
+        start, end, durationMinutes: 30}, exception.id));
+    }
+
+    const result = await run(true);
+
+    expect(result).not.toContainEqual(expect.objectContaining({status: 'error'}));
+    expect(store.getAction(first)!.frontMatter.scheduled).toBe('2026-10-10T14:00');
+    expect(store.getAction(second)!.frontMatter.scheduled).toBe('2026-10-16T15:00');
+  });
+
+  it('rejects native reverse writes without an explicit lifecycle mutation owner', async () => {
+    await run();
+    const saved = handleUpdateOccurrence(store, {template, original: '2026-10-10T09:00:00Z', scheduled: '2026-10-10T11:00'}).id;
+    await run();
+    const exception = events.find(event => event.detached)!;
+    Object.assign(exception, event({calendar: 'Work', marker: exception.url, title: exception.title, timezone: 'UTC',
+      start: '2026-10-10T14:00', end: '2026-10-10T14:30', durationMinutes: 30}, exception.id));
+    sync = new RecurrenceCalSync(cal);
+    const before = readFileSync(store.getActionFile(saved)!, 'utf8'), save = vi.spyOn(store, 'saveAction');
+    const result = await run(true);
+    expect(result).toContainEqual(expect.objectContaining({status: 'error', reason: expect.stringContaining('Lifecycle mutation owner is unavailable')}));
+    expect(save).not.toHaveBeenCalled();
+    expect(readFileSync(store.getActionFile(saved)!, 'utf8')).toBe(before);
+  });
+
+  it('requests lifecycle repair for a native reverse write whose publication fails after persistence', async () => {
+    await run();
+    const saved = handleUpdateOccurrence(store, {template, original: '2026-10-10T09:00:00Z', scheduled: '2026-10-10T11:00'}).id;
+    await run();
+    vi.spyOn(store, 'watch').mockImplementation(() => {});
+    vi.spyOn(store, 'onChange').mockImplementation(() => () => {});
+    const lifecycle = new InstanceLifecycle({reconciliationIntervalMs: 0, debounceMs: 5});
+    lifecycle.register(store); await lifecycle.flush();
+    sync = new RecurrenceCalSync(cal, write => lifecycle.mutation(store, write));
+    const exception = events.find(event => event.detached)!;
+    Object.assign(exception, event({calendar: 'Work', marker: exception.url, title: exception.title, timezone: 'UTC',
+      start: '2026-10-10T14:00', end: '2026-10-10T14:30', durationMinutes: 30}, exception.id));
+    vi.spyOn((store as any).core, 'upsertEntity').mockImplementationOnce(() => {throw new Error('Publication unavailable');});
+    const invalidated = vi.spyOn(lifecycle, 'invalidate'), rebuild = vi.spyOn(store, 'rebuild');
+    try {
+      const result = await run(true);
+      expect(result).toContainEqual(expect.objectContaining({status: 'error', reason: expect.stringContaining('Publication unavailable')}));
+      expect(readFileSync(store.getActionFile(saved)!, 'utf8')).toContain('2026-10-10T14:00');
+      expect(store.getAction(saved)!.frontMatter.scheduled).toBe('2026-10-10T11:00');
+      expect(invalidated).toHaveBeenCalledWith(store); expect(rebuild).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(5);
+      expect(rebuild).toHaveBeenCalledOnce();
+      expect(store.getAction(saved)!.frontMatter.scheduled).toBe('2026-10-10T14:00');
+    } finally {lifecycle.close();}
+  });
+
   it('translates native rules, keeps keys stable when ending them, and splits multiple times exactly', () => {
     expect(nativeSeries(schedule)[0].rule).toEqual({ frequency: 'daily', interval: 1, count: 3 });
     const weekly = { ...schedule, rrule: 'FREQ=WEEKLY;BYDAY=FR' };
@@ -123,7 +284,7 @@ describe('native recurrence Calendar mapping', () => {
         writeFileSync(path, JSON.stringify(stored));
       }
       if (mode !== 'warm') {
-        forward.dispose(); forward = new CalSync(cal, store.getInstance()!.manifest.id!, store);
+        forward.dispose(); forward = new CalSync(cal, store.getInstance()!.manifest.id!, store, undefined, undefined, calendarMutationFixture(store));
       }
       vi.mocked(cal.listEvents).mockClear();
       await forward.syncActions([storeAction(store, converted)!], actions());
@@ -151,7 +312,7 @@ describe('native recurrence Calendar mapping', () => {
       const mirror = new RecurrenceMirror(dir, store.getInstance()!.manifest.id!);
       expect(mirror.ordinaryEvents.get(converted)).toBe('ordinary-copy');
       expect(mirror.ordinaryStarts.get(converted)).toBe(schedule.dtstart);
-      forward.dispose(); forward = new CalSync(cal, store.getInstance()!.manifest.id!, store);
+      forward.dispose(); forward = new CalSync(cal, store.getInstance()!.manifest.id!, store, undefined, undefined, calendarMutationFixture(store));
       await forward.syncActions([], actions());
       expect(events.every(saved => saved.seriesHead)).toBe(true);
       expect(cal.upsertSeries).toHaveBeenCalledOnce(); expect(remove).toHaveBeenCalledTimes(2);
@@ -227,15 +388,15 @@ describe('native recurrence Calendar mapping', () => {
     vi.spyOn(Store.prototype, 'watch').mockImplementation(() => {});
     // Exclude initial background reconciliation so this exercises the API's
     // explicit start evidence, without warming an event-ID cache first.
-    const originalSync = CalSync.prototype.syncActions;
+    const originalSync = BaseCalSync.prototype.syncActions;
     let startup = true;
-    vi.spyOn(CalSync.prototype, 'syncActions').mockImplementation(function (...args) {
+    vi.spyOn(BaseCalSync.prototype, 'syncActions').mockImplementation(function (...args) {
       if (startup && args[0].length === 0) { startup = false; return Promise.resolve([]); }
       return originalSync.apply(this, args);
     });
-    vi.spyOn(CalSync.prototype, 'reconcile').mockResolvedValue(null);
-    const prepare = CalSync.prototype.prepareTemplateConversion;
-    const captured = vi.spyOn(CalSync.prototype, 'prepareTemplateConversion').mockImplementation(function (before) {
+    vi.spyOn(BaseCalSync.prototype, 'reconcile').mockResolvedValue(null);
+    const prepare = BaseCalSync.prototype.prepareTemplateConversion;
+    const captured = vi.spyOn(BaseCalSync.prototype, 'prepareTemplateConversion').mockImplementation(function (before) {
       prepare.call(this, before);
       const persisted = new RecurrenceMirror(dir, instance);
       expect(persisted.ordinaryEvents.has(converted)).toBe(false);
@@ -244,9 +405,8 @@ describe('native recurrence Calendar mapping', () => {
     });
     const host = new InstanceHost(cal);
     try {
-      const saved = await host.tool(dir, 'update_action', { id: converted, scheduled: null, resolution: null,
-        recurrence: { append: { ...schedule, dtstart: '2099-01-01T09:00' } } });
-      expect(saved.text).toContain(converted); expect(captured).toHaveBeenCalledOnce();
+      const saved = await updateAction(host, converted, { scheduled: null, status: null, recurrence: { append: { ...schedule, dtstart: '2099-01-01T09:00' } } });
+      expect(saved.data.updateAction.action.id).toBe(converted); expect(captured).toHaveBeenCalledOnce();
       await host.flush();
       expect(cal.deleteEvent).toHaveBeenCalledWith(expect.objectContaining({ eventId: 'ordinary-copy' }));
       expect(events.every(saved => saved.seriesHead)).toBe(true);
@@ -259,13 +419,14 @@ describe('native recurrence Calendar mapping', () => {
     mirror.ordinaryEvents.clear(); mirror.ordinaryStarts.clear(); mirror.save();
     const file = store.getActionFile(converted)!, before = readFileSync(file, 'utf8');
     vi.spyOn(Store.prototype, 'watch').mockImplementation(() => {});
-    vi.spyOn(CalSync.prototype, 'syncActions').mockResolvedValue([]);
-    vi.spyOn(CalSync.prototype, 'reconcile').mockResolvedValue(null);
+    vi.spyOn(BaseCalSync.prototype, 'syncActions').mockResolvedValue([]);
+    vi.spyOn(BaseCalSync.prototype, 'reconcile').mockResolvedValue(null);
     vi.spyOn(RecurrenceMirror.prototype, 'save').mockImplementationOnce(() => { throw new Error('State volume is read-only.'); });
     const host = new InstanceHost(cal);
     try {
-      await expect(host.tool(dir, 'update_action', { id: converted, scheduled: null, recurrence: { append: schedule } }))
-        .rejects.toThrow('no action records were changed');
+      const refused = await updateAction(host, converted, { scheduled: null, recurrence: { append: schedule } });
+      expect(refused.errors?.[0].message).toContain('no action records were changed');
+      expect(refused.extensions.mutations).toEqual([]);
       expect(readFileSync(file, 'utf8')).toBe(before);
       expect(cal.deleteEvent).not.toHaveBeenCalled(); expect(cal.upsertSeries).not.toHaveBeenCalled();
     } finally { await host.close(); }
@@ -280,7 +441,7 @@ describe('native recurrence Calendar mapping', () => {
       startInstant: Date.parse('2026-10-11T09:00Z'), endInstant: Date.parse('2026-10-11T09:30Z') });
     const action = store.getAction(template)!;
     store.saveAction(template, { ...action.frontMatter, recurrence: [] }, action.body, store.getActionFile(template)!);
-    sync = new RecurrenceCalSync(cal);
+    sync = new RecurrenceCalSync(cal, calendarMutationFixture(store));
     await run(true);
     expect(cal.deleteSeries).toHaveBeenCalledWith(expect.objectContaining({ marker: oldMarker }));
     expect(store.getActions().size).toBe(2); expect(store.getAction(saved)).toEqual(occurrence);
@@ -451,7 +612,7 @@ describe('native recurrence Calendar mapping', () => {
     const args = vi.mocked(cal.upsertEvent).mock.calls[0][0];
     if (gesture === 'done') events = [{ ...event(args, 'ordinary'), url: args.marker + '/done', title: '✓ Review' }];
     vi.mocked(cal.listEvents).mockImplementation(async () => ({ events: [...events] }));
-    const cold = new CalSync(cal, store.getInstance()!.manifest.id!, store);
+    const cold = new CalSync(cal, store.getInstance()!.manifest.id!, store, undefined, undefined, calendarMutationFixture(store));
     try {
       await cold.reconcile(actions);
       if (gesture === 'done') expect(store.getAction(saved)!.frontMatter.resolution).toBe('done');
@@ -535,13 +696,13 @@ describe('native recurrence Calendar mapping', () => {
     });
     if (failure) vi.mocked(cal.deleteEvent).mockRejectedValueOnce(new Error('Ordinary cleanup unavailable.'));
     store.saveAction(template, { ...action.frontMatter, recurrence: [schedule] }, action.body, store.getActionFile(template)!);
-    let resumed = new CalSync(cal, store.getInstance()!.manifest.id!, store);
+    let resumed = new CalSync(cal, store.getInstance()!.manifest.id!, store, undefined, undefined, calendarMutationFixture(store));
     try {
       await resumed.syncActions([storeAction(store, template)!], actions());
       if (failure) {
         expect(cal.upsertSeries).toHaveBeenCalledOnce(); expect(events.some(event => event.id === 'ordinary')).toBe(true);
         expect(resumed.status(saved)).toMatchObject({ status: 'pending', retry: true });
-        resumed.dispose(); resumed = new CalSync(cal, store.getInstance()!.manifest.id!, store);
+        resumed.dispose(); resumed = new CalSync(cal, store.getInstance()!.manifest.id!, store, undefined, undefined, calendarMutationFixture(store));
         await resumed.syncActions([], actions());
       }
       expect(events.some(event => event.id === 'ordinary')).toBe(false);
@@ -562,7 +723,7 @@ describe('native recurrence Calendar mapping', () => {
     mirror.save();
     vi.mocked(cal.listEvents).mockImplementation(async () => ({ events: [...events] }));
     store.saveAction(template, { ...action.frontMatter, recurrence: [schedule] }, action.body, store.getActionFile(template)!);
-    const resumed = new CalSync(cal, store.getInstance()!.manifest.id!, store);
+    const resumed = new CalSync(cal, store.getInstance()!.manifest.id!, store, undefined, undefined, calendarMutationFixture(store));
     try {
       await resumed.syncActions([storeAction(store, template)!], actions());
       expect(cal.deleteEvent).toHaveBeenCalledWith(expect.objectContaining({ eventId: 'ordinary' }));
@@ -575,7 +736,7 @@ describe('native recurrence Calendar mapping', () => {
     const { saved, action, occurrence, actions } = await ordinaryFixture();
     store.saveAction(template, { ...action.frontMatter, recurrence: [schedule] }, action.body, store.getActionFile(template)!);
     vi.mocked(cal.upsertSeries).mockRejectedValueOnce(new Error('Native publication unavailable.'));
-    let resumed = new CalSync(cal, store.getInstance()!.manifest.id!, store);
+    let resumed = new CalSync(cal, store.getInstance()!.manifest.id!, store, undefined, undefined, calendarMutationFixture(store));
     try {
       await resumed.syncActions([storeAction(store, template)!], actions());
       expect(cal.deleteEvent).toHaveBeenCalledOnce(); expect(events).toEqual([]);
@@ -583,7 +744,7 @@ describe('native recurrence Calendar mapping', () => {
       // Simulate the durable hint lagging a confirmed delete.
       const mirror = new RecurrenceMirror(dir, store.getInstance()!.manifest.id!);
       mirror.ordinaryEvents.set(saved, 'ordinary'); mirror.save();
-      resumed.dispose(); resumed = new CalSync(cal, store.getInstance()!.manifest.id!, store);
+      resumed.dispose(); resumed = new CalSync(cal, store.getInstance()!.manifest.id!, store, undefined, undefined, calendarMutationFixture(store));
       await resumed.syncActions([], actions());
       expect(events.some(event => event.seriesHead)).toBe(true);
       expect(events.filter(event => event.detached)).toHaveLength(1);
@@ -602,7 +763,7 @@ describe('native recurrence Calendar mapping', () => {
       store.saveAction(saved, { ...current.frontMatter, scheduled: '2026-10-10T14:00' }, current.body, store.getActionFile(saved)!);
       return { events: events.filter(event => args.eventIds.includes(event.id)) };
     });
-    const resumed = new CalSync(cal, store.getInstance()!.manifest.id!, store);
+    const resumed = new CalSync(cal, store.getInstance()!.manifest.id!, store, undefined, undefined, calendarMutationFixture(store));
     try {
       const results = await resumed.syncActions([storeAction(store, template)!], actions());
       expect(results).toEqual(expect.arrayContaining([expect.objectContaining({ id: template, status: 'error' })]));
@@ -616,7 +777,7 @@ describe('native recurrence Calendar mapping', () => {
     const { saved, action, occurrence, actions } = await ordinaryFixture();
     events[0].endInstant += 30000; events[0].durationMinutes = 30.5;
     store.saveAction(template, { ...action.frontMatter, recurrence: [schedule] }, action.body, store.getActionFile(template)!);
-    const resumed = new CalSync(cal, store.getInstance()!.manifest.id!, store);
+    const resumed = new CalSync(cal, store.getInstance()!.manifest.id!, store, undefined, undefined, calendarMutationFixture(store));
     try {
       await resumed.syncActions([storeAction(store, template)!], actions());
       expect(cal.deleteEvent).not.toHaveBeenCalled(); expect(cal.upsertSeries).toHaveBeenCalledOnce();
@@ -664,7 +825,7 @@ describe('native recurrence Calendar mapping', () => {
     await run(); const oldMarker = events[0].url;
     const action = store.getAction(template)!;
     store.saveAction(template, { ...action.frontMatter, recurrence: [{ ...schedule, dtstart: '2026-10-12T09:00' }] }, action.body, store.getActionFile(template)!);
-    sync = new RecurrenceCalSync(cal);
+    sync = new RecurrenceCalSync(cal, calendarMutationFixture(store));
     await run();
     expect(cal.deleteSeries).toHaveBeenCalledWith(expect.objectContaining({ marker: oldMarker }));
     expect(events).toHaveLength(1); expect(events[0].start).toBe('2026-10-12T09:00');
@@ -690,7 +851,7 @@ describe('native recurrence Calendar mapping', () => {
   it('does not interpret its own cancellation removal as descheduling, including after restart', async () => {
     await run(); handleUpdateOccurrence(store, { template, original: '2026-10-10T09:00:00Z', resolution: 'done' }); await run(); await run(true);
     handleUpdateOccurrence(store, { template, original: '2026-10-10T09:00:00Z', resolution: 'cancelled' }); await run();
-    sync = new RecurrenceCalSync(cal); await run(true);
+    sync = new RecurrenceCalSync(cal, calendarMutationFixture(store)); await run(true);
     const action = [...store.getActions().values()].find(a => a.frontMatter.occurrence)!;
     expect(action.frontMatter.scheduled).toBe('2026-10-10T09:00'); expect(action.frontMatter.resolution).toBe('cancelled');
   });
@@ -699,7 +860,7 @@ describe('native recurrence Calendar mapping', () => {
     for (const day of ['10','11']) events.push({ ...events[0], id: 'day-' + day, seriesHead: false,
       original: `2026-10-${day}T09:00:00Z`, start: `2026-10-${day}T09:00`, end: `2026-10-${day}T09:30`,
       startInstant: Date.parse(`2026-10-${day}T09:00Z`), endInstant: Date.parse(`2026-10-${day}T09:30Z`) });
-    await run(true); events = events.filter(e => e.seriesHead); sync = new RecurrenceCalSync(cal);
+    await run(true); events = events.filter(e => e.seriesHead); sync = new RecurrenceCalSync(cal, calendarMutationFixture(store));
     await run(true);
     const actions = [...store.getActions().values()].filter(a => a.frontMatter.occurrence);
     expect(actions).toHaveLength(2); expect(actions.every(a => !a.frontMatter.scheduled)).toBe(true);
@@ -725,6 +886,81 @@ describe('native recurrence Calendar mapping', () => {
     await run(true);
     const action = [...store.getActions().values()].find(a => a.frontMatter.occurrence)!;
     expect(action.frontMatter.scheduled).toBe('2026-10-10T14:00'); expect(events.find(event => event.detached)!.start).toBe('2026-10-10T14:00');
+  });
+
+  it.each(['warm', 'cold', 'ordinary-forward'].flatMap(mode => ['move', 'delete'].map(gesture => ({mode, gesture}))))('imports a native occurrence $gesture through $mode lifecycle work', async ({mode, gesture}) => {
+    const saved = handleUpdateOccurrence(store, {template, original: '2026-10-10T09:00:00Z', scheduled: '2026-10-10T11:00'}).id;
+    const ordinary = handleCapture(store, {content: 'Ordinary', description: 'Ordinary', actions: [{name: 'Ordinary', description: 'Ordinary',
+      scheduled: '2026-10-12T09:00', timezone: 'UTC', calendar: 'Work'}]}).createdActionIds[0];
+    let forward = ordinaryForward();
+    vi.mocked(cal.upsertEvent).mockImplementation(async args => {
+      const saved = event(args, args.eventId ?? 'ordinary'); events = [...events.filter(existing => existing.id !== saved.id), saved];
+      return {eventId: saved.id};
+    });
+    const actions = () => store.getActionIds().map(id => storeAction(store, id)!);
+    const owner = new InstanceCalendarLifecycle(vi.fn());
+    try {
+      await forward.syncActions(actions(), actions());
+      if (mode === 'cold') {forward.dispose(); forward = new CalSync(cal, '', store, undefined, undefined, calendarMutationFixture(store));}
+      owner.register(store, forward);
+      if (mode === 'ordinary-forward') handleUpdateAction(store, {id: ordinary, name: 'Renamed ordinary action'});
+      const exception = events.find(event => event.detached)!;
+      if (gesture === 'delete') events = events.filter(event => event !== exception);
+      else Object.assign(exception, event({calendar: 'Work', marker: exception.url, title: exception.title, timezone: 'UTC',
+        start: '2026-10-10T14:00', end: '2026-10-10T14:30', durationMinutes: 30}, exception.id));
+      await owner.reconcile(store);
+      expect(store.getAction(saved)!.frontMatter.scheduled).toBe(gesture === 'move' ? '2026-10-10T14:00' : undefined);
+      if (gesture === 'move') expect(events.find(event => event.detached)!.start).toBe('2026-10-10T14:00');
+      else expect(events.some(event => event.detached)).toBe(false);
+    } finally {owner.unregister(store); forward.dispose();}
+  });
+
+  it.each(['occurrence', 'template'])('keeps a known local $0 edit authoritative during lifecycle recurrence import', async kind => {
+    const saved = handleUpdateOccurrence(store, {template, original: '2026-10-10T09:00:00Z', scheduled: '2026-10-10T11:00'}).id;
+    const forward = ordinaryForward(), owner = new InstanceCalendarLifecycle(vi.fn());
+    const actions = () => store.getActionIds().map(id => storeAction(store, id)!);
+    try {
+      await forward.syncActions(actions(), actions()); owner.register(store, forward);
+      const exception = events.find(event => event.detached)!;
+      Object.assign(exception, event({calendar: 'Work', marker: exception.url, title: exception.title, timezone: 'UTC',
+        start: '2026-10-10T14:00', end: '2026-10-10T14:30', durationMinutes: 30}, exception.id));
+      if (kind === 'occurrence') handleUpdateOccurrence(store, {template, original: '2026-10-10T09:00:00Z', scheduled: '2026-10-10T16:00'});
+      else handleUpdateAction(store, {id: template, name: 'Renamed recurrence template'});
+      await owner.reconcile(store);
+      const expected = kind === 'occurrence' ? '2026-10-10T16:00' : '2026-10-10T11:00';
+      expect(store.getAction(saved)!.frontMatter.scheduled).toBe(expected);
+      expect(events.find(event => event.detached)!.start).toBe(expected);
+    } finally {owner.unregister(store); forward.dispose();}
+  });
+
+  it.each(['move', 'delete'])('imports a native occurrence %s while retrying an ordinary outbox item', async gesture => {
+    const saved = handleUpdateOccurrence(store, {template, original: '2026-10-10T09:00:00Z', scheduled: '2026-10-10T11:00'}).id;
+    const forward = ordinaryForward(), actions = () => store.getActionIds().map(id => storeAction(store, id)!);
+    const requested = vi.fn();
+    const owner = new InstanceCalendarLifecycle(requested); owner.register(store, forward);
+    try {
+      await forward.syncActions(actions(), actions());
+      const ordinary = handleCapture(store, {content: 'Ordinary', description: 'Ordinary', actions: [{name: 'Ordinary', description: 'Ordinary',
+        scheduled: '2026-10-12T09:00', timezone: 'UTC', calendar: 'Work'}]}).createdActionIds[0];
+      vi.mocked(cal.upsertEvent).mockImplementation(async args => {
+        const savedEvent = event(args, 'ordinary-retry');
+        events = [...events.filter(current => current.id !== savedEvent.id), savedEvent];
+        return {eventId: savedEvent.id};
+      }).mockRejectedValueOnce(new Error('Provider unavailable.'));
+      await forward.syncActions([storeAction(store, ordinary)!], actions());
+      expect(forward.status(ordinary)).toMatchObject({status: 'pending', retry: true});
+      const exception = events.find(event => event.detached)!;
+      if (gesture === 'delete') events = events.filter(event => event !== exception);
+      else Object.assign(exception, event({calendar: 'Work', marker: exception.url, title: exception.title, timezone: 'UTC',
+        start: '2026-10-10T14:00', end: '2026-10-10T14:30', durationMinutes: 30}, exception.id));
+      await vi.advanceTimersByTimeAsync(CALENDAR_SYNC_RETRY_MS);
+      expect(requested).toHaveBeenCalledWith(store, CALENDAR_SYNC_RETRY_MS);
+      await owner.reconcile(store);
+      expect(store.getAction(saved)!.frontMatter.scheduled).toBe(gesture === 'move' ? '2026-10-10T14:00' : undefined);
+      if (gesture === 'move') expect(events.find(event => event.detached)!.start).toBe('2026-10-10T14:00');
+      else expect(events.some(event => event.detached)).toBe(false);
+      expect(forward.status(ordinary)).toMatchObject({status: 'synced'});
+    } finally {owner.unregister(store); forward.dispose();}
   });
 
   it('recovers an unsafe native exception only after an explicit unambiguous Aside start edit', async () => {
@@ -781,7 +1017,7 @@ describe('native recurrence Calendar mapping', () => {
     await run(); handleUpdateOccurrence(store, { template, original: '2026-10-10T09:00', scheduled: '2042-10-10T11:00' });
     vi.mocked(cal.getEvents).mockRejectedValueOnce(new Error('Read interrupted.'));
     expect(await run()).toMatchObject([{ id: template, status: 'error' }]);
-    sync = new RecurrenceCalSync(cal); await run();
+    sync = new RecurrenceCalSync(cal, calendarMutationFixture(store)); await run();
     expect(cal.getSeries).toHaveBeenLastCalledWith(expect.objectContaining({ occurrences: expect.arrayContaining([expect.objectContaining({ original: '2026-10-10T09:00', eventId: 'exception', start: '2042-10-10T11:00' })]) }));
   });
 

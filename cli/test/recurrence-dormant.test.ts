@@ -1,12 +1,12 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
-import { init } from '../src/commands/init.js';
+import { init } from '../src/source/bootstrap.js';
 import { parseActionFile } from '../src/core/parser.js';
 import { planningActions, recurrenceIssues } from '../src/core/recurrence.js';
-import { Store } from '../src/mcp/store.js';
+import { Store } from '../src/source/store.js';
 import { handleCapture } from '../src/mcp/tools/capture.js';
 import { handleUpdateOccurrence } from '../src/mcp/tools/recurrence.js';
-import { serializeAction } from '../src/mcp/tools/serialize.js';
+import { serializeAction } from '../src/source/serialize.js';
 
 let store: Store | undefined, dir: string | undefined;
 afterEach(() => { store?.close(); if (dir) rmSync(dir, { recursive: true, force: true }); store = undefined; dir = undefined; });
@@ -39,7 +39,7 @@ describe('dormant recurrence templates', () => {
     expect(store.getIssues()).toEqual([]);
     expect(store.getAction(template)!.frontMatter.recurrence).toEqual([]);
     expect(store.getAction(saved)).toEqual(occurrence);
-    expect(store.getProjectsForAction(saved)).toContain(project);
+    expect([...(store.getRelations().projectsByAction.get(saved) ?? [])]).toContain(project);
     const planning = planningActions(store.getActions(), { now: new Date('2026-10-09T12:00Z') });
     expect(planning.nodes.map(row => [row.id, row.projected])).toEqual([[saved, false]]);
     expect(planning.issues).toEqual([]);

@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { init } from '../src/commands/init.js';
+import { init } from '../src/source/bootstrap.js';
 import { runGraphQL, type GraphQLExecutor } from '../src/commands/graphql.js';
 
 const dirs: string[] = [];
@@ -64,7 +64,7 @@ describe('GraphQL CLI inputs and preflight', () => {
 
   it('rejects syntax, schema, mode, and operation-selection errors before reaching the daemon', async () => {
     const dir = fixture(), execute = stub();
-    for (const document of ['{', '{ nonexistent }', 'mutation { calendarInfo { authorization } }', 'query A { __typename } query B { __typename }']) {
+    for (const document of ['{', '{ nonexistent }', 'mutation { requestCalendarAccess { authorization } }', 'query A { __typename } query B { __typename }']) {
       const result = await runGraphQL(['query', '--document', document], dir, execute);
       expect(result.errors).toBeDefined();
     }
@@ -83,7 +83,7 @@ describe('GraphQL CLI inputs and preflight', () => {
   it('preserves partial mutation data and outcomes instead of turning GraphQL errors into a CLI exception', async () => {
     const dir = fixture(), expected = { data: { saved: {} }, errors: [{ message: 'Later mutation failed' }], extensions: { mutations: [{ operation: 'capture', error: null, changes: [] }] } };
     const execute: GraphQLExecutor = async session => ({ result: expected, session });
-    expect(await runGraphQL(['mutate', '--document', 'mutation { calendarInfo { authorization } }'], dir, execute)).toEqual(expected);
+    expect(await runGraphQL(['mutate', '--document', 'mutation { requestCalendarAccess { authorization } }'], dir, execute)).toEqual(expected);
   });
 });
 
@@ -135,7 +135,7 @@ describe.skipIf(!existsSync(bundle))('GraphQL CLI bundle', () => {
     const env = { ...process.env, ASIDE_DAEMON_HOME: home };
     const help = execFileSync(process.execPath, [bundle, 'graphql', 'query', '--help'], { cwd: dir, env, encoding: 'utf8' });
     expect(help).toContain('--document-file'); expect(existsSync(home)).toBe(false);
-    for (const args of [['query'], ['query', '--document', '{'], ['query', '--document', 'mutation { calendarInfo { authorization } }'], ['query', '--document', '{ __typename }', '--variables', '[]']]) {
+    for (const args of [['query'], ['query', '--document', '{'], ['query', '--document', 'mutation { requestCalendarAccess { authorization } }'], ['query', '--document', '{ __typename }', '--variables', '[]']]) {
       const result = spawnSync(process.execPath, [bundle, 'graphql', ...args], { cwd: dir, env, encoding: 'utf8' });
       expect(result.status).toBe(1); expect(result.stderr).toBe(''); expect(JSON.parse(result.stdout).errors).toBeDefined();
       expect(existsSync(home)).toBe(false);

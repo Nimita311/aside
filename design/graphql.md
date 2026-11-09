@@ -1,21 +1,44 @@
 # GraphQL agent interface
 
-`aside mcp` uses GraphQL by default and exposes only `query` and `mutate`.
-Records, instance operations, validation, webapp navigation, and calendar
-information are GraphQL fields. Use `aside mcp --legacy` to opt into the separate
-legacy tools for one MCP session. Plugin installation pairs the selected API
-with its own skill: `agent/graphql` by default, `agent/legacy` with
-`aside plugin install --legacy`. Both packages use the same plugin identity;
-changing mode replaces the registration rather than installing competing skills.
+`aside mcp` exposes `query` and `mutate`. Records, instance operations, validation,
+webapp navigation, and calendar information are GraphQL fields. Plugin installation
+pairs the interface with its skill in `agent/graphql`.
 
-Both interfaces use the same daemon instance, parsed records, relationship
-derivations, persistence handlers, and calendar sync. GraphQL introduces no
-persisted fields or separate database. GraphQL.js executes inside the daemon;
+GraphQL uses the daemon's instances, parsed records, relationship derivations,
+persistence handlers, and calendar sync. It introduces no authored record fields or separate source of truth. Explicit semantic queries
+maintain a disposable local search index. GraphQL.js executes inside the daemon;
 no additional HTTP listener is needed.
 
 The existing localhost web server also exposes instance-scoped, read-only record
 queries for HTML artifact dashboards. Its restricted query policy and iframe SDK
 are specified in [Iframe GraphQL](../webapp/spec.md#iframe-graphql).
+
+`Query.geocodeAddress` exposes native Apple address and place lookup to agents
+on macOS 14+ without an instance selection, a user-managed API key, or current
+location authorization. The required `query` accepts address, business, venue,
+or category text, optionally including city or address context. The bundled `aside-native geocode`
+Swift subcommand uses `MKLocalSearch` to return both address and point-of-interest
+candidates, with no separate geocoder or fallback.
+
+Query text and a geographic region hint can be refined between calls; the region
+does not constrain results. Search has no per-request locale control. `NO_RESULTS`
+means the location was not found for that query; the agent can refine and retry.
+Results retain provider order and expose candidate names, coordinates,
+formatted addresses, and inspection URLs; neither ranking nor candidate count is
+a confidence guarantee. The query never selects a candidate, enriches a handle,
+or changes records. Agents save chosen coordinates through ordinary record edits.
+Location lookup is always explicitly requested by the agent: record writes, file
+watchers, indexing and rendering never initiate it. Authoring guidance directs
+agents to resolve postal-only location mentions before saving when possible, and
+to retain unresolved postal data when lookup fails or remains ambiguous.
+Requests are serialized, bounded, and cancellable; expected helper failures are
+returned as status/error data and response diagnostics. Geocoding is excluded
+from the embedded webpage query capability.
+
+Postal-only smart elements remain valid content. After saving, mutation receipts
+can include nonfatal `location_geo_missing` notices identifying the record and
+handle and asking the agent to geocode whenever possible. These notices do not
+set the mutation's error, change completeness, or become stored diagnostics.
 
 ## Agent surface
 
@@ -27,8 +50,7 @@ examples, response mechanics, and task-specific edge cases belong in the shared
 instructions or guides below; field contracts belong in the executable schema.
 Guides and schema discovery are available before instance selection; record work
 starts by checking the selection and loading its instructions through `Instance.body`.
-The legacy skill and its file references ship only in the legacy package.
-Neither package includes harness specifications or test results.
+The package includes no harness specifications or test results.
 
 GraphQL MCP initialization embeds the skill body, stripping its YAML front matter,
 so clients without skills receive the same foundation. The build imports the
@@ -87,7 +109,6 @@ routes, not consecutive prerequisites. Discover runtime choices separately throu
 Each request retains its catalog snapshot across concurrent refreshes.
 Schema failures are reported instead of falling back to stale content; resource
 diagnostics remain available as SDL comments.
-Legacy MCP does not advertise these resources or GraphQL initialization instructions.
 
 The two tool descriptions contain only their operation purpose and resource
 routing. Tool input schemas describe transport arguments; GraphQL describes the API.
@@ -151,8 +172,8 @@ Aliases share a collection; different directories, including worktrees and
 instances with duplicate IDs, remain separate. Moving an instance directory
 starts a new collection. Request events themselves do not contain instance paths.
 Collection is automatic for requests
-through MCP and the CLI, including the legacy `query`/`mutate` execution path.
-Other legacy tools, HTTP requests, and schema-resource reads are not logged.
+through MCP and the CLI. `aside artifact` operations, HTTP requests, and
+schema-resource reads are not logged.
 CLI document validation before daemon connection remains outside collection.
 
 Each completion event has `schemaVersion: 1`, UTC `timestamp`, `requestId`,
@@ -247,8 +268,8 @@ mutation {
 ```
 
 `selectInstance` selects an existing instance. `createInstance` requires an empty
-or nonexistent directory and creates and activates it, preserving the legacy
-`path`, `name`, `description`, optional instruction `body`, and `tutorial` inputs.
+or nonexistent directory and creates and activates it from `path`, `name`,
+`description`, optional instruction `body`, and `tutorial` inputs.
 Prefer absolute paths. Relative selection and creation paths resolve against
 the MCP session's launch working directory, not the daemon's directory.
 Selection is local to this MCP session and does not modify the saved startup
@@ -281,12 +302,12 @@ worktree policy reads `worktreeDetection` in the primary checkout's root `.aside
 By default linked worktrees do not write Calendar events or run automations;
 `worktreeDetection: false` restores independent-instance behavior, with duplicate
 identity checks still enforced. `updateInstance` edits the instruction body,
-Calendar title prefixes, recurrence lookahead, and automation declarations while
+Calendar title prefixes and automation declarations while
 preserving identity and omitted fields. Empty instruction text clears the body;
 empty prefixes remove decoration, while null prefixes restore application defaults.
 Settings are patched under `UpdateInstanceInput.settings` through
 `InstanceSettingsInput`; omission preserves each value and null restores its
-default for title prefixes. Null lookahead is rejected. `Instance.settings`
+default for title prefixes. `Instance.settings`
 exposes effective values through `InstanceSettings`.
 
 ## Records and relationships
@@ -337,6 +358,11 @@ optional `timezone` form its immutable identity. Missing or invalid template
 targets return null with consistency diagnostics. `projected` distinguishes an
 unsaved occurrence from a saved one; edit/filter inputs retain the template ID. Ordinary actions and recurrence templates have no occurrence.
 
+`Action.location` is an optional bare [location handle](location-reference.md#action-location)
+for the action's primary location, independent of body mentions. Action creation
+and edits accept the same field; omission preserves it on update, while `null`
+clears it. It synchronizes to Calendar in one direction only.
+
 The same `Action` type represents all three domain shapes. A non-null recurrence
 list identifies a template, with `[]` retaining a dormant template. Templates
 have null `status`: they define repetition and do not have an ordinary work
@@ -345,25 +371,54 @@ the derived `BACKLOG`, `SCHEDULED`, `DONE`, or `CANCELLED` status. Occurrence
 provenance identifies one repetition independently of that lifecycle; its
 projected flag indicates whether the repetition is saved, not whether it is done.
 
-All action collections include saved actions, recurrence templates, and future
-projected occurrences within the instance's `recurrenceLookaheadDays` horizon.
-The same fields, relationship filters, counts, and pagination apply to each;
-there is no separate planning query. `action(id:)` also resolves generated IDs
-within that horizon. Date filters narrow this finite set rather than expanding
-recurrence outside the configured lookahead. Projections inherit their template's
-current projects and artifact context, without creating persistent entry tags
-or artifact backlinks.
+All action collections combine saved actions, recurrence templates, and unsaved
+projected occurrences. Filters, counts, ordering, and offset/limit pagination
+apply to that combined set. Projections inherit their template's current projects
+and artifact context without creating persistent entry tags or artifact backlinks.
+`action(id:)` resolves an exact occurrence independently of collection ranges;
+`Query.search` searches saved records only.
+
+### Projection schedule ranges
+
+Each action collection expands recurrence from its authored start through the
+latest positive `scheduledTo` in its `ActionWhere`. A `scheduledFrom` narrows
+expansion only when every Boolean branch that can match projections requires a
+lower bound; an unbounded `or` branch preserves history. Bounds inside `and` and
+`or` participate; bounds inside `not` or related record predicates do not. Related
+action predicates derive their own projection range. Ordinary Boolean date
+filters still apply to every row and exclude undated rows unless another `or`
+branch includes them.
+
+Without a positive `scheduledTo`, the projection end is one calendar year after
+today, or one calendar year after the latest positive `scheduledFrom` if that is
+later. February 29 clamps to February 28 in the following year. The implicit
+end bounds only unsaved projections: saved one-offs and saved occurrences remain
+eligible at any date. Explicit dates filter saved rows by the same ordinary
+predicate rules. Exact IDs resolve directly without default expansion.
+
+Responses always include `extensions.defaultProjectionRanges`, an empty array
+when no matching occurrence is excluded by an implicit end. Each entry gives the
+`path`, effective `scheduledTo`, affected template IDs in `templates`, and a
+`message` directing the caller to set `scheduledFrom` and `scheduledTo`. Paths
+use response aliases and `*` for parent-list positions. Relation-filter paths
+retain Boolean branch positions, such as `projects.where.or.0.actions.some`.
+Nested list entries combine affected templates across parent rows. An implicit
+end is query metadata and does not make
+`extensions.complete` false. Expansion and filtering share the 100,000-step query
+budget; exceeding it fails with guidance to narrow the dates.
 
 `ActionWhere.occurrence` filters by projected state and/or exact template ID.
 An empty occurrence predicate matches any occurrence, excluding ordinary actions
 and templates; combine it with `not` to select actions without an occurrence.
 `projected: false` selects saved occurrences, while
 `not: {occurrence: {projected: true}}` excludes projections and keeps other saved action kinds.
-All-day projections include today through the horizon date, while timed
-projections are strictly after the current minute through the horizon. The
-unified collection does not generate unsaved past occurrences or an extra
-occurrence beyond the configured horizon. Projection failures contribute
-response diagnostics and make `extensions.complete` false.
+Malformed recurrence contributes response diagnostics and makes
+`extensions.complete` false.
+
+Unsaved occurrences have null `Action.created` and `LinkTarget.created`; saved
+records retain their creation time. Created filters reject unsaved rows, which
+sort after saved rows in both created orders, with stable ID ordering among them.
+The default order remains `CREATED_DESC`.
 
 `ActionWhere.recurrenceExists: true` selects every non-null recurrence list,
 including `[]` and nonempty histories whose schedules have ended or produce no
@@ -437,11 +492,30 @@ links without becoming persistent backlink sources. See the
 ## Filters and pagination
 
 `where` supports existing scalar filters: exact IDs, inclusive date bounds,
-lifecycle status, and case-insensitive ECMAScript regex search. The `Date` scalar
+lifecycle status, and explicit case-insensitive ECMAScript `regex` matching. The
+old `search` field remains a deprecated alias, exclusive with `regex` within one
+filter. The `Date` scalar
 accepts real `YYYY-MM-DD` dates; bounds compare the authored date portion, not
-converted instants. Search matches the same fields as legacy queries and runs
+converted instants. Search matches authored text and runs
 through the existing bounded regex worker pool. Scalar and relationship filters
 narrow candidates before search; nested collections search their related set.
+
+`Query.search` combines saved entities using the existing typed filters under
+`SearchWhere.entries`, `.projects`, `.actions`, and `.artifacts`. Omitted or empty
+`where` selects all saved kinds; supplying non-null groups selects only those
+kinds and combines their eligible records. `SearchRanking` is one-of: `semantic`
+takes a natural-language information need, while `order` selects creation,
+schedule, or deadline ordering. Default ordering is newest creation first.
+Filters, including regex, apply before ranking; `limit` and `offset` apply once
+to the combined order. `totalCount` describes eligibility before ranking, with
+no implicit semantic threshold. Counts-only reads do not force inference; empty
+semantic pages still wait for lifecycle-owned index readiness without embedding query text.
+Results carry snippets, nullable cosine scores, handles, and a typed `record`.
+Semantic ranking requires a local model and never falls back to regex. Indexing
+is derived and maintained for registered instances at startup and after GraphQL
+writes or filesystem changes. Schema discovery and field ordering do not force
+inference. Search excludes unsaved recurrence projections, while typed
+entity queries keep their existing behavior. See [semantic search](semantic-search.md).
 
 Relationship inputs support nested `some` and `none` predicates. An empty
 predicate matches all records: `projects: { none: {} }` finds unassigned actions.
@@ -525,27 +599,36 @@ code. Request a fresh URL for each opening and open it immediately, unchanged, i
 a browser/profile on the same machine able to read local files. It expires after
 two minutes and is not a bookmark. Agents need no token or authentication steps.
 
-`calendarInfo` is a single mutation that reports authorization, available
-calendars, diagnostics, per-action sync states, outstanding failures/issues,
-and changes observed since the instance loaded. It requests full access when
-permission is undecided or write-only, preserving the macOS permission prompt.
-Denied, restricted, unavailable, and helper failure states are returned as
-structured data with recovery guidance. No active instance is required for
-machine authorization and calendars; an active instance adds its sync state.
-`calendars: null` means listing was unavailable, while `[]` means it succeeded
-with no calendars. Calendar information never reads or writes events.
+`systemInfo` consolidates existing system status under `build`, `daemon`,
+`installation`, `search`, and `calendar`. It requires no instance selection and
+collects only the selected sections. Instance discovery remains on `instances`
+and `activeInstance`; execution models and content remain instance scoped.
+CLI status commands retain their existing APIs.
+
+`systemInfo.calendar` reports authorization, available calendars and diagnostics
+without requesting permission. `requestCalendarAccess` explicitly requests full
+access when permission is undecided or write-only. Denied, restricted,
+unavailable, and helper failure states are returned as structured data with
+recovery guidance. Per-action sync states, failures/issues, and changes observed
+since loading belong to `Instance.calendarSync`. `calendars: null` means listing
+was unavailable, while `[]` means it succeeded with no calendars. Calendar
+information never reads or writes events.
 
 ```graphql
 query {
-  activeInstance { validation { passed dataChecksRun checks { name passed details } } }
+  systemInfo {
+    build { version builtAt }
+    search { semantic { available reason recovery model } }
+    calendar { authorization calendars { name account writable } diagnostics { category reason recovery } }
+  }
+  activeInstance {
+    validation { passed dataChecksRun checks { name passed details } }
+    calendarSync { syncStates { id status reason retry diagnostic { category recovery } } }
+  }
 }
 
 mutation {
-  calendarInfo {
-    authorization calendars { name account writable }
-    diagnostics { category reason recovery }
-    syncStates { id status reason retry diagnostic { category recovery } }
-  }
+  requestCalendarAccess { authorization diagnostics { category reason recovery } }
   show(input: { project: "2026-10-07-migration", detail: true }) { url outcome }
 }
 
@@ -584,8 +667,8 @@ Bodies accept replacement text; recurrence schedules and attachments use their
 existing edit commands.
 
 Updating a projected action uses the same ordinary editable fields as an action
-edit and saves the occurrence. Its synthetic ID is resolved within the current
-lookahead; recurrence commands apply to templates or convert an eligible ordinary
+edit and saves the occurrence. Its synthetic ID is resolved independently of
+collection ranges; recurrence commands apply to templates or convert an eligible ordinary
 action into a template. For an explicit
 occurrence edit, copy `Action.occurrence.template.id` and `.original` into
 `UpdateOccurrenceInput` rather than recomputing identity from its current schedule.
@@ -609,8 +692,8 @@ All selected mutation roots are preflighted before any write. In documents that
 switch instances, each automation model must be selectable in the instance
 receiving that write. Omission or null preserves declarations; `set: []` clears
 them. Prefer incremental operations for individual job changes.
-`updateInstance` also patches instructions, recurrence lookahead, and Calendar
-title prefixes through `settings`, preserving its identity and omitted configuration.
+`updateInstance` also patches instructions and Calendar title prefixes through
+`settings`, preserving its identity and omitted configuration.
 
 Action creation accepts an initial `recurrence` list, with `[]` creating a dormant
 template. Omit optional creation fields that do not apply; creation inputs do
@@ -674,6 +757,8 @@ A missing description index row is reported even when the record saved.
 
 Top-level mutations execute serially with a fresh read view after each write.
 They are not a transaction: earlier successful writes remain saved on failure.
+The daemon's mutation journal delivers those saved effects to `InstanceLifecycle`,
+including partial writes, so source repair and feature maintenance share one owner.
 Only `query` is classified as a repeatable read by the daemon client.
 Never automatically retry mutations after an uncertain transport outcome.
 Inspect partial results and read back the affected records; retry only requested
@@ -686,6 +771,11 @@ requires readback because creates have no idempotency key.
 
 Mixed record and instance-metadata queries share one loaded snapshot regardless
 of sibling field order. Reads retain a consistent snapshot of records, descriptions, and relationships.
+Record diagnostics and Calendar synchronization status use loaded/cached state;
+requesting them does not trigger a source scan. Passive content scopes can load
+temporary records without activating that instance or starting its features.
+Watcher and periodic reconciliation repair unseen external edits and exceptional
+races, so ordinary reads do not perform per-feature filesystem freshness checks.
 The latest snapshot is reused until the Store revision changes. Metadata writes,
 attachment reconciliation, diagnostics, and external rebuilds create a fresh view.
 Older snapshots remain valid for reads already in flight. Scalar filters compile
@@ -728,6 +818,6 @@ cannot preempt a synchronous resolver already in progress. Cancellation is also
 checked during filtering and before each write. Ordinary field errors retain
 GraphQL's partial-data behavior.
 
-The [canonical query benchmark](query-benchmark.md) compares equivalent GraphQL
-and legacy query plans for latency, tool calls, dependency rounds, and payload
-size, including pagination and optional real MCP transport.
+The [canonical query benchmark](query-benchmark.md) measures canonical GraphQL
+workflows for latency, tool calls, dependency rounds, and payload size, including
+pagination and optional real MCP transport.

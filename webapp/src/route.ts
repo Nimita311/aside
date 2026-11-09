@@ -2,6 +2,8 @@ import type { EntityRef, EntityType } from '../lib/types';
 import { safeDecode } from '../lib/types';
 import { isEntryTimestamp } from './entity-reference';
 import { assertArtifactId, assertAttachmentFilename } from '../../cli/src/core/artifact-reference';
+import { canonicalEntrySource } from './entry-source-reference';
+import type { TimestampRange } from '../../cli/src/core/timestamp-range';
 import { dateHandle, parseDateHandle, type DateReference } from './date-reference';
 
 // URL route <-> view-state mapping, kept DOM-free so it can be unit-tested.
@@ -21,6 +23,8 @@ import { dateHandle, parseDateHandle, type DateReference } from './date-referenc
 //   asset/<path>                  asset reader over the unfiltered flow
 //   detail                        instance detail over the unfiltered flow
 //   date/<start>[/<end>]           calendar jump (also within project/action)
+//   ?search=<text>                literal search within the underlying flow
+//   ?source=<attachment-handle>   explicit saved query, including return context
 //
 // Entry ids are timestamps (`2026-05-22T15:30`), which no route head or
 // entity id can look like (entity ids date-code as `2026-05-22-name`), so a
@@ -50,6 +54,13 @@ export interface ViewState {
   jump?: string | null;
   // A calendar target, distinct from an exact entry ID; exclusive with doc/jump.
   date?: DateReference;
+  // One literal-text condition, independent of the project/action filter.
+  search?: string;
+  // Exact instance-local attachment defining the entry flow. Its definition,
+  // variables and query remain agent-owned rather than copied into the URL.
+  source?: string;
+  range?: TimestampRange;
+  order?: 'CREATED_ASC' | 'CREATED_DESC';
 }
 
 // An entry id: the entry's creation timestamp, optionally with seconds.
@@ -87,7 +98,18 @@ export function buildRoute(state: ViewState): string {
       parts.push(encodeSegment(state.doc.filename));
     }
   }
-  return parts.join('/');
+  const search = state.filter?.type === 'entry' ? '' : state.search?.trim();
+  const query = new URLSearchParams();
+  if (state.source !== undefined) {
+    query.set('source', canonicalEntrySource(state.source));
+  }
+  if (search) query.set('search', search);
+  if (state.range) {
+    if (!parseDateHandle(dateHandle(state.range))) throw new Error('Invalid date range');
+    query.set('range', dateHandle(state.range));
+  }
+  if (state.order) query.set('order', state.order);
+  return parts.join('/') + (query.size ? `?${query}` : '');
 }
 
 // An asset doc from its trailing path segments. A hand-edited URL may leave the
@@ -109,6 +131,25 @@ function artifactDoc(segments: string[]): DocRef | null {
 
 // Unrecognized or malformed routes parse as the plain flow.
 export function parseRoute(route: string): ViewState {
+  const queryStart = route.indexOf('?');
+  const path = queryStart < 0 ? route : route.slice(0, queryStart);
+  const query = new URLSearchParams(queryStart < 0 ? '' : route.slice(queryStart + 1));
+  const search = query.get('search')?.trim();
+  const view = parsePathRoute(path);
+  if (search && view.filter?.type !== 'entry') view.search = search;
+  const source = query.get('source');
+  if (source !== null) {
+    try { view.source = canonicalEntrySource(source); }
+    catch { /* A malformed source is not a native artifact identity. */ }
+  }
+  const range = parseDateHandle(query.get('range') ?? '');
+  if (range?.end) view.range = { start: range.start, end: range.end };
+  const order = query.get('order');
+  if (order === 'CREATED_ASC' || order === 'CREATED_DESC') view.order = order;
+  return view;
+}
+
+function parsePathRoute(route: string): ViewState {
   const flow: ViewState = { filter: null, doc: null };
   if (!route) return flow;
 
@@ -166,7 +207,10 @@ export function instanceUrl(instanceId: string, route: string): string {
 }
 
 export function readInstanceLocation(pathname: string): { instanceId: string | null; route: string } {
-  const parts = pathname.replace(/^\/+/, '').split('/');
+  const queryStart = pathname.indexOf('?');
+  const query = queryStart < 0 ? '' : pathname.slice(queryStart);
+  const path = queryStart < 0 ? pathname : pathname.slice(0, queryStart);
+  const parts = path.replace(/^\/+/, '').split('/');
   if (!parts[0]) return { instanceId: null, route: '' };
-  return { instanceId: safeDecode(parts[0]), route: parts.slice(1).join('/') };
+  return { instanceId: safeDecode(parts[0]), route: parts.slice(1).join('/') + query };
 }

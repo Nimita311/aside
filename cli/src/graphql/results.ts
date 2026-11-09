@@ -1,5 +1,5 @@
 import { parseArtifactHandle } from '../core/artifact.js';
-import type { MutationChange, MutationFailure, MutationResult } from '../mcp/tools/mutation-result.js';
+import type { MutationChange, MutationFailure, MutationResult } from '../source/mutation-result.js';
 
 type RecordKind = 'entry' | 'project' | 'action' | 'artifact' | 'instance';
 export interface MutationPayloadIds {

@@ -82,9 +82,11 @@ describe('rendered time presentation', () => {
     refreshDisplay(document.body, current);
     expect(labels()).toEqual(['Overdue 1m', 'Slipped 31m']);
     expect(document.activeElement).toBe(link); expect(link.classList.contains('tag-status-overdue')).toBe(true);
-    expect(link.classList.contains('tag-status-slipped')).toBe(true); expect(link.querySelectorAll('.ref-status')).toHaveLength(1);
+    expect(link.classList.contains('tag-status-slipped')).toBe(true);
+    const icon = link.querySelector<SVGElement>('svg.entity-icon')!;
+    expect(icon.dataset.state).toBe('slipped');
     refreshDisplay(document.body, current);
-    expect(link.querySelectorAll('.ref-status')).toHaveLength(1);
+    expect(link.querySelectorAll('svg.entity-icon')).toHaveLength(1); expect(link.querySelector('svg.entity-icon')).toBe(icon);
   });
   it('moves the timeline now marker while retaining focused rows and expanded ends', () => {
     const options = opts('2026-10-04T09:59');

@@ -1,6 +1,7 @@
 import { isBuiltinModelName, validateDefinition } from '../core/automation.js';
-import { catalogFor, readExecutionContext, type CatalogOptions, type ModelCatalogSnapshot } from './models.js';
+import { catalogFor, type CatalogOptions, type ModelCatalogSnapshot } from './models.js';
 import type { AutomationSource } from './scheduler.js';
+import {resolveExecutionContext} from '../core/execution-context.js';
 
 export interface ModelWarmupWarning { root: string; key: string; definedIn: string; message: string }
 type Lookup = (root: string, options: CatalogOptions) => Promise<ModelCatalogSnapshot>;
@@ -37,7 +38,8 @@ export class AutomationModelWarmup {
       const warn = (job: AutomationSource, message: string) => warnings.push({ root, key: job.key, definedIn: job.definedIn, message });
       const dependencies: Array<{ job: AutomationSource & { selection: string }; builtin: string }> = [];
       try {
-        const { config } = readExecutionContext(root);
+        for (const job of jobs) resolveExecutionContext(job.executionContext);
+        const { config } = resolveExecutionContext(jobs[0].executionContext);
         for (const job of jobs) {
           const named = config.models && Object.hasOwn(config.models, job.selection) ? config.models[job.selection] : undefined;
           if (named && 'command' in named) continue;
@@ -48,7 +50,7 @@ export class AutomationModelWarmup {
       } catch (error) { for (const job of jobs) warn(job, (error as Error).message); }
       this.messages.set(root, warnings);
       if (!dependencies.length) continue;
-      const work = this.lookup(root, { signal: this.controller.signal }).then(snapshot => {
+      const work = this.lookup(root, { signal: this.controller.signal, executionContext: jobs[0].executionContext! }).then(snapshot => {
         if (this.controller.signal.aborted || this.generations.get(root) !== generation) return;
         for (const { job, builtin } of dependencies) {
           const option = snapshot.models.find(model => model.builtin && model.name === builtin);

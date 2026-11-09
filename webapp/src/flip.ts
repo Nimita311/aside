@@ -275,7 +275,7 @@ export function snapshotFlow(scroller: HTMLElement): FlowSnapshot | null {
   // The caller replaces these cards immediately. Move focus to a stable view
   // control before detaching a focused record, including with motion disabled.
   if (document.activeElement instanceof HTMLElement && scroller.contains(document.activeElement) && document.activeElement.closest('.entry-card')) {
-    const controls = ['.filter-pill-label', '#btn-side-panel-collapse', '.app-title a'].map(selector => document.querySelector<HTMLElement>(selector));
+    const controls = ['.filter-pill-label', '#btn-workspace-views', '#btn-instance-switch', '.app-title a'].map(selector => document.querySelector<HTMLElement>(selector));
     const target = controls.find(control => control && !control.closest('[hidden], [inert]') && !control.matches(':disabled') && control.getClientRects().length > 0);
     target?.focus({ preventScroll: true });
   }
@@ -309,6 +309,11 @@ function createGhostOverlay(scroller: HTMLElement, scrollerRect: DOMRect):
   overlay.style.left = `${scrollerRect.left}px`;
   overlay.style.width = `${scrollerRect.width}px`;
   overlay.style.height = `${scrollerRect.height}px`;
+  // Detached cards retain the reader's wide-block allowance while departing.
+  const readerStyle = getComputedStyle(scroller);
+  for (const property of ['--wide-content-left', '--wide-content-right']) {
+    overlay.style.setProperty(property, readerStyle.getPropertyValue(property));
+  }
   document.body.appendChild(overlay);
   const track = document.createElement('div');
   track.style.cssText = 'position:absolute;top:0;left:0';

@@ -6,6 +6,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { Store } from '../lib/store';
 import type { EntityRef, Entry } from '../lib/types';
 import type { DocRef } from '../src/route';
+import type { PanelView } from '../src/side-panel';
+import type { createContextPanel } from '../src/context-panel';
 
 type DiagramOptions = { current?: () => boolean; commit?: (paint: () => void) => void };
 type DiagramRenderer = (root: HTMLElement, options?: DiagramOptions) => Promise<void>;
@@ -13,8 +15,10 @@ interface App {
   state: { store: Store | null; instanceId: string | null; filter: EntityRef | null; doc: DocRef | null; panelCollapsed: boolean; loadedWeeks: number };
   renderFlow(): Promise<void>;
   updateDoc(preserveScroll?: boolean): Promise<void>;
-  showSidePanel(view?: { scrollTop: number; expanded: string[] }): Promise<void>;
+  showSidePanel(view?: PanelView): Promise<void>;
   refreshDiagramTheme(): Promise<void>;
+  setupContextPanel(): void;
+  contextPanel?: ReturnType<typeof createContextPanel>;
 }
 
 // Control only the asynchronous renderer boundary; exercise the application's
@@ -25,7 +29,7 @@ async function loadApp(renderer: DiagramRenderer): Promise<App> {
     .replace("document.addEventListener('DOMContentLoaded', init);", '')
     .replace("import { renderDiagrams } from './diagrams';", '');
   const bundled = await build({
-    stdin: { contents: `${source}\nexport { state, renderFlow, updateDoc, showSidePanel, refreshDiagramTheme };`, resolveDir: dirname(path), loader: 'ts' },
+    stdin: { contents: `${source}\nexport { state, renderFlow, updateDoc, showSidePanel, refreshDiagramTheme, setupContextPanel, contextPanel };`, resolveDir: dirname(path), loader: 'ts' },
     bundle: true, platform: 'browser', format: 'iife', globalName: 'TestApp', write: false,
     external: ['mermaid'],
   });
@@ -53,9 +57,13 @@ function diagramReflow(container: HTMLElement, root: HTMLElement): () => void {
 }
 
 const entry: Entry = { meta: { created: '2026-10-04T12:00' }, weekFile: '2026-09-28', content: 'Entry content' };
-async function setup(renderer: DiagramRenderer) {
+const disposePanels: (() => void)[] = [];
+async function setup(renderer: DiagramRenderer, context = false) {
   document.body.innerHTML = '<div id="flow-scroll"><div id="flow"></div></div>' +
-    '<aside id="side-panel"><div id="side-panel-body"></div></aside>' +
+    '<aside id="side-panel">' + (context ? '<button id="btn-context-expand">Expand</button>' +
+      '<div id="context-panel-view" role="tablist" hidden><button id="btn-context-content" role="tab">Content</button>' +
+      '<button id="btn-context-overview" role="tab">Overview</button></div>' : '') +
+    '<div id="side-panel-body"></div></aside>' +
     '<dialog id="doc-backdrop"><div id="doc-body"></div></dialog><button id="outside">Outside</button>';
   const api = await loadApp(renderer);
   api.state.store = {
@@ -66,10 +74,14 @@ async function setup(renderer: DiagramRenderer) {
   } as unknown as Store;
   api.state.instanceId = 'work'; api.state.filter = null; api.state.doc = null;
   api.state.panelCollapsed = false;
+  if (context) {
+    api.setupContextPanel();
+    disposePanels.push(() => api.contextPanel?.destroy());
+  }
   return { api, body: document.getElementById('doc-body')!, panel: document.getElementById('side-panel-body')! };
 }
 
-afterEach(() => { vi.restoreAllMocks(); document.body.replaceChildren(); localStorage.clear(); });
+afterEach(() => { for (const dispose of disposePanels.splice(0)) dispose(); vi.restoreAllMocks(); document.body.replaceChildren(); localStorage.clear(); });
 
 describe('mounted diagram lifecycle', () => {
   it('waits for diagrams before finishing a week and defers theme changes through the flow rebuild', async () => {
@@ -122,6 +134,33 @@ describe('mounted diagram lifecycle', () => {
     expect(panel.scrollTop).toBe(0);
     delayed.finish(); await showing;
     expect(panel.scrollTop).toBe(90);
+  });
+
+  it.each([
+    ['overview', ['content']],
+    ['content', ['overview']],
+    ['overview', ['content', 'overview']],
+  ] as const)('keeps tab changes made during delayed panel hydration (restoring %s, selecting %j)', async (saved, selections) => {
+    const delayed = deferred();
+    const renderer = vi.fn<DiagramRenderer>(() => delayed.promise);
+    const { api, panel } = await setup(renderer, true);
+    api.state.filter = { type: 'entry', id: entry.meta.created };
+    api.contextPanel!.setMode('expanded');
+    const showing = api.showSidePanel({ scrollTop: 90, expanded: [], contextView: saved });
+    await vi.waitFor(() => expect(renderer).toHaveBeenCalledOnce());
+    api.contextPanel!.open();
+    expect(api.contextPanel!.getState().view).toBe(saved);
+    expect(panel.scrollTop).toBe(0);
+    for (const selection of selections) {
+      const tab = document.getElementById(`btn-context-${selection}`)!;
+      tab.focus(); tab.click();
+    }
+    const selected = selections.at(-1)!;
+    expect(panel.scrollTop).toBe(0);
+    delayed.finish(); await showing;
+    expect(api.contextPanel!.getState().view).toBe(selected);
+    expect(panel.scrollTop).toBe(0);
+    expect(document.activeElement).toBe(document.getElementById(`btn-context-${selected}`));
   });
 
   it('keeps reading and focus changes made while a current document is rendering', async () => {

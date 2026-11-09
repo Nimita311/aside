@@ -2,10 +2,11 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
-import { init } from '../src/commands/init.js';
+import { init } from '../src/source/bootstrap.js';
 import { runArtifact } from '../src/commands/artifact.js';
 import { runPlugin } from '../src/commands/plugin.js';
 import { formatDaemonStatus } from '../src/commands/daemon-status.js';
+import {availableInstances} from '../src/source/instance-admission.js';
 import { daemonPaths } from '../src/daemon/paths.js';
 
 describe('CLI JSON output', () => {
@@ -100,11 +101,11 @@ describe('CLI JSON output', () => {
       expect(conflicts[0].problems[0]).toContain(second);
     }
   });
-  it('preserves native MCP artifact content and parse issues without parsing its text', async () => {
+  it('preserves artifact content blocks and parse issues without parsing their text', async () => {
     const text = '1 of 1\noffset: 0\nlimit: 20\nnext_offset: null\n\n#artifact/2026-10-05-brief — Brief';
     const output = JSON.parse(await runArtifact(['query', '--json'], work, async () => ({ text, issues: [] })));
     expect(output.data).toEqual({ content: [{ type: 'text', text }], issues: [] });
-    expect(await runArtifact(['query'], work, async () => ({ text }))).toBe(text);
+    expect(await runArtifact(['query'], work, async () => ({ text, issues: [] }))).toBe(text);
   });
   it('keeps plugin checks and information structured, including partial inspection failure', async () => {
     const output: string[] = [];
@@ -122,6 +123,7 @@ describe('CLI JSON output', () => {
     init(second, { name: 'Work', description: 'Another instance' });
     writeFileSync(join(second, 'aside.md'), '---\nid: work-home\nname: Work\n---\n');
     const snapshot = { paths: daemonPaths({ ASIDE_DAEMON_HOME: root }), unavailable: false, known: [work, second], job: null, jobFileExists: false,
+      instances: availableInstances([work, second]),
       running: { pid: 123, build: { version: '0.1.0', builtAt: 0 },
         connections: 2, tabs: 0, known: [work, second], loaded: [work, second], sessions: { [work]: 1, [second]: 0 } } };
     const human = formatDaemonStatus(snapshot).output;

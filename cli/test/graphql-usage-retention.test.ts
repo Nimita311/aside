@@ -3,6 +3,7 @@ import {existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathS
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {GraphQLUsageLog, usageBaseDirectory, usageDirectory, type UsageEvent} from '../src/graphql/usage.js';
+import {instanceKey} from '../src/daemon/host.js';
 
 const temporary: string[] = [];
 const writers: GraphQLUsageLog[] = [];
@@ -67,11 +68,13 @@ describe('GraphQL diagnostic cleanup', () => {
     expect(readdirSync(directory)).toEqual(['2026-10-16-001.jsonl', '2026-10-17-001.jsonl', '2026-10-17-002.jsonl', 'instance.json']);
   });
 
-  it('purges a canonical alias or a deleted instance path without touching another instance', async () => {
+  it('purges an owner-normalized alias or a deleted instance path without touching another instance', async () => {
     const a = fixture(), b = fixture(), logs = join(fixture(), 'logs'), value = writer(logs);
     value.record(a, event()); value.record(b, event()); await value.flush();
     const alias = join(fixture(), 'alias'); symlinkSync(a, alias);
-    expect(await value.purge(alias)).toEqual({files: 1, collections: 1});
+    const admittedAlias = instanceKey(alias);
+    expect(admittedAlias).toBe(a);
+    expect(await value.purge(admittedAlias)).toEqual({files: 1, collections: 1});
     expect(existsSync(usageDirectory(b, logs))).toBe(true);
     rmSync(b, {recursive: true});
     expect(await value.purge(b)).toEqual({files: 1, collections: 1});

@@ -6,11 +6,12 @@ import {
 import { GRAPHQL_SCHEMA, prepareGraphQL, type GraphQLArgs } from '../graphql/schema.js';
 import { validWebQueryRequest, webQueryBytes, WEB_QUERY_MAX_BYTES, type WebQueryResult } from '../core/web-query.js';
 
-const roots = new Set(['entry', 'entries', 'project', 'projects', 'action', 'actions', 'artifact', 'artifacts']);
+const roots = new Set(['entry', 'entries', 'project', 'projects', 'action', 'actions', 'artifact', 'artifacts', 'search']);
 // Fail closed when the agent schema adds another object type or runtime surface.
 const objects = new Set(['Entry', 'EntryPage', 'Project', 'ProjectPage', 'Action', 'ActionPage',
   'Artifact', 'ArtifactPage', 'LinkTarget', 'LinkPage', 'Attachment', 'AttachmentPage',
-  'ArtifactContent', 'MarkdownContent', 'ProjectRelation', 'ProjectRelationPage', 'Occurrence', 'RecurrenceSchedule']);
+  'ArtifactContent', 'MarkdownContent', 'ProjectRelation', 'ProjectRelationPage', 'Occurrence', 'RecurrenceSchedule',
+  'SearchPage', 'SearchHit']);
 const failed = (errors: readonly unknown[]): { result: WebQueryResult } => ({ result: {
   errors, extensions: { complete: false, diagnostics: [], mutations: [] },
 } });
@@ -57,13 +58,13 @@ export function prepareWebQuery(input: unknown): { args: GraphQLArgs } | { resul
           throw new GraphQLError(`${parent.name}.${name} is unavailable to webpages.`);
         }
         const arguments_ = getArgumentValues(field, node, variables.variableValues);
-        const limit = arguments_.limit;
-        if (field.args.some(arg => arg.name === 'limit') && (!Number.isInteger(limit) || (limit as number) < 1 || (limit as number) > 100)) {
+        const limit = arguments_.limit ?? arguments_.first;
+        if (field.args.some(arg => arg.name === 'limit' || arg.name === 'first') && (!Number.isInteger(limit) || (limit as number) < 1 || (limit as number) > 100)) {
           throw new GraphQLError('Page limits must be integers from 1 to 100.');
         }
         let childWeight = weight;
         const unwrapped = isNonNullType(field.type) ? field.type.ofType : field.type;
-        if (isListType(unwrapped)) childWeight *= name === 'nodes' && parent.name.endsWith('Page') ? pageSize : 100;
+        if (isListType(unwrapped)) childWeight *= (name === 'nodes' && parent.name.endsWith('Page')) || (name === 'hits' && parent.name === 'SearchPage') ? pageSize : 100;
         if (node.selectionSet && isCompositeType(type)) walk(node.selectionSet, type, depth + 1, childWeight, typeof limit === 'number' ? limit : 100);
       }
     };

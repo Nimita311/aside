@@ -1,18 +1,18 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { existsSync, mkdtempSync, readFileSync, renameSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { init } from '../src/commands/init.js';
-import { Store } from '../src/mcp/store.js';
-import { artifactFilePath } from '../src/core/artifact.js';
+import { init } from '../src/source/bootstrap.js';
+import { Store } from '../src/source/store.js';
+import { artifactFilePath, artifactAttachmentPath } from '../src/core/artifact.js';
+import { AUTOMATION_PROMPT_MAX_BYTES } from '../src/core/system-config.js';
 import { createArtifact } from '../src/mcp/tools/artifact.js';
 import { handleCapture } from '../src/mcp/tools/capture.js';
 import { handleUpdateEntry, handleUpdateProject } from '../src/mcp/tools/update.js';
 import { handleUpdateInstance } from '../src/mcp/tools/instance.js';
-import { beforeMutationWrite, persistMutationWrite, trackMutation } from '../src/mcp/tools/mutation-result.js';
+import { beforeMutationWrite, persistMutationWrite, trackMutation } from '../src/source/mutation-result.js';
 import { normalizeMutationArguments } from '../src/graphql/inputs.js';
 import { prepareAutomationPrompts } from '../src/graphql/automation-prompts.js';
-import { executeGraphQL } from '../src/graphql/schema.js';
-import { resolvePrompt } from '../src/automation/execution.js';
+import {executeGraphQLWithOwner as executeGraphQL, outcome} from './graphql-owner-fixture.js';
 import * as models from '../src/automation/models.js';
 
 const now = new Date(2026, 9, 8, 12);
@@ -41,13 +41,35 @@ beforeEach(() => {
 afterEach(() => {store.close(); vi.restoreAllMocks(); rmSync(dir, {recursive: true, force: true});});
 
 describe('artifact-only automation prompts', () => {
+  it.each(['empty', 'invalid YAML'])('validates a loaded prompt without rereading a newer %s artifact file', state => {
+    const artifact = createArtifact(store, {name: 'Instructions', description: 'Instructions', body: 'Published instructions.'}, now);
+    writeFileSync(store.getArtifactFile(artifact.id)!, state === 'empty' ? '---\nname: Instructions\ncreated: 2026-10-08\n---\n' : '---\nname: [invalid\n---\n');
+
+    const outcome = executeOwner('updateInstance', input({existingId: artifact.id}));
+
+    expect(outcome.result.status).toBe('SUCCEEDED');
+    expect(store.getArtifact(artifact.id)!.body).toBe('Published instructions.');
+    expect((store.getManifest().automations!.task as any).run.prompt).toBe(`#artifact/${artifact.id}`);
+  });
+
+  it('keeps an empty loaded prompt invalid until its lifecycle publishes repaired content', () => {
+    const artifact = createArtifact(store, {name: 'Instructions', description: 'Instructions'}, now);
+    const file = store.getArtifactFile(artifact.id)!;
+    writeFileSync(file, readFileSync(file, 'utf8') + '\nUnpublished instructions.\n');
+
+    expect(() => executeOwner('updateInstance', input({existingId: artifact.id}))).toThrow('empty primary content');
+    expect(store.getManifest().automations).toBeUndefined();
+    store.rebuild();
+    expect(() => executeOwner('updateInstance', input({existingId: artifact.id}))).not.toThrow();
+  });
+
   it.each(['updateInstance', 'updateProject'])('links an existing artifact on %s and validates its readable primary content', field => {
     const artifact = createArtifact(store, {name: 'Instructions', description: 'Instructions', body: 'Write a digest.'}, now);
     const outcome = executeOwner(field, input({existingId: artifact.id}), project);
     expect(outcome.result.status).toBe('SUCCEEDED');
     const jobs = field === 'updateInstance' ? store.getManifest().automations : store.getProject(project)!.frontMatter.automations;
     expect((jobs!.task as any).run.prompt).toEqual(`#artifact/${artifact.id}`);
-    expect(resolvePrompt(dir, (jobs!.task as any).run.prompt)).toBe('Write a digest.');
+    expect(store.getArtifact(artifact.id)!.body).toBe('Write a digest.');
     expect(outcome.result.changes.some(change => change.kind === 'artifact')).toBe(false);
   });
 
@@ -78,7 +100,16 @@ describe('artifact-only automation prompts', () => {
     const source = join(dir, 'prompt.txt');
     writeFileSync(source, 'Write a digest. #artifact/2026-10-08-missing');
     executeOwner('updateInstance', input({create: {name: 'File prompt', description: 'Instructions', attachments: [{source}]}}));
-    expect(resolvePrompt(dir, '#artifact/2026-10-08-file-prompt')).toBe('Write a digest. #artifact/2026-10-08-missing');
+    expect(readFileSync(artifactAttachmentPath(dir, '2026-10-08-file-prompt', 'prompt.txt'), 'utf8')).toBe('Write a digest. #artifact/2026-10-08-missing');
+    expect(() => executeOwner('updateInstance', input({existingId: '2026-10-08-file-prompt'}))).not.toThrow();
+  });
+
+  it.each(['invalid UTF-8', 'too large'])('rejects an existing %s primary attachment through prompt preflight', state => {
+    const source = join(dir, 'prompt.txt');
+    writeFileSync(source, state === 'invalid UTF-8' ? Buffer.from([0xff, 0xfe]) : Buffer.alloc(AUTOMATION_PROMPT_MAX_BYTES + 1, 'a'));
+    const artifact = createArtifact(store, {name: 'File prompt', description: 'Instructions', files: [{source}]}, now);
+    expect(() => executeOwner('updateInstance', input({existingId: artifact.id}))).toThrow(/UTF-8|encoded data/);
+    expect(store.getManifest().automations).toBeUndefined();
   });
 
   it.each([
@@ -103,24 +134,26 @@ describe('artifact-only automation prompts', () => {
     expect(store.getArtifacts().size).toBe(0);
   });
 
-  it('rejects an existing primary attachment under an in-root managed-directory symlink before any owner or inline artifact write', () => {
+  it.each(['attachment', 'artifact directory', 'year directory'])('rejects an existing primary attachment through a %s symlink before any owner or inline artifact write', scope => {
     const source = join(dir, 'prompt.txt');
     writeFileSync(source, 'Existing instructions.');
     const existing = createArtifact(store, {name: 'Existing prompt', description: 'Instructions', files: [{source}]}, now);
-    const managed = join(dir, 'artifacts', '2026', existing.id);
+    const managed = scope === 'year directory' ? join(dir, 'artifacts', '2026')
+      : scope === 'artifact directory' ? join(dir, 'artifacts', '2026', existing.id)
+        : artifactAttachmentPath(dir, existing.id, 'prompt.txt');
     const actual = join(dir, 'actual-prompt-files');
     renameSync(managed, actual);
-    symlinkSync(actual, managed, 'dir');
+    symlinkSync(actual, managed, scope === 'attachment' ? 'file' : 'dir');
     const original = readFileSync(join(dir, 'aside.md'), 'utf8');
     const raw = {automations: {upsert: [
       {name: 'new', schedule, run: {model: 'CUSTOM', prompt: {create: {name: 'New prompt', description: 'Instructions', body: 'New instructions.'}}}},
       {name: 'existing', schedule, run: {model: 'CUSTOM', prompt: {existingId: existing.id}}},
     ]}};
+    expect(() => executeOwner('updateInstance', input({existingId: existing.id}))).toThrow(/Symlinks are not allowed/);
     expect(() => executeOwner('updateInstance', raw)).toThrow(/Symlinks are not allowed/);
     expect(readFileSync(join(dir, 'aside.md'), 'utf8')).toBe(original);
     expect(store.getArtifacts().size).toBe(1);
     expect(existsSync(artifactFilePath(dir, '2026-10-08-new-prompt'))).toBe(false);
-    expect(() => resolvePrompt(dir, `#artifact/${existing.id}`)).toThrow(/Symlinks are not allowed/);
   });
 
   it('rejects duplicate inline artifact IDs before writes', () => {
@@ -157,7 +190,7 @@ describe('artifact-only automation prompts', () => {
       updateProject(id: "${project}", input: {automations: {upsert: [{name: "digest", schedule: {at: "2099-01-01T00:00:00Z"}, run: {model: "CUSTOM", prompt: {create: {name: "Instructions", description: "Instructions", body: "Write a digest."}}}}]}}) {
         project { automations { nodes { run { prompt { id name content { ... on MarkdownContent { text } } } } } } } error
       }
-    }`}, {mutate: (_operation, args) => ({id: args.id, text: handleUpdateProject(store, args)})});
+    }`}, {mutate: (_operation, args) => outcome(handleUpdateProject(store, args), args.id)});
     expect(result.errors).toBeUndefined();
     expect((result.data as any).updateProject).toMatchObject({error: null, project: {automations: {nodes: [{run: {prompt: {name: 'Instructions', content: {text: 'Write a digest.'}}}}]}}});
     expect(result.extensions!.mutations![0].changes).toEqual(expect.arrayContaining([expect.objectContaining({kind: 'artifact', effect: 'CREATED'})]));
@@ -204,7 +237,7 @@ describe('artifact-only automation prompts', () => {
 
   it('validates a later malformed ArtifactLinkInput before an earlier root mutation writes', async () => {
     const original = readFileSync(join(dir, 'aside.md'), 'utf8');
-    const mutate = vi.fn((_operation, args) => ({text: handleUpdateInstance(store, args)}));
+    const mutate = vi.fn((_operation, args) => { handleUpdateInstance(store, args); return {}; });
     const result = await executeGraphQL(store, 'mutation', {document: `mutation {
       first: updateInstance(input: {body: "Must not save."}) {error}
       second: updateInstance(input: {automations: {upsert: [{name: "task", schedule: {at: "2099-01-01T00:00:00Z"}, run: {model: "CUSTOM", prompt: {create: {name: "Instructions", description: "Instructions", body: "Write.", bodyFile: "/tmp/other"}}}}]}}) {error}

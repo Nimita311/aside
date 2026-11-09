@@ -2,12 +2,12 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { mkdtempSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { parseDocument } from 'yaml';
-import { init } from '../src/commands/init.js';
-import { Store } from '../src/mcp/store.js';
+import { init } from '../src/source/bootstrap.js';
+import { Store } from '../src/source/store.js';
 import { handleCapture } from '../src/mcp/tools/capture.js';
 import { handleUpdateProject } from '../src/mcp/tools/update.js';
 import { handleUpdateInstance } from '../src/mcp/tools/instance.js';
-import { applyAutomationEditsToMetadata, assertAutomationEdits, type AutomationEdits } from '../src/mcp/tools/automation-edits.js';
+import { applyAutomationEditsToMetadata, assertAutomationEdits, type AutomationEdits } from '../src/core/automation-edits.js';
 
 const task = (script: string) => ({schedule: {at: '2099-01-01T00:00:00Z'}, run: {script}});
 it.each(['Literal instructions', {artifact: '#artifact/2026-10-08-instructions'}, '#artifact/2026-10-08-instructions/prompt.md', '#artifact/not-an-id'])('rejects invalid authored prompt patches before merging: %j', prompt => {

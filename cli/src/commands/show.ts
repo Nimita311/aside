@@ -3,12 +3,11 @@ import { jsonResult, writeOutput } from './output.js';
 import { parseCommand, type CommandInput } from './options.js';
 import { resolveDataDir } from './mcp.js';
 import { InstancePathError } from '../core/instance.js';
-import { parseShowTarget, type ShowTarget } from './show-target.js';
-import { availableInstances, resolveInstanceAddress } from '../web/catalogue.js';
+import {parseShowSource, parseShowTarget, type ShowTarget} from './show-target.js';
+import {resolveInstanceAddress, type AvailableInstance} from '../core/catalogue.js';
 import { openBrowser } from '../web/locate.js';
 import { DaemonClient } from '../daemon/client.js';
 import type { ShowResult } from '../daemon/host.js';
-import type { Status } from '../daemon/protocol.js';
 
 export interface ShowContext {
   cwd?: string;
@@ -22,14 +21,13 @@ async function targetInstance(target: ShowTarget, directory: string | undefined,
   const workspace = resolveDataDir(cwd, directory === undefined ? [] : ['--dir', directory]);
   if (workspace.invalidDir) throw new InstancePathError(`Not an aside instance (no aside.md manifest): ${workspace.invalidDir}`);
   if (!target.instanceId && workspace.dataDir) return workspace.dataDir;
+  const instances = await client.request<AvailableInstance[]>('instances', {paths: workspace.candidates}, {read: true});
   if (target.instanceId && directory !== undefined) {
-    const instance = availableInstances([workspace.dataDir!]).find(instance => instance.path === workspace.dataDir);
+    const instance = instances.find(instance => instance.path === workspace.dataDir);
     if (instance?.error) throw new Error(instance.error);
     if (instance?.id !== target.instanceId && instance?.alias !== target.instanceId) throw new Error(`The URL names instance "${target.instanceId}", but --dir selects "${instance?.id}".`);
     return workspace.dataDir!;
   }
-  const { known } = await client.request<Status>('status', {}, { read: true });
-  const instances = availableInstances([...known, ...workspace.candidates]);
   if (target.instanceId) {
     const instance = resolveInstanceAddress(instances, target.instanceId);
     if (!instance) throw new Error(`Instance "${target.instanceId}" is unavailable. Use aside show to choose its directory, or pass --dir <path>.`);
@@ -48,14 +46,23 @@ export async function runShow(args: CommandInput, context: ShowContext = {}): Pr
   const options = parseCommand('show', args);
   if (options.helpText) { (context.out ?? console.log)(options.helpText); return; }
   const rawTarget = options.get('target');
+  const source = options.get('--source');
   const printUrl = options.has('--url');
-  if (rawTarget === undefined && options.has('--dir') && !printUrl) options.fail('--dir requires a URL or handle target, or --url. Run aside show for the instance selector.');
+  if (rawTarget === undefined && source === undefined && options.has('--dir') && !printUrl) options.fail('--dir requires a URL or handle target, --source, or --url. Run aside show for the instance selector.');
   let target: ShowTarget | undefined;
   if (rawTarget !== undefined) {
     try { target = parseShowTarget(rawTarget); }
     catch (error) { options.fail((error as Error).message); }
   } else if (printUrl && options.has('--dir')) {
     target = { args: {} };
+  }
+  if (source !== undefined) {
+    let targetSource = source;
+    try { targetSource = parseShowSource(source); }
+    catch (error) { options.fail((error as Error).message); }
+    if (target?.args.source !== undefined) options.fail('Pass source in the URL or --source, not both.');
+    target ??= { args: {} };
+    target.args.source = targetSource;
   }
   const cwd = context.cwd ?? process.cwd();
   const appDir = options.get('--app-dir');
@@ -78,7 +85,7 @@ export async function runShow(args: CommandInput, context: ShowContext = {}): Pr
       : printUrl ? url : `Opened browser: ${url}`, options.has('--json'), context.out ?? console.log);
   } catch (error) {
     if (!(error instanceof Error)) throw error;
-    error.message = error.message.replace(/\nHint: use query_\w+[^\n]*/g, '\nCheck the handle and instance directory; use aside show to open the selector.');
+    error.message = error.message.replace(/\nHint: query \w+[^\n]*/g, '\nCheck the handle and instance directory; use aside show to open the selector.');
     throw error;
   } finally {
     client.close();

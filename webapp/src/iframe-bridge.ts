@@ -15,6 +15,7 @@ interface Connection {
   src: string;
   used: boolean;
   revoked: boolean;
+  suspended: boolean;
   epoch: number;
   loaded: boolean;
   port?: MessagePort;
@@ -29,9 +30,14 @@ export function createIframeQueryBridge(host: Window = window) {
   const prepared = new WeakMap<HTMLIFrameElement, Connection>();
   let epoch = 0;
   let inFlight = 0;
-  const current = (entry: Connection) => !entry.revoked && entry.epoch === epoch && entry.context.isCurrent() && entry.frame.isConnected
-    && !entry.frame.closest('[hidden], [inert]') && entry.frame.src === entry.src
+  const valid = (entry: Connection) => !entry.revoked && entry.epoch === epoch && entry.context.isCurrent() && entry.frame.isConnected
+    && entry.frame.src === entry.src
     && entry.frame.getAttribute('sandbox') === 'allow-scripts' && !entry.frame.hasAttribute('srcdoc');
+  // Only the host can retain a grant during a temporary panel contraction.
+  // Suspension never permits execution: visibility is checked independently
+  // when accepting a request and again before delivering its result.
+  const retained = (entry: Connection) => valid(entry) && (entry.suspended || !entry.frame.closest('[hidden], [inert]'));
+  const current = (entry: Connection) => valid(entry) && !entry.suspended && !entry.frame.closest('[hidden], [inert]');
   const send = (entry: Connection, message: HostMessage) => { try { entry.port?.postMessage(message); } catch { /* The document may have gone away. */ } };
   const revoke = (entry: Connection) => {
     entry.revoked = true;
@@ -42,7 +48,7 @@ export function createIframeQueryBridge(host: Window = window) {
     entry.pending.clear();
   };
   const receive = (entry: Connection, value: unknown) => {
-    if (!current(entry)) { revoke(entry); return; }
+    if (!retained(entry)) { revoke(entry); return; }
     if (!value || typeof value !== 'object' || Array.isArray(value)) { revoke(entry); return; }
     const message = value as Record<string, unknown>;
     if (message.type === 'close') { revoke(entry); return; }
@@ -51,6 +57,9 @@ export function createIframeQueryBridge(host: Window = window) {
     if (message.type === 'cancel') { entry.pending.get(id as number)?.abort(); return; }
     if (message.type !== 'query' || Object.keys(message).some(key => !['type', 'id', 'request'].includes(key))
       || entry.pending.has(id as number)) { revoke(entry); return; }
+    if (entry.suspended) {
+      send(entry, { type: 'error', id: id as number, message: 'The webpage is not visible. Reopen the preview to run queries.' }); return;
+    }
     try {
       if (!validWebQueryRequest(message.request) || webQueryBytes(message.request) > WEB_QUERY_MAX_BYTES) {
         send(entry, { type: 'error', id: id as number, message: 'Invalid or oversized GraphQL request.' }); return;
@@ -70,14 +79,17 @@ export function createIframeQueryBridge(host: Window = window) {
       if (connections.get(entry.frame) === entry && current(entry) && !controller.signal.aborted) {
         send(entry, { type: 'error', id: id as number, message: error instanceof Error ? error.message : 'GraphQL request failed.' });
       }
-    }).finally(() => { inFlight--; entry.pending.delete(id as number); });
+    }).finally(() => {
+      inFlight--;
+      if (entry.pending.get(id as number) === controller) entry.pending.delete(id as number);
+    });
   };
   const connect = (event: MessageEvent) => {
     if (event.data?.type !== IFRAME_CONNECT) return;
     const port = event.ports[0];
     const frame = event.source && Array.from(host.document.querySelectorAll('iframe')).find(value => value.contentWindow === event.source);
     const entry = frame && prepared.get(frame);
-    if (!port || event.ports.length !== 1 || !entry || entry.used || !current(entry)
+    if (!port || event.ports.length !== 1 || !entry || entry.used || !retained(entry)
       || event.origin !== 'null' || event.data.version !== 1 || event.data.token !== entry.token
       || Object.keys(event.data).some(key => !['type', 'version', 'token'].includes(key))) {
       for (const rejected of event.ports) rejected.close(); return;
@@ -96,7 +108,7 @@ export function createIframeQueryBridge(host: Window = window) {
       if (entry && !entry.revoked && entry.epoch === epoch) connections.set(frame, entry);
     }
     for (const entry of connections.values()) {
-      if (!current(entry)) revoke(entry);
+      if (!retained(entry)) revoke(entry);
     }
   });
   observer.observe(host.document, { childList: true, subtree: true, attributes: true, attributeFilter: ['src', 'srcdoc', 'sandbox', 'hidden', 'inert'] });
@@ -114,10 +126,28 @@ export function createIframeQueryBridge(host: Window = window) {
       const token = crypto.randomUUID();
       url.hash = `${url.hash.slice(1)}${url.hash ? '&' : ''}${IFRAME_TOKEN}=${token}`;
       frame.src = url.href;
-      const entry: Connection = { frame, context, token, src: frame.src, used: false, revoked: false, epoch, loaded: false,
+      const entry: Connection = { frame, context, token, src: frame.src, used: false, revoked: false, suspended: false, epoch, loaded: false,
         pending: new Map(), load: () => { if (entry.loaded) revoke(entry); else entry.loaded = true; } };
       frame.addEventListener('load', entry.load); prepared.set(frame, entry);
       if (frame.isConnected) connections.set(frame, entry);
+      return true;
+    },
+    // Preserve the browsing context while its containing panel is temporarily
+    // hidden. Navigation/removal, source/sandbox changes and instance changes
+    // still revoke it. Resume uses the same private channel and never rewrites
+    // the iframe's URL or reloads its document.
+    setSuspended(frame: HTMLIFrameElement, suspended: boolean): boolean {
+      const entry = prepared.get(frame);
+      if (!entry || entry.revoked || entry.epoch !== epoch) return false;
+      if (entry.suspended === suspended) return true;
+      entry.suspended = suspended;
+      if (suspended) {
+        for (const [id, controller] of entry.pending) {
+          controller.abort();
+          send(entry, { type: 'error', id, message: 'The webpage is not visible. Reopen the preview to run queries.' });
+        }
+        entry.pending.clear();
+      }
       return true;
     },
     clear() { epoch++; for (const entry of connections.values()) revoke(entry); },

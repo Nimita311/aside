@@ -87,7 +87,11 @@ export function renderPills(): HTMLElement {
   }, noop);
   row(identities, 'Instance', 'reference-instance', take(instance, '.entity-title'));
   row(identities, 'Date', 'reference-date', inline('#date/2026-10-19', '.inline-tag-date'),
-    inline('#date/2026-10-19T14:00', '.inline-tag-date'));
+    inline('#date/2026-10-19/2026-10-23', '.inline-tag-date'), inline('#date/2026-10-19T14:00', '.inline-tag-date'));
+  row(identities, 'Location', 'reference-location',
+    inline('#location/?geo=51.5034,-0.1276', '.inline-tag-location'),
+    inline('[Downing Street](#location/?geo=51.5034,-0.1276&postal=10%20Downing%20Street/London/)', '.inline-tag-location'),
+    inline('#location/?postal=London/United%20Kingdom/', '.inline-tag-location'));
 
   const lifecycle = group(root, 'Lifecycle', true);
   for (const ended of [false, true]) {
@@ -128,9 +132,10 @@ export function renderPills(): HTMLElement {
   }
 
   const base = { name: 'Launch review', created: CREATED };
-  row(extras, 'Recurrence template', 'recurrence-template', compact('action', options({ resolveName: () => 'Template' })), actionPills({ ...base,
-    recurrence: [{ dtstart: '2026-10-19T09:00', rrule: 'FREQ=DAILY' }],
-  }));
+  const recurring = { ...base, recurrence: [{ dtstart: '2026-10-19T09:00', rrule: 'FREQ=DAILY' }] };
+  const template = compact('action', options({ resolveName: () => 'Template' }));
+  applyRefStatus(template, 'action', ACTION, options({ refMarks: () => actionMarks(recurring, new Date(NOW)) }));
+  row(extras, 'Recurrence template', 'recurrence-template', template, actionPills(recurring));
   row(extras, 'Projected occurrence', 'recurrence-projected', compact('action', options({ resolveName: () => 'Occurrence' }), '~2026-10-12-review@2026-10-19T16%3A00%3A00Z'),
     actionPills({ ...base, scheduled: '2026-10-19T09:00', calendar: 'Studio' }, true));
   row(extras, 'Scheduled without a calendar', 'calendar-exception', compact('action', options({ resolveName: () => 'No calendar' })), actionPills({ ...base, scheduled: '2026-10-19T14:00' }));

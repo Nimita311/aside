@@ -3,11 +3,13 @@ import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync 
 import { join } from 'node:path';
 import { readManifestResult } from '../src/core/instance.js';
 import { validate } from '../src/core/validator.js';
-import { Store } from '../src/mcp/store.js';
+import { Store } from '../src/source/store.js';
 import { InstanceHost } from '../src/daemon/host.js';
 import { CalClient } from '../src/mcp/calendar/client.js';
-import { CalSync, storeAction } from '../src/mcp/calendar/sync.js';
-import { savedEvent } from './calendar-fixture.js';
+import {storeAction} from '../src/mcp/calendar/sync.js';
+import {CalendarSyncFixture as CalSync} from './calendar-fixture.js';
+import { calendarMutationFixture, savedEvent } from './calendar-fixture.js';
+import {hostGraphQL} from './support/graphql-host.js';
 
 const cleanup: Array<() => void> = [];
 afterEach(() => cleanup.splice(0).reverse().forEach(f => f()));
@@ -27,7 +29,7 @@ function fixture() {
   const get = vi.spyOn(cal, 'getEvents').mockResolvedValue({ events: [] });
   const upsert = vi.spyOn(cal, 'upsertEvent').mockImplementation(async args => { get.mockResolvedValue({ events: [savedEvent(args, 'retained-event')] }); return { eventId: 'retained-event' }; });
   const remove = vi.spyOn(cal, 'deleteEvent').mockResolvedValue({ deleted: true });
-  const sync = new CalSync(cal, '', store); cleanup.push(() => sync.dispose());
+  const sync = new CalSync(cal, '', store, undefined, undefined, calendarMutationFixture(store)); cleanup.push(() => sync.dispose());
   return { root, manifest, original, id, store, cal, sync, calls: [auth, calendars, list, get, upsert, remove], upsert, action: () => storeAction(store, id)! };
 }
 
@@ -38,6 +40,8 @@ describe('manifest read failures', () => {
     const f = fixture(); rmSync(f.manifest);
     expect(readManifestResult(f.root)).toEqual({ value: { id: '' }, issues: [] });
     expect(manifestCheck(f.root)).toMatchObject({ passed: false, details: ['aside.md not found'] });
+    expect(f.sync.status(f.id)).toBeUndefined();
+    f.store.rebuild();
     expect(f.sync.status(f.id)).toMatchObject({ status: 'disabled', reason: 'instance has no id' });
   });
 
@@ -55,16 +59,17 @@ describe('manifest read failures', () => {
 
   it.skipIf(process.platform === 'win32' || process.getuid?.() === 0)('exposes real EACCES through Store, host, validation and sync without helper calls', async () => {
     const f = fixture();
-    // A cached Store must not allow use after the manifest loses access.
+    // Reads retain loaded state; explicit lifecycle refresh publishes read errors.
     vi.mocked(f.cal.available).mockReturnValue(false);
-    const host = new InstanceHost(f.cal); cleanup.push(() => host.close()); host.load(f.root);
+    const host = new InstanceHost(f.cal); cleanup.push(() => host.close()); const loaded = host.load(f.root);
     vi.mocked(f.cal.available).mockReturnValue(true);
     chmodSync(f.manifest, 0);
     try {
       expect(() => readFileSync(f.manifest)).toThrow(/EACCES/);
       assertReadFailure(f, 'EACCES');
-      expect(() => host.load(f.root)).toThrow(/EACCES.*preserving its existing id/);
-      expect(() => host.issues(f.root)).toThrow(/EACCES/);
+      expect(host.load(f.root)).toBe(loaded);
+      await host.data(f.root, true);
+      expect(host.issues(f.root)).toContainEqual(expect.objectContaining({code: 'read_error', message: expect.stringContaining('EACCES')}));
       await f.sync.syncActions([f.action()], [f.action()]); await f.sync.reconcile([f.action()]);
       for (const call of f.calls) expect(call).not.toHaveBeenCalled();
     } finally { chmodSync(f.manifest, 0o600); }
@@ -81,10 +86,12 @@ describe('manifest read failures', () => {
     for (const call of f.calls) call.mockClear();
     chmodSync(f.manifest, 0);
     try {
+      f.store.rebuild();
       await f.sync.syncActions([f.action()], [f.action()]); await f.sync.reconcile([f.action()]);
       expect(f.sync.status(f.id)?.reason).toContain('EACCES');
       for (const call of f.calls) expect(call).not.toHaveBeenCalled();
     } finally { chmodSync(f.manifest, 0o600); }
+    f.store.rebuild();
     await f.sync.syncActions([], [f.action()]);
     expect(f.upsert).toHaveBeenCalledOnce();
     expect(f.upsert.mock.calls[0][0]).toMatchObject({ eventId: 'retained-event', marker: `aside://retained-id/action/${f.id}` });
@@ -102,8 +109,11 @@ describe('manifest read failures', () => {
     try {
       await f.sync.syncActions([f.action()], [f.action()]);
       expect(f.upsert).toHaveBeenCalledOnce();
+      expect(f.sync.status(f.id)).toMatchObject({status: 'pending', reason: expect.stringContaining('EACCES')});
+      f.store.rebuild();
       expect(f.sync.status(f.id)).toMatchObject({ status: 'disabled', reason: expect.stringContaining('EACCES') });
     } finally { chmodSync(f.manifest, 0o600); }
+    f.store.rebuild();
     await f.sync.syncActions([], [f.action()]);
     expect(f.upsert).toHaveBeenCalledOnce(); expect(get).toHaveBeenCalledTimes(2);
     expect(get.mock.calls[1][0]).toEqual({ eventIds: ['retained-event'] });
@@ -111,67 +121,72 @@ describe('manifest read failures', () => {
     expect(readFileSync(f.manifest, 'utf8')).toBe(f.original);
   });
 
-  it.each(['capture', 'update_action', 'update_entry'] as const)('%s rejects a cached instance with an unreadable manifest before writing records', async method => {
+  it.each(['capture', 'updateAction', 'updateEntry'] as const)('%s rejects a cached instance with an unreadable manifest before writing records', async method => {
     const f = fixture(), h = await receiptHost(f, method);
     const actions = h.loaded.store.getActionIds();
     const entries = h.loaded.store.getEntries().map(entry => entry.meta.created);
     const originalAction = readFileSync(join(f.root, 'actions', '2026', `${f.id}.md`), 'utf8');
     rmSync(f.manifest); mkdirSync(f.manifest);
-    await expect(h.mutate(true)).rejects.toThrow(/EISDIR.*preserving its existing id/);
+    const refused = await h.mutate();
+    expect(refused.errors?.[0].message).toMatch(/EISDIR.*preserving its existing id/); expect(refused.extensions.mutations).toEqual([]);
     expect(h.loaded.store.getActionIds()).toEqual(actions);
     expect(h.loaded.store.getEntries().map(entry => entry.meta.created)).toEqual(entries);
     expect(readFileSync(join(f.root, 'actions', '2026', `${f.id}.md`), 'utf8')).toBe(originalAction);
     for (const call of f.calls) expect(call).not.toHaveBeenCalled();
     rmSync(f.manifest, { recursive: true }); writeFileSync(f.manifest, f.original);
-    const result = await h.mutate(true);
-    expect(result.text).toContain(method === 'capture' ? 'actions_created:' : 'updated:');
+    const result = await h.mutate();
+    expect(result.errors).toBeUndefined();
+    expect(result.extensions.mutations[0].changes).toContainEqual(expect.objectContaining(method === 'updateAction' ? { kind: 'action', id: f.id, effect: 'UPDATED' } : { kind: 'action', effect: 'CREATED' }));
     expect(readFileSync(f.manifest, 'utf8')).toBe(f.original);
   });
 
   it.skipIf(process.platform === 'win32' || process.getuid?.() === 0)('rejects an EACCES mutation and resumes with the original identity after repair', async () => {
-    const f = fixture(), h = await receiptHost(f, 'update_action'); chmodSync(f.manifest, 0);
+    const f = fixture(), h = await receiptHost(f, 'updateAction'); chmodSync(f.manifest, 0);
     try {
-      await expect(h.mutate(true)).rejects.toThrow(/EACCES.*preserving its existing id/);
+      const refused = await h.mutate();
+      expect(refused.errors?.[0].message).toMatch(/EACCES.*preserving its existing id/); expect(refused.extensions.mutations).toEqual([]);
       for (const call of f.calls) expect(call).not.toHaveBeenCalled();
     } finally { chmodSync(f.manifest, 0o600); }
-    expect((await h.mutate(true)).text).toContain('updated:');
+    expect((await h.mutate()).data.updateAction.action.name).toBe('Receipt action');
     await h.host.flush();
     expect(f.upsert.mock.calls[0][0].marker).toBe(`aside://retained-id/action/${f.id}`);
     expect(readFileSync(f.manifest, 'utf8')).toBe(f.original);
   });
 
   it('does not repeat a missing-ID hint after the live manifest is repaired ahead of its Store snapshot', async () => {
-    const f = fixture(), h = await receiptHost(f, 'update_action');
+    const f = fixture(), h = await receiptHost(f, 'updateAction');
     rmSync(f.manifest); mkdirSync(f.manifest); h.loaded.store.rebuild(); expect(h.loaded.store.getManifest().id).toBe('');
     rmSync(f.manifest, { recursive: true }); writeFileSync(f.manifest, f.original);
-    const result = await h.mutate(false);
-    expect(result.text).toContain('updated:'); expect(result.text).not.toContain('has no `id`'); expect(result.text).not.toContain('Add an `id`');
+    const result = await h.mutate();
+    expect(result.data.updateAction.action.name).toBe('Receipt action'); expect(JSON.stringify(result)).not.toContain('has no');
     await h.host.flush(); expect(h.loaded.sync.status(f.id)?.status).toBe('synced');
     expect(f.upsert.mock.calls[0][0].marker).toBe(`aside://retained-id/action/${f.id}`);
   });
 
   it('retains missing-ID guidance when the readable manifest actually has no identity', async () => {
-    const f = fixture(), h = await receiptHost(f, 'update_action'); writeFileSync(f.manifest, '---\nname: Legacy\n---\n');
-    const result = await h.mutate(true);
-    expect(result.text).toContain('has no `id`'); expect(result.text).toContain('Add an `id`'); expect(result.text).toContain('reason: "instance has no id"');
+    const f = fixture(), h = await receiptHost(f, 'updateAction'); writeFileSync(f.manifest, '---\nname: Unnamed\n---\n');
+    await h.host.data(f.root, true);
+    const result = await h.mutate();
+    expect(result.data.updateAction.error).toContain(`Calendar sync for ${JSON.stringify(f.id)} is disabled: instance has no id`);
+    const sync = JSON.parse((await hostGraphQL(h.host, f.root, 'query', { document: '{ activeInstance { calendarSync { issues { id reason } } } }' })).text);
+    expect(sync.data.activeInstance.calendarSync.issues).toContainEqual({ id: 'instance', reason: 'aside.md has no `id` — calendar sync is disabled' });
     for (const call of f.calls) expect(call).not.toHaveBeenCalled();
   });
 });
 
-async function receiptHost(f: ReturnType<typeof fixture>, method: 'capture' | 'update_action' | 'update_entry') {
+async function receiptHost(f: ReturnType<typeof fixture>, method: 'capture' | 'updateAction' | 'updateEntry') {
   vi.mocked(f.cal.available).mockReturnValue(false);
   const host = new InstanceHost(f.cal); cleanup.push(() => host.close()); const loaded = host.load(f.root);
+  const run = async (document: string, variables: Record<string, unknown>) => JSON.parse((await hostGraphQL(host, f.root, 'mutate', { document, variables })).text);
+  const capture = 'mutation($input: CaptureInput!) { capture(input: $input) { error entry { id } } }';
   let entryId = '';
-  if (method === 'update_entry') {
-    const seed = await host.tool(f.root, 'capture', { content: 'Seed content', description: 'Seed summary' });
-    entryId = seed.text.match(/^entry: (.+)$/m)![1];
-  }
+  if (method === 'updateEntry') entryId = (await run(capture, { input: { content: 'Seed content', description: 'Seed summary' } })).data.capture.entry.id;
   await host.flush(); vi.mocked(f.cal.available).mockReturnValue(true);
-  const action = { name: 'Receipt action', description: 'Receipt summary', scheduled: '2026-05-15T11:00', calendar: 'Work' };
-  const args = method === 'update_action' ? { id: f.id, name: action.name }
-    : method === 'capture' ? { content: 'Saved content', description: 'Saved summary', actions: [action] }
-    : { id: entryId, content: 'Revised content', actions: [action] };
-  return { host, loaded, mutate: (issues: boolean) => host.tool(f.root, method, args, issues) };
+  const action = { create: { name: 'Receipt action', description: 'Receipt summary', scheduled: '2026-05-15T11:00', calendar: 'Work' } };
+  const [document, variables] = method === 'updateAction' ? ['mutation($id: ID!, $input: UpdateActionInput!) { updateAction(id: $id, input: $input) { error action { id name } } }', { id: f.id, input: { name: action.create.name } }]
+    : method === 'capture' ? [capture, { input: { content: 'Saved content', description: 'Saved summary', actions: [action] } }]
+    : ['mutation($id: ID!, $input: UpdateEntryInput!) { updateEntry(id: $id, input: $input) { error entry { id } } }', { id: entryId, input: { content: 'Revised content', actions: { add: [action] } } }] as const;
+  return { host, loaded, mutate: () => run(document, variables) };
 }
 
 function assertReadFailure(f: ReturnType<typeof fixture>, code: string): void {

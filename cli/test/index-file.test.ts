@@ -3,7 +3,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { parseIndex } from '../src/core/parser.js';
-import { prependIndex, updateIndexDescription } from '../src/mcp/tools/index-file.js';
+import { prependIndex, updateIndexDescription } from '../src/source/index-file.js';
 
 describe('index description edits', () => {
   let dir: string;

@@ -18,7 +18,7 @@ describe('crash-safe file permissions', () => {
         contents: `
           import fs from 'node:fs';
           import { join } from 'node:path';
-          import { writeFileCrashSafe } from ${JSON.stringify(join(__dirname, '../src/mcp/tools/index-file.ts'))};
+          import { writeFileCrashSafe } from ${JSON.stringify(join(__dirname, '../src/storage/atomic-file.ts'))};
           const { directory, mask, mode, failAt } = JSON.parse(process.argv[2]);
           const file = join(directory, 'record.md');
           if (mode !== undefined) {

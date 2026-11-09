@@ -1,15 +1,16 @@
-import { eventTimes } from './calendar-fixture.js';
+import { calendarMutationFixture, eventTimes } from './calendar-fixture.js';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { isSchedulingDate, parseDurationMinutes, schedulingIssues } from '../src/core/scheduling.js';
 import { validate } from '../src/core/validator.js';
-import { Store } from '../src/mcp/store.js';
+import { Store } from '../src/source/store.js';
 import { handleCapture } from '../src/mcp/tools/capture.js';
 import { handleUpdateAction, handleUpdateEntry } from '../src/mcp/tools/update.js';
 import { CalClient } from '../src/mcp/calendar/client.js';
 import { buildMarker } from '../src/mcp/calendar/markers.js';
-import { CalSync, storeAction } from '../src/mcp/calendar/sync.js';
+import {storeAction} from '../src/mcp/calendar/sync.js';
+import {CalendarSyncFixture as CalSync} from './calendar-fixture.js';
 
 const dirs: string[] = [], syncers: CalSync[] = [];
 afterEach(() => { for (const s of syncers.splice(0)) s.dispose(); for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true }); vi.restoreAllMocks(); });
@@ -27,7 +28,7 @@ function calendar(store: Store) {
   vi.spyOn(cal, 'listCalendars').mockResolvedValue({ calendars: [{ id: 'work', name: 'Work', account: 'iCloud', writable: true, type: 'calDAV' }] });
   vi.spyOn(cal, 'listEvents').mockResolvedValue({ events: [] }); vi.spyOn(cal, 'getEvents').mockResolvedValue({ events: [] });
   const upsert = vi.spyOn(cal, 'upsertEvent').mockResolvedValue({ eventId: 'event' }); const remove = vi.spyOn(cal, 'deleteEvent').mockResolvedValue({ deleted: true });
-  const sync = new CalSync(cal, 'work', store); syncers.push(sync); return { sync, upsert, remove };
+  const sync = new CalSync(cal, 'work', store, undefined, undefined, calendarMutationFixture(store)); syncers.push(sync); return { sync, upsert, remove };
 }
 describe('scheduling contract', () => {
   it.each(['2026-02-29', '2026-04-31', '2026-00-10', '0000-01-01', '2026-01-01T24:00', '2026-01-01T12:60', '2026-01-01T12:30:00', '2026-01-01T12:30Z', 'tomorrow'])('rejects non-dates or unsupported clock formats: %s', value => expect(isSchedulingDate(value)).toBe(false));

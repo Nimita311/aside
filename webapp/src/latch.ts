@@ -1,6 +1,7 @@
 import type { DateTimePreferences } from './preferences';
 import { formatDate } from './date-display';
-import { entityIcon, scrubLatchDate } from './render';
+import { scrubLatchDate } from './render';
+import { ICON_SIZE, iconMarkup } from './entity-icons';
 import { toDateStr } from '../lib/types';
 
 // A zero-height sticky row at the top of the flow: the date readout in the
@@ -30,11 +31,6 @@ export const REDUCED_MOTION = window.matchMedia('(prefers-reduced-motion: reduce
 // updateLatchNow.
 let latchSuppressed = false;
 
-// The readout's offset from the flow top, measured once and pinned so a re-render
-// that swaps in a first entry with a differently-shaped first line doesn't hop
-// the readout a few pixels. Reset on resize, where the layout genuinely reflows.
-let readoutPad: number | null = null;
-
 // The flow's markers in document order, collected as they render — the
 // per-scroll-frame latch update reads this instead of re-querying the whole
 // flow subtree every frame.
@@ -43,10 +39,6 @@ const latchPreferences = new WeakMap<HTMLElement, () => DateTimePreferences>();
 
 export function suppressLatch(on: boolean): void {
   latchSuppressed = on;
-}
-
-export function resetReadoutPad(): void {
-  readoutPad = null;
 }
 
 export function resetLatchMarkers(): void {
@@ -68,7 +60,7 @@ export function currentFlowDate(): string {
 // tracks the column across layouts. Recreated on every flow render (the flow
 // is cleared wholesale). `onChipActivate` handles a click or keyboard
 // activation of the chip — it doubles as the jump-to-date trigger.
-export function mountLatch(flow: HTMLElement, onChipActivate: () => void, preferences: () => DateTimePreferences = () => ({ timeFormat: 'locale' })): void {
+export function mountLatch(flow: HTMLElement, onChipActivate?: () => void, preferences: () => DateTimePreferences = () => ({ timeFormat: 'locale' })): void {
   const latch = document.createElement('div');
   latch.className = 'date-latch';
   latch.id = 'date-latch';
@@ -76,19 +68,21 @@ export function mountLatch(flow: HTMLElement, onChipActivate: () => void, prefer
   latch.hidden = true;
   const chip = latch.appendChild(document.createElement('div'));
   chip.className = 'date-latch-chip';
-  chip.setAttribute('role', 'button');
-  chip.setAttribute('tabindex', '0');
-  chip.setAttribute('aria-label', 'Jump to date');
-  chip.setAttribute('aria-expanded', 'false');
-  chip.title = 'Jump to date';
-  chip.addEventListener('click', onChipActivate);
-  chip.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onChipActivate(); }
-  });
-  const icon = chip.appendChild(document.createElement('span'));
-  icon.className = 'latch-calendar-icon';
-  icon.setAttribute('aria-hidden', 'true');
-  icon.innerHTML = entityIcon('action');
+  chip.setAttribute('aria-label', onChipActivate ? 'Jump to date' : 'Timeline date');
+  if (onChipActivate) {
+    chip.setAttribute('role', 'button');
+    chip.setAttribute('tabindex', '0');
+    chip.setAttribute('aria-expanded', 'false');
+    chip.title = 'Jump to date';
+    chip.addEventListener('click', onChipActivate);
+    chip.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onChipActivate(); }
+    });
+    const icon = chip.appendChild(document.createElement('span'));
+    icon.className = 'latch-calendar-icon';
+    icon.setAttribute('aria-hidden', 'true');
+    icon.innerHTML = iconMarkup('date', 'day', ICON_SIZE.row);
+  }
   chip.appendChild(document.createElement('div')).className = 'latch-date-row';
   flow.appendChild(latch);
 }
@@ -111,24 +105,15 @@ export function updateLatchNow(): void {
   if (markers.length === 0) {
     latch.hidden = true;
     delete latch.dataset.date;
-    chip.setAttribute('aria-label', 'Jump to date');
-    chip.title = 'Jump to date';
+    chip.setAttribute('aria-label', chip.getAttribute('role') === 'button' ? 'Jump to date' : 'Timeline date');
+    if (chip.getAttribute('role') === 'button') chip.title = 'Jump to date';
     chip.querySelectorAll<HTMLElement>('.latch-date-row')
       .forEach((row) => { row.innerHTML = ''; });
     return;
   }
-  // The readout row rests on the flow's first margin line — the first marker's
-  // offset from the flow top (scroll-independent, since they move together). It's
-  // measured once and pinned (readoutPad), not re-measured each render: a
-  // re-render can swap in a first entry whose first line sits at a slightly
-  // different baseline (a plain-text first line vs a tag row), and re-measuring
-  // would hop the readout a pixel or two. Reset only on resize. The padding
-  // doubles as backdrop up to the pane edge.
-  const flow = document.getElementById('flow');
-  if (!flow) return;
-  if (readoutPad === null) readoutPad = markers[0].getBoundingClientRect().top - flow.getBoundingClientRect().top;
-  const pad = readoutPad;
-  if (dateRow.style.paddingTop !== `${pad}px`) dateRow.style.paddingTop = `${pad}px`;
+  // CSS owns the durable metadata line: entry padding plus the font-derived
+  // pill/timestamp offset. Live entry content never determines this position.
+  const pad = parseFloat(getComputedStyle(dateRow).paddingTop) || 0;
   const readoutTop = dateRow.getBoundingClientRect().top + pad;
   // The latched date flips when its marker reaches the readout row itself —
   // by then its riding value has fully arrived, so the swap is continuous.
@@ -153,9 +138,9 @@ export function updateLatchNow(): void {
 
   const date = markers[current].dataset.date!;
   const prefs = latchPreferences.get(latch)?.() ?? { timeFormat: 'locale' as const };
-  const label = `Jump to date: ${formatDate(date, prefs.dateFormat)}`;
+  const label = `${chip.getAttribute('role') === 'button' ? 'Jump to date' : 'Timeline date'}: ${formatDate(date, prefs.dateFormat)}`;
   if (chip.getAttribute('aria-label') !== label) chip.setAttribute('aria-label', label);
-  if (chip.title !== label) chip.title = label;
+  if (chip.getAttribute('role') === 'button' && chip.title !== label) chip.title = label;
   latch.dataset.date = date;
   const next = markers[current + 1];
   let ghostY = Infinity;

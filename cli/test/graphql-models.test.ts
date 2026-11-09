@@ -1,21 +1,28 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { mkdtempSync, readFileSync, realpathSync, rmSync } from 'node:fs';
+import {lifecycleOperationsFixture} from './lifecycle-operations-fixture.js';
+import { mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { buildSchema, getIntrospectionQuery, printSchema } from 'graphql';
-import { init } from '../src/commands/init.js';
-import { Store } from '../src/mcp/store.js';
-import { executeGraphQL, readGraphQLSchema } from '../src/graphql/schema.js';
+import { init } from '../src/source/bootstrap.js';
+import { Store } from '../src/source/store.js';
+import {readGraphQLSchema} from '../src/graphql/schema.js';
+import {executeGraphQLWithOwner as executeGraphQL} from './graphql-owner-fixture.js';
 import { catalogFor, type ModelOption } from '../src/automation/models.js';
-import { InstanceHost, READ_TOOLS } from '../src/daemon/host.js';
+import { InstanceHost } from '../src/daemon/host.js';
 import { CalClient } from '../src/mcp/calendar/client.js';
 import { InstanceRegistry } from '../src/mcp/instance-registry.js';
 import { InstanceSession } from '../src/mcp/instance-session.js';
 import { registerGraphQLResources } from '../src/mcp/resources.js';
 import { parseManifest } from '../src/core/parser.js';
 import { createArtifact } from '../src/mcp/tools/artifact.js';
+import type {ExecutionContextSnapshot} from '../src/core/execution-context.js';
+import {lifecycleMetadataFixture} from './lifecycle-metadata-fixture.js';
+import {sourceLifecycleFixture} from './source-lifecycle-fixture.js';
+import {stringify} from 'yaml';
+import {hostGraphQL} from './support/graphql-host.js';
 
 vi.mock('../src/automation/models.js', async importOriginal => ({...await importOriginal<typeof import('../src/automation/models.js')>(), catalogFor: vi.fn()}));
 vi.mock('graphql', async importOriginal => {
@@ -26,6 +33,7 @@ vi.mock('graphql', async importOriginal => {
 describe('instance model catalog in GraphQL', () => {
   let root: string;
   let store: Store;
+  let sourceOwner: ReturnType<typeof sourceLifecycleFixture> | undefined;
   let revision: number;
   let models: ModelOption[];
   let diagnostics: string[];
@@ -38,6 +46,13 @@ describe('instance model catalog in GraphQL', () => {
 
   function seedPrompt(targetStore: Store): string {
     return createArtifact(targetStore, {name: 'Instructions', description: 'Instructions', body: 'Prepare this project digest.'}, new Date(2026, 9, 8, 12)).id;
+  }
+
+  function loadAutomationFixture(automations: Record<string, unknown>): void {
+    const instance = store.getInstance()!;
+    writeFileSync(join(root, 'aside.md'), `---\n${stringify({...instance.manifest, automations})}---\n${instance.body}\n`);
+    sourceOwner ??= sourceLifecycleFixture(store);
+    sourceOwner.refresh(store);
   }
 
   function cachedCatalog() {
@@ -55,13 +70,16 @@ describe('instance model catalog in GraphQL', () => {
   beforeEach(() => {
     root = realpathSync(mkdtempSync('/tmp/aside-graphql-models-'));
     init(root, {name: 'Catalog fixture', description: 'Model options'});
+    writeFileSync(join(root, '.aside'), JSON.stringify({execution: {models: {digest: {command: process.execPath}}}}));
     store = new Store(root);
+    expect(store.getExecutionContext()).toEqual({config: {models: {digest: {command: process.execPath}}}, cwd: root,
+      revision: expect.stringMatching(/^[0-9a-f]{64}$/)});
     promptArtifactId = seedPrompt(store);
     revision = 0; models = [builtin, external]; diagnostics = [];
     mutate.mockClear(); vi.mocked(printSchema).mockClear();
     vi.mocked(catalogFor).mockReset().mockImplementation(async () => ({models, diagnostics, revision: String(revision)}));
   });
-  afterEach(() => { store.close(); vi.restoreAllMocks(); rmSync(root, {recursive: true, force: true}); });
+  afterEach(() => { sourceOwner?.close(); sourceOwner = undefined; store.close(); vi.restoreAllMocks(); rmSync(root, {recursive: true, force: true}); });
 
   it('keeps the full schema and model input types static without discovering vendors', async () => {
     const first = await graph(getIntrospectionQuery({oneOf: true}));
@@ -81,7 +99,7 @@ describe('instance model catalog in GraphQL', () => {
     expect((result.data?.activeInstance as any).execution.models).toEqual([
       {...builtin, reason: null}, {...external, engine: null, model: null, reason: null},
     ]);
-    expect(catalogFor).toHaveBeenCalledWith(root, {refresh: false, signal: expect.any(AbortSignal)});
+    expect(catalogFor).toHaveBeenCalledWith(root, {refresh: false, signal: expect.any(AbortSignal), executionContext: store.getExecutionContext()});
   });
 
   it('uses cached choices until explicit refresh or local execution revision changes', async () => {
@@ -126,14 +144,16 @@ describe('instance model catalog in GraphQL', () => {
     const controller = new AbortController();
     const result = await executeGraphQL(store, 'query', {document: '{ activeInstance { execution { models { name } } } }'}, {signal: controller.signal});
     expect(result.errors?.[0]).toMatchObject({message: expect.stringContaining('Execution config unavailable')});
-    expect(catalogFor).toHaveBeenCalledWith(root, {refresh: false, signal: expect.any(AbortSignal)});
+    expect(catalogFor).toHaveBeenCalledWith(root, {refresh: false, signal: expect.any(AbortSignal), executionContext: store.getExecutionContext()});
     let started!: () => void;
     const reading = new Promise<void>(resolve => { started = resolve; });
     let release!: () => void;
     const paused = new Promise<void>(resolve => { release = resolve; });
     let downstream: AbortSignal | undefined;
+    let downstreamContext: ExecutionContextSnapshot | undefined;
     vi.mocked(catalogFor).mockImplementation(async (_path, options) => {
       downstream = options?.signal;
+      downstreamContext = options?.executionContext;
       started();
       await paused;
       return {models, diagnostics, revision: String(revision)};
@@ -143,6 +163,8 @@ describe('instance model catalog in GraphQL', () => {
     try {
       expect(downstream).toBeInstanceOf(AbortSignal);
       expect(downstream?.aborted).toBe(false);
+      expect(downstreamContext).toEqual(store.getExecutionContext());
+      expect(downstreamContext).not.toBe(store.getExecutionContext());
       controller.abort();
       expect(downstream?.aborted).toBe(true);
     } finally {
@@ -165,9 +187,13 @@ describe('instance model catalog in GraphQL', () => {
     vi.spyOn(Store.prototype, 'watch').mockImplementation(() => {});
     const target = join(root, 'target');
     init(target, {name: 'Target', description: 'Different model configuration'});
+    writeFileSync(join(target, '.aside'), JSON.stringify({execution: {models: {target_digest: {command: process.execPath}}}}));
     const targetStore = new Store(target);
     let targetPrompt: string;
-    try {targetPrompt = seedPrompt(targetStore);} finally {targetStore.close();}
+    let targetContext: ExecutionContextSnapshot;
+    try {targetPrompt = seedPrompt(targetStore); targetContext = structuredClone(targetStore.getExecutionContext());} finally {targetStore.close();}
+    expect(targetContext!).toEqual({config: {models: {target_digest: {command: process.execPath}}}, cwd: target,
+      revision: expect.stringMatching(/^[0-9a-f]{64}$/)});
     const before = readFileSync(join(target, 'aside.md'), 'utf8');
     const sourceModel: ModelOption = {...external, name: 'source_only'};
     const targetModel: ModelOption = {...external, name: 'target_digest'};
@@ -175,10 +201,12 @@ describe('instance model catalog in GraphQL', () => {
       models: path === target ? [targetModel] : [sourceModel], diagnostics: [], revision: path,
     }));
     const host = new InstanceHost(new CalClient(null));
+    const metadata = lifecycleMetadataFixture(root, target);
     const registry = new InstanceRegistry([root, target]); registry.activate(root);
-    const session = new InstanceSession(registry, {
+    const session = new InstanceSession(registry, lifecycleOperationsFixture({
       knownInstances: async () => [root, target], issues: async path => host.issues(path),
-    }, [], false, true);
+      instanceRecord: metadata.instanceRecord,
+    }), [], false);
     try {
       const result = await host.graphql(session, 'mutation', {
         document: `mutation($target: String!, $choice: String!, $prompt: ID!) {
@@ -199,9 +227,41 @@ describe('instance model catalog in GraphQL', () => {
         expect(result.errors).toBeDefined();
         expect(readFileSync(join(target, 'aside.md'), 'utf8')).toBe(before);
       }
-      expect(catalogFor).toHaveBeenCalledWith(target, {signal: expect.any(AbortSignal)});
+      expect(catalogFor).toHaveBeenCalledWith(target, expect.objectContaining({signal: expect.any(AbortSignal), executionContext: targetContext!}));
       expect(readFileSync(join(root, 'aside.md'), 'utf8')).not.toContain('automations:');
     } finally { await host.close(); }
+  });
+
+  it('revalidates the model catalogue when selecting publishes a newer execution context', async () => {
+    vi.spyOn(Store.prototype, 'watch').mockImplementation(() => {});
+    const target = join(root, 'target');
+    init(target, {name: 'Target', description: 'Changing execution context'});
+    const config = (name: string) => writeFileSync(join(target, '.aside'), JSON.stringify({execution: {models: {[name]: {command: process.execPath}}}}));
+    config('retired');
+    const targetStore = new Store(target);
+    let prompt: string;
+    try {prompt = seedPrompt(targetStore);} finally {targetStore.close();}
+    const host = new InstanceHost(new CalClient(null));
+    host.setKnownPaths(() => [root, target]);
+    const registry = new InstanceRegistry([root, target]); registry.activate(root);
+    const session = new InstanceSession(registry, lifecycleOperationsFixture({
+      knownInstances: async () => [root, target], issues: async path => host.issues(path),
+      instanceRecord: async path => host.metadata(path),
+    }), [], false);
+    config('current');
+    vi.mocked(catalogFor).mockImplementation(async (_path, options) => ({
+      models: Object.keys(options.executionContext.config.models ?? {}).map(name => ({...external, name})),
+      diagnostics: [], revision: options.executionContext.revision,
+    }));
+    try {
+      const result = await host.graphql(session, 'mutation', {document: `mutation($path:String!, $prompt:ID!) {
+        selectInstance(path:$path){instance{path}}
+        updateInstance(input:{automations:{set:[{name:"digest",schedule:{at:"2099-01-01T00:00:00Z"},run:{model:"retired",prompt:{existingId:$prompt}}}]}}){error}
+      }`, variables: {path: target, prompt: prompt!}});
+      expect(result.errors).toEqual([expect.objectContaining({message: expect.stringContaining('retired is not selectable')})]);
+      expect(vi.mocked(catalogFor).mock.calls.map(([, options]) => Object.keys(options.executionContext.config.models ?? {}))).toEqual([['retired'], ['current']]);
+      expect(host.load(target).store.getManifest().automations).toBeUndefined();
+    } finally {await host.close();}
   });
 
   it('uses GraphQL merged root-field order when a fragment repeats an earlier instance selection', async () => {
@@ -209,18 +269,22 @@ describe('instance model catalog in GraphQL', () => {
     const b = join(root, 'b'), c = join(root, 'c');
     init(b, {name: 'B', description: 'First destination'});
     init(c, {name: 'C', description: 'Final destination'});
+    writeFileSync(join(c, '.aside'), JSON.stringify({execution: {models: {model_c: {command: process.execPath}}}}));
     const targetStore = new Store(c);
     let targetPrompt: string;
-    try {targetPrompt = seedPrompt(targetStore);} finally {targetStore.close();}
+    let targetContext: ExecutionContextSnapshot;
+    try {targetPrompt = seedPrompt(targetStore); targetContext = structuredClone(targetStore.getExecutionContext());} finally {targetStore.close();}
     const beforeB = readFileSync(join(b, 'aside.md'), 'utf8');
     vi.mocked(catalogFor).mockImplementation(async path => ({
       models: [{...external, name: path === c ? 'model_c' : 'model_b'}], diagnostics: [], revision: path,
     }));
     const host = new InstanceHost(new CalClient(null));
+    const metadata = lifecycleMetadataFixture(root, b, c);
     const registry = new InstanceRegistry([root, b, c]); registry.activate(root);
-    const session = new InstanceSession(registry, {
+    const session = new InstanceSession(registry, lifecycleOperationsFixture({
       knownInstances: async () => [root, b, c], issues: async path => host.issues(path),
-    }, [], false, true);
+      instanceRecord: metadata.instanceRecord,
+    }), [], false);
     try {
       const result = await host.graphql(session, 'mutation', {
         document: `mutation($b: String!, $c: String!, $prompt: ID!) {
@@ -241,21 +305,26 @@ describe('instance model catalog in GraphQL', () => {
         .toMatchObject({digest: {run: {model: 'model_c'}}});
       expect((result.extensions?.mutations as any[]).map(value => value.operation)).toEqual(['selectInstance', 'selectInstance', 'updateInstance']);
       expect(registry.activeInstance).toBe(c);
+      expect(catalogFor).toHaveBeenCalledWith(c, expect.objectContaining({signal: expect.any(AbortSignal), executionContext: targetContext!}));
       expect(readFileSync(join(b, 'aside.md'), 'utf8')).toBe(beforeB);
       expect(readFileSync(join(c, 'aside.md'), 'utf8')).toContain('model: model_c');
     } finally { await host.close(); }
   });
 
-  it('exposes the same discovery choices to default entity-tool clients', async () => {
+  it('exposes discovery choices and refresh through the real host', async () => {
     vi.spyOn(Store.prototype, 'watch').mockImplementation(() => {});
     diagnostics = ['Named model unavailable'];
     const host = new InstanceHost(new CalClient(null));
     try {
-      const result = await host.tool(root, 'query_models', {refresh: true});
-      expect(JSON.parse(result.text)).toEqual({models, diagnostics});
-      expect(catalogFor).toHaveBeenCalledWith(root, {refresh: true, signal: undefined});
-      expect(READ_TOOLS.has('query_models')).toBe(true);
-      await expect(host.tool(root, 'query_models', {refresh: 'yes'})).rejects.toThrow();
+      host.load(root);
+      const document = 'query($refresh: Boolean!) { activeInstance { execution { models(refresh: $refresh) { name label builtin engine model availability reason } } } }';
+      const result = JSON.parse((await hostGraphQL(host, root, 'query', {document, variables: {refresh: true}})).text);
+      expect(result.errors).toBeUndefined();
+      expect(result.data.activeInstance.execution.models).toEqual(models.map(model => ({engine: null, model: null, reason: null, ...model})));
+      expect(result.extensions.diagnostics).toContainEqual(expect.objectContaining({message: 'Named model unavailable'}));
+      expect(catalogFor).toHaveBeenCalledWith(root, expect.objectContaining({refresh: true, executionContext: host.load(root).store.getExecutionContext()}));
+      const invalid = JSON.parse((await hostGraphQL(host, root, 'query', {document, variables: {refresh: 'yes'}})).text);
+      expect(invalid.errors?.[0].message).toContain('$refresh');
     } finally { await host.close(); }
   });
 
@@ -272,7 +341,7 @@ describe('instance model catalog in GraphQL', () => {
 
   it('accepts a nested artifact variable and validates its value before any write', async () => {
     const document = `mutation($artifactId: ID!) {
-      first: updateInstance(input: {settings: {recurrenceLookaheadDays: 10}}) { error }
+      first: updateInstance(input: {settings: {scheduledEventTitlePrefix: "Plan "}}) { error }
       second: updateInstance(input: {automations: {set: [{name: "digest", schedule: {cron: "0 8 * * *"}, run: {model: "CLAUDE_SONNET", prompt: {existingId: $artifactId}}}]}}) { error }
     }`;
     const result = await graph(document, {artifactId: promptArtifactId}, 'mutation');
@@ -288,7 +357,7 @@ describe('instance model catalog in GraphQL', () => {
   });
 
   it('keeps unavailable saved model selections readable as strings', async () => {
-    store.getInstance()!.manifest.automations = {old: {schedule: {at: '2099-01-01T00:00:00Z'}, run: {model: builtin.name, prompt: '#artifact/2026-10-08-missing-instructions'}}};
+    loadAutomationFixture({old: {schedule: {at: '2099-01-01T00:00:00Z'}, run: {model: builtin.name, prompt: '#artifact/2026-10-08-missing-instructions'}}});
     models = [external]; revision++;
     const read = await graph('{ activeInstance { automations { nodes { name run { model } } } } }');
     expect(read.errors).toBeUndefined();
@@ -308,7 +377,7 @@ describe('instance model catalog in GraphQL', () => {
 
   it('supports script authoring with no available model choices and preserves malformed declarations for repair', async () => {
     models = [];
-    store.getInstance()!.manifest.automations = {bad: {run: {model: 'missing'}}};
+    loadAutomationFixture({bad: {run: {model: 'missing'}}});
     const result = await graph('{ activeInstance { execution { models { name } } automations { nodes { name schedule { at } run { model } } } } }');
     expect(result.errors).toBeUndefined();
     expect((result.data?.activeInstance as any).execution.models).toEqual([]);
@@ -323,7 +392,7 @@ describe('instance model catalog in GraphQL', () => {
 
   it('does not discover vendors for ordinary queries or script-only automation writes', async () => {
     await graph('{ activeInstance { id } }');
-    await graph('mutation { updateInstance(input: {settings: {recurrenceLookaheadDays: 10}}) { error } }', undefined, 'mutation');
+    await graph('mutation { updateInstance(input: {settings: {scheduledEventTitlePrefix: "Plan "}}) { error } }', undefined, 'mutation');
     await graph('mutation { updateInstance(input: {automations: {set: [{name: "script", schedule: {at: "2099-01-01T00:00:00Z"}, run: {script: "echo"}}]}}) { error } }', undefined, 'mutation');
     const unselected = await executeGraphQL(store, 'query', {
       document: 'query Records { activeInstance { id } } query Choices { activeInstance { execution { models { name } } } __schema { types { name } } __type(name: "Mutation") { name } }',
@@ -374,18 +443,18 @@ describe('instance model catalog in GraphQL', () => {
     models = [{...builtin, availability: 'UNKNOWN', reason: diagnostics[0]}];
     const result = await graph('query($refresh: Boolean!) { activeInstance { execution { models(refresh: $refresh) { name availability reason } } } }', {refresh: true});
     expect(result.errors).toBeUndefined();
-    expect(catalogFor).toHaveBeenCalledWith(root, {refresh: true, signal: expect.any(AbortSignal)});
+    expect(catalogFor).toHaveBeenCalledWith(root, {refresh: true, signal: expect.any(AbortSignal), executionContext: store.getExecutionContext()});
     expect(result.extensions).toMatchObject({complete: false, diagnostics: expect.arrayContaining([
       expect.objectContaining({code: 'model_discovery', message: diagnostics[0]}),
     ])});
     expect((result.extensions?.diagnostics as any[]).filter(issue => issue.code === 'model_discovery' && issue.message === diagnostics[0])).toHaveLength(1);
     vi.mocked(catalogFor).mockClear();
     await graph('query($refresh: Boolean = true) { activeInstance { execution { models(refresh: $refresh) { name } } } }');
-    expect(catalogFor).toHaveBeenCalledWith(root, {refresh: true, signal: expect.any(AbortSignal)});
+    expect(catalogFor).toHaveBeenCalledWith(root, {refresh: true, signal: expect.any(AbortSignal), executionContext: store.getExecutionContext()});
   });
 
   it('validates all schedules and duplicate names before any mutation executes', async () => {
-    const document = 'mutation($jobs: [CreateAutomationInput!]!) { first: updateInstance(input: {settings: {recurrenceLookaheadDays: 10}}) { error } second: updateInstance(input: {automations: {set: $jobs}}) { error } }';
+    const document = 'mutation($jobs: [CreateAutomationInput!]!) { first: updateInstance(input: {settings: {scheduledEventTitlePrefix: "Plan "}}) { error } second: updateInstance(input: {automations: {set: $jobs}}) { error } }';
     const invalid = await graph(document, {jobs: [{name: 'bad', schedule: {cron: 'bad'}, run: {script: 'echo'}}]}, 'mutation');
     expect(invalid.errors?.[0]).toMatchObject({message: expect.stringContaining('automations.bad')});
     expect(mutate).not.toHaveBeenCalled();
@@ -407,7 +476,7 @@ describe('instance model catalog in GraphQL', () => {
 
   it('preflights only roots selected by skip/include directives, including fragments', async () => {
     const result = await graph(`mutation($skip: Boolean!, $include: Boolean!) {
-      updateInstance(input: {settings: {recurrenceLookaheadDays: 10}}) { error }
+      updateInstance(input: {settings: {scheduledEventTitlePrefix: "Plan "}}) { error }
       skipped: updateInstance(input: {automations: {set: [{name: "bad", schedule: {cron: "bad"}, run: {script: "echo"}}]}}) @skip(if: $skip) { error }
       ...Conditional @include(if: $include)
     }
@@ -416,6 +485,6 @@ describe('instance model catalog in GraphQL', () => {
     }`, {skip: true, include: false}, 'mutation');
     expect(result.errors).toBeUndefined();
     expect(mutate).toHaveBeenCalledTimes(1);
-    expect(mutate).toHaveBeenCalledWith('update_instance', {recurrenceLookaheadDays: 10});
+    expect(mutate).toHaveBeenCalledWith('update_instance', {scheduledEventTitlePrefix: 'Plan '});
   });
 });

@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
-import { Store as DiskStore } from '../../cli/src/mcp/store';
+import { Store as DiskStore } from '../../cli/src/source/store';
 import { loadStaticStore } from '../lib/static-store';
 import { Store as BrowserStore } from '../lib/store';
 import type { DataSource, FileRead } from '../lib/io';

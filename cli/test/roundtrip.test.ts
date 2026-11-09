@@ -2,20 +2,15 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { mkdirSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { Store } from '../src/mcp/store.js';
+import { Store } from '../src/source/store.js';
 import { handleCapture } from '../src/mcp/tools/capture.js';
 import { handleUpdateEntry } from '../src/mcp/tools/update.js';
-import { readTextBlock } from './framed-output.js';
-import {
-  handleQueryEntries,
-  handleQueryActions,
-  handleQueryProjects,
-} from '../src/mcp/tools/query.js';
+import { executeGraphQL } from '../src/graphql/schema.js';
 
 // End-to-end: capture writes Markdown files, the Store re-reads them from disk
 // (rebuild() is the synchronous form of the watcher-driven reload the MCP server
-// uses), and query renders them back. These tests assert content survives the
-// full write → parse → render round trip byte-for-byte.
+// uses), and GraphQL reads them back. These tests assert content survives the
+// full write → parse → read round trip byte-for-byte.
 describe('capture → query round trip', () => {
   let tempDir: string;
   let store: Store;
@@ -31,6 +26,16 @@ describe('capture → query round trip', () => {
   afterEach(() => {
     rmSync(tempDir, { recursive: true, force: true });
   });
+
+  const read = async (document: string, variables?: Record<string, unknown>) => {
+    const result = await executeGraphQL(store, 'query', { document, variables });
+    expect(result.errors).toBeUndefined();
+    return result.data as any;
+  };
+  const entryIds = async (where: Record<string, unknown>) =>
+    (await read('query($where: EntryWhere) { entries(where: $where) { nodes { id } } }', { where })).entries.nodes.map((node: { id: string }) => node.id);
+  const actionIds = async (where: Record<string, unknown>) =>
+    (await read('query($where: ActionWhere) { actions(where: $where) { nodes { id } } }', { where })).actions.nodes.map((node: { id: string }) => node.id);
 
   const PROJECT_ID = '2026-05-06-schema-migration';
   const ACTION_ID = '2026-05-06-backfill-archive';
@@ -83,9 +88,7 @@ describe('capture → query round trip', () => {
       actions: [{ name: 'Backfill Archive', description: 'Backfill the archive table', body: ACTION_BODY, scheduled: '2026-05-10', deadline: '2026-05-20' }],
     }, now);
 
-    expect(result.text).toContain('entry: 2026-05-06T14:30');
-    expect(result.text).toContain(`projects_created: [${PROJECT_ID}]`);
-    expect(result.text).toContain(`actions_created: [${ACTION_ID}]`);
+    expect(result).toEqual({ entryId: '2026-05-06T14:30', createdProjectIds: [PROJECT_ID], createdActionIds: [ACTION_ID] });
 
     // Reload from disk — this is what the agent sees on the next query.
     store.rebuild();
@@ -98,42 +101,32 @@ describe('capture → query round trip', () => {
     expect(entries[0].meta.projects).toEqual([PROJECT_ID]);
     expect(entries[0].meta.actions).toEqual([ACTION_ID]);
 
-    // --- query_entries (full) renders the exact content and links ---
-    const full = handleQueryEntries(store, { detail: 'full' });
-    expect(full).toContain('1 of 1');
-    expect(full.match(/^id: (.+)$/m)?.[1]).toBe('2026-05-06T14:30');
-    expect(full).toContain(`projects: [${PROJECT_ID}]`);
-    expect(full).toContain(`actions: [${ACTION_ID}]`);
-    expect(readTextBlock(full)).toBe(ENTRY_CONTENT);
-    expect(full).toContain('```bash'); // code fence preserved, not swallowed
+    // --- entries read back the exact content and links ---
+    const { entries: { nodes: [entry], totalCount } } = await read('{ entries { totalCount nodes { id content projects { nodes { id } } actions { nodes { id } } } } }');
+    expect(totalCount).toBe(1);
+    expect(entry).toEqual({ id: '2026-05-06T14:30', content: ENTRY_CONTENT, projects: { nodes: [{ id: PROJECT_ID }] }, actions: { nodes: [{ id: ACTION_ID }] } });
+    expect(entry.content).toContain('```bash'); // code fence preserved, not swallowed
 
-    // --- query_entries filters resolve against the captured metadata ---
-    expect(handleQueryEntries(store, { projects: [PROJECT_ID] })).toContain('1 of 1');
-    expect(handleQueryEntries(store, { actions: [ACTION_ID] })).toContain('1 of 1');
-    expect((await handleQueryEntries(store, { search: 'p99 dropped' }))).toContain('1 of 1');
-    expect((await handleQueryEntries(store, { search: 'nonexistent-term' }))).toContain('0 of 0');
+    // --- entry filters resolve against the captured metadata ---
+    expect(await entryIds({ projectIds: [PROJECT_ID] })).toEqual([entry.id]);
+    expect(await entryIds({ actionIds: [ACTION_ID] })).toEqual([entry.id]);
+    expect(await entryIds({ regex: 'p99 dropped' })).toEqual([entry.id]);
+    expect(await entryIds({ regex: 'nonexistent-term' })).toEqual([]);
 
-    // --- query_projects (full) renders the project body faithfully ---
-    const proj = handleQueryProjects(store, { ids: [PROJECT_ID], detail: 'full' });
-    expect(proj).toContain('1 of 1');
-    expect(proj).toContain('name: Schema Migration');
-    expect(proj).toContain('status: open');
-    expect(readTextBlock(proj)).toBe(PROJECT_BODY);
+    // --- projects read back the body faithfully ---
+    expect((await read(`{ project(id: "${PROJECT_ID}") { name status body } }`)).project)
+      .toEqual({ name: 'Schema Migration', status: 'OPEN', body: PROJECT_BODY });
 
-    // --- query_actions (full) renders the action body and dates faithfully ---
-    const act = handleQueryActions(store, { ids: [ACTION_ID], detail: 'full' });
-    expect(act).toContain('1 of 1');
-    expect(act).toContain('name: Backfill Archive');
-    expect(act).toContain('scheduled: 2026-05-10');
-    expect(act).toContain('deadline: 2026-05-20');
-    expect(readTextBlock(act)).toBe(ACTION_BODY);
+    // --- actions read back the body and dates faithfully ---
+    expect((await read(`{ action(id: "${ACTION_ID}") { name scheduled deadline body } }`)).action)
+      .toEqual({ name: 'Backfill Archive', scheduled: '2026-05-10', deadline: '2026-05-20', body: ACTION_BODY });
 
     // Action is reachable via its project link, and is in the backlog/scheduled set.
-    expect(handleQueryActions(store, { projects: [PROJECT_ID] })).toContain(ACTION_ID);
-    expect(handleQueryActions(store, { status: ['scheduled'] })).toContain(ACTION_ID);
+    expect(await actionIds({ projectIds: [PROJECT_ID] })).toEqual([ACTION_ID]);
+    expect(await actionIds({ status: ['SCHEDULED'] })).toEqual([ACTION_ID]);
   });
 
-  it('round-trips an action with calendar sync fields', () => {
+  it('round-trips an action with calendar sync fields', async () => {
     const now = new Date(2026, 4, 6, 14, 30); // Wed May 6, 2026
     handleCapture(store, {
       content: 'Scheduling the deploy.',
@@ -147,10 +140,8 @@ describe('capture → query round trip', () => {
     expect(action?.frontMatter.timezone).toBe('Asia/Tokyo');
     expect(action?.frontMatter.calendar).toBe('Work');
 
-    const full = handleQueryActions(store, { ids: ['2026-05-06-deploy-db'], detail: 'full' });
-    expect(full).toContain('duration: PT1H');
-    expect(full).toContain('timezone: Asia/Tokyo');
-    expect(full).toContain('calendar: Work');
+    expect((await read('{ action(id: "2026-05-06-deploy-db") { duration timezone calendar } }')).action)
+      .toEqual({ duration: 'PT1H', timezone: 'Asia/Tokyo', calendar: 'Work' });
   });
 
   it('round-trips multiple entries and an amend without disturbing the others', async () => {
@@ -178,8 +169,10 @@ describe('capture → query round trip', () => {
     expect(byId('2026-05-06T11:00').content).toBe(SECOND);
 
     // Query reflects the amendment; the old content is gone.
-    expect((await handleQueryEntries(store, { search: 'AMENDED', detail: 'full' }))).toContain('First entry — AMENDED');
-    expect((await handleQueryEntries(store, { search: '\\balpha\\b' }))).toContain('0 of 0');
-    expect(readTextBlock(handleQueryEntries(store, { detail: 'full' }))).toBe(SECOND);
+    const amended = await read('{ entries(where: {regex: "AMENDED"}) { nodes { content } } }');
+    expect(amended.entries.nodes).toEqual([{ content: 'First entry — AMENDED' }]);
+    expect(await entryIds({ regex: '\\balpha\\b' })).toEqual([]);
+    expect((await read('{ entries { nodes { content } } }')).entries.nodes.map((node: { content: string }) => node.content))
+      .toEqual([SECOND, 'First entry — AMENDED']);
   });
 });

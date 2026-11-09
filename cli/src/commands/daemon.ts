@@ -4,7 +4,7 @@ import { DAEMON_COMMAND_LOCK_TIMEOUT_MS, DAEMON_INSTALL_START_TIMEOUT_MS, DAEMON
 // design/daemon.md, Lifecycle).
 import { parseCommand, type CommandInput } from './options.js';
 import { jsonResult, writeOutput } from './output.js';
-import { formatDaemonStatus } from './daemon-status.js';
+import { formatDaemonStatus, readOfflineDaemonInstances } from './daemon-status.js';
 import { existsSync } from 'node:fs';
 import { Daemon, collectKnownFile } from '../daemon/daemon.js';
 import { DaemonClient, ownProgram, shutdownDaemon, tryConnect, type DaemonStartup } from '../daemon/client.js';
@@ -139,10 +139,12 @@ async function status(parsed: Parsed): Promise<void> {
   const unavailable = !running && unavailableDaemon(paths, 'inspect');
   let known: string[];
   let snapshot: Status | undefined;
+  let instances: import('../core/catalogue.js').AvailableInstance[];
   if (running) {
     let s: Status;
     try {
       s = await running.peer.request<Status>('status');
+      instances = await running.peer.request('instances', {paths: s.loaded});
     } finally {
       running.peer.close();
     }
@@ -150,8 +152,9 @@ async function status(parsed: Parsed): Promise<void> {
     known = s.known;
   } else {
     known = collectKnownFile(paths);
+    instances = readOfflineDaemonInstances(known);
   }
-  const report = formatDaemonStatus({ paths, running: snapshot, unavailable: !!unavailable, known, job,
+  const report = formatDaemonStatus({ paths, running: snapshot, instances, unavailable: !!unavailable, known, job,
     jobFileExists: !!paths.job && existsSync(paths.job) }, parsed.flags.has('--json'));
   writeOutput(report.output, parsed.flags.has('--json'));
   if (unavailable) throw unavailable;

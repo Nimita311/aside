@@ -1,6 +1,6 @@
 import {describe, expect, it} from 'vitest';
 import {deriveMutationPayloadIds, hasGraphQLProblems, isFullMutationFailure, summarizeMutationError} from '../src/graphql/results.js';
-import type {MutationResult} from '../src/mcp/tools/mutation-result.js';
+import type {MutationResult} from '../src/source/mutation-result.js';
 
 const result = (value: Partial<MutationResult> = {}): MutationResult => ({status: 'SUCCEEDED', changes: [], failures: [], ...value});
 

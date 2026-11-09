@@ -3,12 +3,13 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'nod
 import { tmpdir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
 import { parseDocument } from 'yaml';
-import { Store } from '../src/mcp/store.js';
+import { Store } from '../src/source/store.js';
 import { handleUpdateAction, handleUpdateEntry, handleUpdateProject } from '../src/mcp/tools/update.js';
 import { handleUpdateArtifact } from '../src/mcp/tools/artifact.js';
+import { executeGraphQL } from '../src/graphql/schema.js';
 import { parseActionFile, parseArtifactFile, parseProjectFile, parseWeeklyFile, splitFrontMatter } from '../src/core/parser.js';
 import { artifactAttachmentPath } from '../src/core/artifact.js';
-import { readRecurrenceHistory, recurrenceHistoryPath } from '../src/mcp/recurrence-history.js';
+import { readRecurrenceHistory, recurrenceHistoryPath } from '../src/source/recurrence-history.js';
 
 describe('writes with external metadata edits before watcher rebuild', () => {
   let dir: string;
@@ -24,6 +25,11 @@ describe('writes with external metadata edits before watcher rebuild', () => {
   let artifactFile: string;
 
   const record = (name: string, metadata = '') => `---\nname: ${name}\ncreated: 2026-10-10T09:00${metadata}\n---\n\nOriginal body.\n`;
+  const read = async (document: string) => {
+    const result = await executeGraphQL(store, 'query', { document });
+    expect(result.errors).toBeUndefined();
+    return result.data as any;
+  };
   const weekly = (projects: string[]) => `---\nweek: 41\nweek_start: 2026-10-05\nweek_end: 2026-10-11\n---\n\n---\n\`\`\`entry\ncreated: ${entryId}\nprojects: [${projects.join(', ')}]\nactions: [${actionId}]\n\`\`\`\n\nOriginal entry.\n`;
 
   beforeEach(() => {
@@ -47,26 +53,26 @@ describe('writes with external metadata edits before watcher rebuild', () => {
     rmSync(dir, { recursive: true, force: true });
   });
 
-  it('uses the preserved action metadata for immediate reads and update receipts', () => {
+  it('uses the preserved action metadata for immediate reads', async () => {
     writeFileSync(actionFile, record('External task', '\nscheduled: 2026-10-12T15:00'));
-    const response = handleUpdateAction(store, { id: actionId, body: 'Revised body.' });
+    handleUpdateAction(store, { id: actionId, body: 'Revised body.' });
     const persisted = parseActionFile(readFileSync(actionFile, 'utf8')).value;
     expect(persisted.frontMatter).toMatchObject({ name: 'External task', scheduled: '2026-10-12T15:00' });
     expect(store.getAction(actionId)).toEqual(persisted);
-    expect(response).toContain('name: External task');
-    expect(response).toContain('scheduled: 2026-10-12T15:00');
+    expect((await read(`{ action(id: "${actionId}") { name scheduled body } }`)).action)
+      .toEqual({ name: 'External task', scheduled: '2026-10-12T15:00', body: 'Revised body.' });
     store.rebuild();
     expect(store.getAction(actionId)).toEqual(persisted);
   });
 
-  it('uses preserved project metadata for immediate reads and update receipts', () => {
+  it('uses preserved project metadata for immediate reads', async () => {
     writeFileSync(projectFile, record('External project', '\nended: 2026-10-10T11:00'));
-    const response = handleUpdateProject(store, { id: projectId, body: 'Revised project.' });
+    handleUpdateProject(store, { id: projectId, body: 'Revised project.' });
     const persisted = parseProjectFile(readFileSync(projectFile, 'utf8')).value;
     expect(persisted.frontMatter).toMatchObject({ name: 'External project', ended: '2026-10-10T11:00' });
     expect(store.getProject(projectId)).toEqual(persisted);
-    expect(response).toContain('name: External project');
-    expect(response).toContain('ended: 2026-10-10T11:00');
+    expect((await read(`{ project(id: "${projectId}") { name ended status body } }`)).project)
+      .toEqual({ name: 'External project', ended: '2026-10-10T11:00', status: 'CLOSED', body: 'Revised project.' });
   });
 
   it('preserves a newer action body when an update changes only metadata', () => {
@@ -91,16 +97,16 @@ describe('writes with external metadata edits before watcher rebuild', () => {
     expect(store.getEntries().find(entry => entry.meta.created === entryId)).toEqual(persisted);
   });
 
-  it('derives entry links, relationships, and receipts from the rendered metadata', () => {
+  it('derives entry links and relationships from the rendered metadata', async () => {
     writeFileSync(weekFile, weekly([otherProjectId]));
-    const response = handleUpdateEntry(store, { id: entryId, content: 'Revised entry.' });
+    handleUpdateEntry(store, { id: entryId, content: 'Revised entry.' });
     const persisted = parseWeeklyFile(readFileSync(weekFile, 'utf8'), basename(weekFile)).value.entries[0];
     expect(persisted.meta.projects).toEqual([otherProjectId]);
     expect(store.getEntries().find(entry => entry.meta.created === entryId)).toEqual(persisted);
-    expect(store.getProjectsForAction(actionId)).toEqual([otherProjectId]);
+    expect([...(store.getRelations().projectsByAction.get(actionId) ?? [])]).toEqual([otherProjectId]);
     expect(store.getActionsForProject(projectId)).toEqual([]);
-    expect(response.text).toContain(otherProjectId);
-    expect(response.text).not.toContain(projectId);
+    expect((await read(`{ entry(id: "${entryId}") { content projects { nodes { id } } } }`)).entry)
+      .toEqual({ content: 'Revised entry.', projects: { nodes: [{ id: otherProjectId }] } });
   });
 
   it('upserts the merged artifact rather than the stale save input', () => {

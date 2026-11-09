@@ -1,0 +1,32 @@
+{
+  "model": "qwen3-embedding:0.6b",
+  "text": "A disposable benchmark sentence about restoring archived notes.",
+  "ollamaVersion": {
+    "version": "0.40.12"
+  },
+  "note": "One-sentence equivalence and allocation probe only. Reported model allocation is not independent process RSS. First call at each context may reload the model.",
+  "runs": [
+    {
+      "requestedContext": 32768,
+      "reportedContext": 32768,
+      "ms": 36.910667000000004,
+      "modelBytes": 4763083079,
+      "gpuBytes": 4763083079,
+      "digest": "ac6da0dfba84a81fdbfbaf330198c33cd77c4cdfc53e8bc50eb581914a15621d",
+      "dimension": 1024,
+      "cosineAgainstFirst": 0.9999999999999992,
+      "maxAbsoluteDifference": 0
+    },
+    {
+      "requestedContext": 8192,
+      "reportedContext": 8192,
+      "ms": 568.491209,
+      "modelBytes": 1743089827,
+      "gpuBytes": 1743089827,
+      "digest": "ac6da0dfba84a81fdbfbaf330198c33cd77c4cdfc53e8bc50eb581914a15621d",
+      "dimension": 1024,
+      "cosineAgainstFirst": 0.9999999999999992,
+      "maxAbsoluteDifference": 0
+    }
+  ]
+}

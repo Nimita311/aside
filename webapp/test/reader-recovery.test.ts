@@ -11,6 +11,12 @@ import { loadApp } from './app-harness';
 const artifact = '2026-10-04-report', project = '2026-10-04-review';
 const attachment = `artifacts/2026/${artifact}/report.md`;
 
+function expectReaderFocus(body: HTMLElement): void {
+  const active = document.activeElement as HTMLElement;
+  expect(body.contains(active)).toBe(true);
+  expect(active.closest('[hidden], [inert]')).toBeNull();
+}
+
 class Source implements DataSource {
   files: Record<string, string> = {
     'aside.md': '---\nid: work\nname: Work\n---\n',
@@ -75,19 +81,20 @@ describe('reader failure recovery', () => {
       return node;
     });
     history.replaceState({}, '', '/work/');
-    document.body.innerHTML = '<h1 class="app-title"><a href="/">Aside</a></h1>' +
-      '<dialog id="doc-backdrop" hidden><button id="btn-doc-close">Close document</button><div id="doc-body"></div></dialog>' +
+    document.body.innerHTML = '<h1 class="app-title"><a href="/">Aside</a></h1><button id="workspace-control">Views</button><div id="flow-scroll"></div>' +
+      '<section id="doc-backdrop" hidden aria-label="Document"><main id="doc-body"></main></section>' +
       '<dialog id="modal-backdrop" hidden><button>Close settings</button></dialog>';
     const store = new Store(source); await store.init();
     const api = await loadApp<App>('state, setupModals, dismissActionToast, applyView, updateDoc, retryReadableFile, readerModal, settingsModal, currentHotSet, applyDataUpdate');
     api.state.store = store; api.state.instanceId = 'work'; api.state.panelCollapsed = true;
     dismissToasts.push(api.dismissActionToast); api.setupModals(); modals.push(api.readerModal, api.settingsModal);
-    const body = document.getElementById('doc-body')!, close = document.getElementById('btn-doc-close')!;
-    return { source, store, api, body, close };
+    const body = document.getElementById('doc-body')!, reader = document.getElementById('doc-backdrop')!;
+    const control = document.getElementById('workspace-control')!;
+    return { source, store, api, body, reader, control };
   }
 
-  it('exposes the failed URL/reason and recovers the current asset without changing route, scroll or modal focus', async () => {
-    const { source, store, api, body, close } = await setup();
+  it('exposes the failed URL/reason and recovers the current asset without changing route, scroll or Reader focus', async () => {
+    const { source, store, api, body, reader } = await setup();
     source.failures.add('assets/failed.md');
     await api.applyView({ filter: null, doc: { kind: 'asset', path: 'assets/failed.md' } });
     const route = location.pathname;
@@ -103,8 +110,8 @@ describe('reader failure recovery', () => {
     expect(body.querySelector('.data-file-notice')).toBeNull();
     expect(location.pathname).toBe(route);
     expect(body.scrollTop).toBe(80);
-    expect(document.activeElement).toBe(close);
-    expect(document.querySelector<HTMLDialogElement>('#doc-backdrop')!.open).toBe(true);
+    expectReaderFocus(body);
+    expect(reader.hidden).toBe(false);
     expect(body.hasAttribute('aria-live')).toBe(false);
     expect(body.querySelector('.detail-body')?.hasAttribute('aria-live')).toBe(false);
     expect(body.querySelector('[role="alert"], [role="status"]')).toBeNull();
@@ -138,20 +145,20 @@ describe('reader failure recovery', () => {
     const source = new Source(), path = 'assets/delayed.md';
     let finish!: (file: FileRead) => void;
     source.deferred.set(path, new Promise(resolve => { finish = resolve; }));
-    const { api, body, close } = await setup(source);
+    const { api, body } = await setup(source);
     const opening = api.applyView({ filter: null, doc: { kind: 'asset', path } });
     await vi.waitFor(() => expect(body.querySelector('.loading')).not.toBeNull());
     const line = body.querySelector('.loading')!;
     expect(line.getAttribute('role')).toBe('status'); expect(line.getAttribute('aria-atomic')).toBe('true');
-    expect(line.textContent).toBe('Loading document…'); expect(document.activeElement).toBe(close);
+    expect(line.textContent).toBe('Loading document…'); expect(document.activeElement).toBe(body);
     finish({ text: 'Authored content remains an ordinary document.', version: 'ready' }); await opening;
     expect(body.textContent).toContain('Authored content remains an ordinary document.');
     expect(body.querySelector('[role="status"], [role="alert"], [aria-live]')).toBeNull();
-    expect(document.activeElement).toBe(close);
+    expect(document.activeElement).toBe(body);
   });
 
   it('keeps a failed retry usable with the current reason and another Retry', async () => {
-    const { source, api, body, close } = await setup(); source.failures.add('assets/failed.md');
+    const { source, api, body } = await setup(); source.failures.add('assets/failed.md');
     await api.applyView({ filter: null, doc: { kind: 'asset', path: 'assets/failed.md' } });
     const retry = body.querySelector<HTMLButtonElement>('.history-retry')!;
     retry.focus(); retry.click();
@@ -159,7 +166,7 @@ describe('reader failure recovery', () => {
     expect(retry.isConnected).toBe(true);
     expect(body.querySelector<HTMLDetailsElement>('details')!.open).toBe(false);
     expect(body.textContent).toContain('500 Internal Server Error');
-    expect(document.activeElement).toBe(close);
+    expectReaderFocus(body);
   });
 
   it.each([undefined, 'report.md'])('retries the selected artifact attachment rather than the parent record (explicit=%s)', async filename => {
@@ -173,7 +180,7 @@ describe('reader failure recovery', () => {
   });
 
   it('discards a delayed retry after a newer reader navigation', async () => {
-    const { source, store, api, body, close } = await setup(); source.failures.add('assets/failed.md');
+    const { source, store, api, body } = await setup(); source.failures.add('assets/failed.md');
     await api.applyView({ filter: null, doc: { kind: 'asset', path: 'assets/failed.md' } });
     let finish!: (read: FileRead) => void;
     source.deferred.set('assets/failed.md', new Promise(resolve => { finish = resolve; }));
@@ -186,7 +193,7 @@ describe('reader failure recovery', () => {
     expect(body.textContent).toContain('Newer document wins.');
     expect(body.textContent).not.toContain('Obsolete recovered document.');
     expect(location.pathname).toBe('/work/asset/assets/later.md');
-    expect(document.activeElement).toBe(close);
+    expect(document.activeElement).toBe(body);
   });
 
   it('retains recovered record content when a diagnostic retry cannot read the file', async () => {
@@ -220,7 +227,7 @@ describe('reader failure recovery', () => {
     { extension: 'html', tag: 'iframe' }, { extension: 'htm', tag: 'iframe' },
   ])('recovers missing $extension media through metadata without reading binary bytes as text', async ({ extension, tag }) => {
     const source = new MediaSource(), path = `assets/missing.${extension}`;
-    const { api, body, store, close } = await setup(source);
+    const { api, body, store } = await setup(source);
     await api.applyView({ filter: null, doc: { kind: 'asset', path } });
     const route = location.pathname;
     expect(body.textContent).toContain(`${source.assetUrl(path)}: 404 Not Found`);
@@ -231,7 +238,8 @@ describe('reader failure recovery', () => {
     expect(body.querySelector(tag)?.getAttribute('src')).toContain('aside_revision=1');
     expect(store.diagnosticsFor(path)).toBeUndefined(); expect(source.reads).not.toContain(path);
     expect(source.checks).toEqual([path, path]);
-    expect(location.pathname).toBe(route); expect(body.scrollTop).toBe(70); expect(document.activeElement).toBe(close);
+    expect(location.pathname).toBe(route); expect(body.scrollTop).toBe(70);
+    expectReaderFocus(body);
     await api.updateDoc(true); expect(source.checks).toEqual([path, path]);
   });
 
@@ -257,7 +265,7 @@ describe('reader failure recovery', () => {
       + `Dashboard.\n\n<iframe src="#artifact/${artifact}/index.html" title="Dashboard"></iframe>`;
     source.files['assets/embed.md'] = `Page.\n\n<iframe src="../${page}" title="Dashboard"></iframe>`;
     source.metadata.set(page, 'etag:html'); source.metadata.set(css, 'etag:css-1');
-    const { api, store, body, close } = await setup(source);
+    const { api, store, body, control } = await setup(source);
     const doc: DocRef = mode === 'relative' ? { kind: 'asset', path: 'assets/embed.md' }
       : { kind: 'artifact', id: artifact, ...(mode === 'attachment' ? { filename: 'index.html' } : {}) };
     await api.applyView({ filter: null, doc });
@@ -269,21 +277,21 @@ describe('reader failure recovery', () => {
     for (const [path, version] of [[css, 'etag:css-2'], [page, 'etag:html-2']]) {
       const frame = body.querySelector('iframe')!, route = location.pathname;
       expect(frame).not.toBeNull();
-      body.scrollTop = 55; close.focus(); source.metadata.set(path, version);
+      body.scrollTop = 55; control.focus(); source.metadata.set(path, version);
       const update = await store.check('light', api.currentHotSet(), [path]);
       expect(update?.summary.assets.has(path)).toBe(true);
       await api.applyDataUpdate(update!);
       expect(body.querySelector('iframe')).not.toBe(frame);
       expect(body.querySelector('iframe')?.getAttribute('src')).toContain('index.html');
       expect(body.scrollTop).toBe(55); expect(location.pathname).toBe(route);
-      expect(document.activeElement).toBe(close);
+      expect(document.activeElement).toBe(control);
     }
     expect(source.reads).not.toContain(page); expect(source.reads).not.toContain(css);
   });
 
   it.each(['png', 'wav', 'mp4'])('surfaces native %s preview errors after successful metadata and recovers with a fresh URL', async extension => {
     const source = new MediaSource(), path = `assets/unreadable.${extension}`; source.metadata.set(path, 'etag:bytes');
-    const { api, body, store, close } = await setup(source);
+    const { api, body, store } = await setup(source);
     await api.applyView({ filter: null, doc: { kind: 'asset', path } });
     const media = body.querySelector<HTMLElement>('.asset-media')!;
     if (extension !== 'png') { Object.defineProperty(media, 'error', { value: { code: 3 } }); media.focus(); }
@@ -294,7 +302,7 @@ describe('reader failure recovery', () => {
     const retry = body.querySelector<HTMLButtonElement>('.history-retry')!; retry.focus(); retry.click();
     await vi.waitFor(() => expect(body.querySelector('.asset-media')).not.toBeNull());
     expect(body.querySelector('.asset-media')?.getAttribute('src')).not.toBe(oldUrl);
-    expect(store.diagnosticsFor(path)).toBeUndefined(); expect(document.activeElement).toBe(close);
+    expect(store.diagnosticsFor(path)).toBeUndefined(); expect(document.activeElement).toBe(body.querySelector('.entity-title'));
     expect(source.reads).not.toContain(path);
   });
 

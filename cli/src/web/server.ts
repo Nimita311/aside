@@ -12,12 +12,15 @@ import { MEDIA_TYPES } from '../core/media.js';
 import { WEB_QUERY_TIMEOUT_MS, WEB_QUERY_MAX_RESPONSE_BYTES } from '../core/web-query.js';
 import { prepareWebQuery } from './query.js';
 import type { GraphQLArgs, GraphQLResult } from '../graphql/schema.js';
-import { resolveInstanceAddress, type AvailableInstance, type InstanceCardSummary, type InstanceRegistration, type PickerKind } from './catalogue.js';
+import {resolveInstanceAddress, type AvailableInstance, type InstanceCardSummary} from '../core/catalogue.js';
+import {type InstanceRegistration, type PickerKind} from './picker.js';
 import { WebAuth, type WebSession } from './auth.js';
 import { createWebHandoff, WEB_HANDOFF_LIFETIME_MS } from './handoff.js';
 import { parseFileGrantPath, verifyFileGrant, type ParsedFileGrant } from './file-grants.js';
 import { fileGrantAllows, fileGrantScopeKind } from '../core/web-file-grant.js';
 import { assertManagedPath, isManagedInstancePath } from '../core/managed-path.js';
+import { assertWebappSidebar, SidebarConflictError } from '../core/webapp-config.js';
+import type { WebappSidebarSection } from '../core/types.js';
 
 export interface WebServerOptions {
   auth: WebAuth;
@@ -38,10 +41,13 @@ export interface WebBackend {
   summary?(path: string): InstanceCardSummary | undefined;
   register(selection: InstanceRegistration): Promise<AvailableInstance | null>;
   pick?(kind: PickerKind): Promise<string | null>;
-  remove(path: string): void;
+  remove(path: string, clearCache?: boolean): void | Promise<void>;
   load(path: string): void;
   data(path: string, refresh: boolean): Promise<DataSnapshot>;
   query?(path: string, args: GraphQLArgs, signal: AbortSignal): Promise<GraphQLResult>;
+  updateSidebar?(path: string, sidebar: WebappSidebarSection[], expectedSidebar: WebappSidebarSection[]): Promise<void>;
+  years?(path: string): readonly string[];
+  subscribe?(path: string, changed: () => void): () => void;
 }
 class WebError extends Error {
   constructor(readonly status: number, message: string, readonly paths?: string[]) { super(message); }
@@ -300,10 +306,11 @@ export class AsideWebServer {
       if (!writable) return send(405, 'Method not allowed');
       const msg = await this.readJson(req);
       if (typeof msg.path !== 'string' || !path.isAbsolute(msg.path)) throw new WebError(400, 'An instance path is required.');
+      if (msg.clearCache !== undefined && typeof msg.clearCache !== 'boolean') throw new WebError(400, 'clearCache must be a boolean.');
       // IDs may be duplicated; the canonical path identifies the registration
       // whose removal policy the daemon applies (a primary includes worktrees).
       if (!this.backend.instances().some(instance => instance.path === msg.path)) throw new WebError(404, 'This instance is no longer in the list.');
-      this.backend.remove(msg.path);
+      await this.backend.remove(msg.path, msg.clearCache);
       return json({ instances: this.catalogue() });
     }
     if (rel === '-/api/control') {
@@ -320,6 +327,21 @@ export class AsideWebServer {
         const fileKey = this.options.auth.fileKey(session.id, instance.path);
         if (!fileKey) return this.unauthorized(res);
         return json({ fileBase: `/-/files/${session.id}/${encodeURIComponent(match[1])}`, fileKey });
+      }
+      if (endpoint === 'sidebar') {
+        if (!writable) return send(405, 'Method not allowed');
+        if (!this.backend.updateSidebar) throw new WebError(503, 'Sidebar updates are unavailable.');
+        const input = await this.readJson(req);
+        let sidebar: WebappSidebarSection[], expectedSidebar: WebappSidebarSection[];
+        try {
+          if (Object.keys(input).some(key => !['sidebar', 'expectedSidebar'].includes(key)) || !Object.hasOwn(input, 'sidebar')
+            || !Object.hasOwn(input, 'expectedSidebar')) throw new Error('Provide sidebar and expectedSidebar declarations.');
+          sidebar = assertWebappSidebar(input.sidebar);
+          expectedSidebar = assertWebappSidebar(input.expectedSidebar);
+        } catch (error) { throw new WebError(400, error instanceof Error ? error.message : String(error)); }
+        try { await this.backend.updateSidebar(instance.path, sidebar, expectedSidebar); }
+        catch (error) { if (error instanceof SidebarConflictError) throw new WebError(409, error.message); throw error; }
+        return json({ sidebar });
       }
       if (endpoint === 'graphql') {
         if (!writable) return send(405, 'Method not allowed');
@@ -382,16 +404,8 @@ export class AsideWebServer {
         return this.sendFile(req, res, 'data.json', serialized.body, serialized.etag);
       }
       if (endpoint === 'years') {
-        const years = new Set<string>();
-        for (const kind of ['notes', 'projects', 'actions', 'artifacts']) {
-          try {
-            const directory = assertManagedPath(instance.path, path.join(instance.path, kind), 'directory');
-            for (const entry of await fs.readdir(directory, { withFileTypes: true })) {
-              if (entry.isDirectory() && /^\d{4}$/.test(entry.name)) years.add(entry.name);
-            }
-          } catch (error) { if (!['ENOENT', 'ENOTDIR', 'ELOOP'].includes((error as NodeJS.ErrnoException).code ?? '')) throw error; }
-        }
-        return json([...years].sort());
+        if (!this.backend.years) throw new WebError(503, 'Source metadata is unavailable.');
+        return json(this.backend.years(instance.path));
       }
       if (endpoint === 'watch') {
         if (req.method !== 'GET') return send(405, 'Method not allowed');
@@ -575,18 +589,28 @@ export class AsideWebServer {
 
     const pending = new Set<string>();
     let flushTimer: ReturnType<typeof setTimeout> | null = null;
-    const watcher = watch(instanceDir, { recursive: true }, (_event, filename) => {
-      // A null filename means "something changed" — forwarded as an empty
-      // array; the app answers with a plain light check.
-      if (filename != null) pending.add(filename.split(path.sep).join('/'));
+    const changed = (filename?: string) => {
+      if (filename !== undefined) pending.add(filename);
       if (flushTimer) return;
       flushTimer = setTimeout(() => {
         flushTimer = null;
-        const paths = [...pending];
-        pending.clear();
+        const paths = [...pending]; pending.clear();
         emit(`data: ${JSON.stringify(paths)}\n\n`);
       }, WEB_CHANGE_DEBOUNCE_MS);
-    });
+    };
+    const unsubscribe = this.backend.subscribe?.(instanceDir, () => changed());
+    let watcher: FSWatcher;
+    try {
+      watcher = watch(instanceDir, { recursive: true }, (_event, filename) => {
+        // Authored records and root execution configuration are observed by the
+        // instance owner. This watcher only refreshes explicitly served raw assets.
+        // Managed attachments are still raw assets: retain their exact paths
+        // so the browser also invalidates cached files that are off screen.
+        if (filename != null && (filename.toLowerCase() === '.aside'
+          || (isManagedInstancePath(filename) && filename.split(path.sep).length <= 3))) return;
+        changed(filename?.split(path.sep).join('/'));
+      });
+    } catch (error) {unsubscribe?.(); throw error;}
     // FSWatcher 'error' (dir deleted, EMFILE) is an uncaught exception without
     // a listener — end this stream instead of taking down the process; the
     // client's authenticated stream retries when the directory returns.
@@ -599,6 +623,7 @@ export class AsideWebServer {
     const ping = setInterval(() => emit(': ping\n\n'), WEB_EVENT_HEARTBEAT_MS);
     this.timers.add(ping);
     res.on('close', () => {
+      unsubscribe?.();
       watcher.close();
       this.watchers.delete(watcher);
       clearInterval(ping);

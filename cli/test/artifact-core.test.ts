@@ -10,7 +10,8 @@ import {
 import { parseArtifactFile } from '../src/core/parser.js';
 import { readInstanceData } from '../src/core/reader.js';
 import { contentAttachmentPath } from '../src/core/content-attachment.js';
-import { Store } from '../src/mcp/store.js';
+import { Store } from '../src/source/store.js';
+import {sourceLifecycleFixture} from './source-lifecycle-fixture.js';
 import { handleQueryArtifacts } from '../src/mcp/tools/query.js';
 import type { Artifact } from '../src/core/types.js';
 
@@ -99,8 +100,9 @@ describe('artifact handles', () => {
 describe('artifact reading and relationships', () => {
   let dir: string;
   let store: Store | undefined;
+  let owner: ReturnType<typeof sourceLifecycleFixture> | undefined;
   beforeEach(() => { dir = mkdtempSync(join(tmpdir(), 'aside-artifact-core-')); });
-  afterEach(() => { store?.close(); store = undefined; rmSync(dir, { recursive: true, force: true }); });
+  afterEach(() => { owner?.close(); owner = undefined; store?.close(); store = undefined; rmSync(dir, { recursive: true, force: true }); });
   const write = (path: string, content: string | Uint8Array) => { mkdirSync(dirname(path), { recursive: true }); writeFileSync(path, content); };
 
   it('parses malformed records tolerantly and trims body content', () => {
@@ -340,7 +342,7 @@ describe('artifact reading and relationships', () => {
     store.saveProject('project', { name: 'Project', created: '2026-10-02T09:00' }, `[Future](#artifact/${plan}/notes%20v2.md)`, join(dir, 'projects', '2026', 'project.md'));
     expect(store.getReferencedArtifactFiles()).toEqual([artifactHandle(plan, 'notes v2.md')]);
     const returned = store.getReferencedArtifactFiles();
-    returned.length = 0;
+    expect(() => {returned.length = 0;}).toThrow(TypeError);
     expect(store.getReferencedArtifactFiles()).toHaveLength(1);
   });
 
@@ -352,7 +354,7 @@ describe('artifact reading and relationships', () => {
     store = new Store(dir);
     store.saveArtifact(guide, { name: 'Guide', created: '2026-10-01T10:00' }, '', artifactFilePath(dir, guide));
     store.saveArtifact(plan, { name: 'Plan', created: '2026-10-02T10:00' }, artifactHandle(plan, 'notes v2.md'), artifactFilePath(dir, plan));
-    store.watch();
+    owner = sourceLifecycleFixture(store);
     const internals = store as unknown as {
       watcher: { once(event: string, listener: () => void): void; getWatched(): Record<string, string[]> };
       attachmentWatches: Map<string, unknown>;
@@ -380,7 +382,7 @@ describe('artifact reading and relationships', () => {
     store.saveArtifact(plan, { name: 'Plan', created: '2026-10-02T10:00' }, '', artifactFilePath(dir, plan));
     const contentFilename = () => artifactContentFilename(store!.getArtifact(plan)!);
     expect(contentFilename()).toBe('brief.pdf');
-    store.watch();
+    owner = sourceLifecycleFixture(store);
     const internals = store as unknown as {
       watcher: { once(event: string, listener: () => void): void; getWatched(): Record<string, string[]> };
       attachmentWatches: Map<string, unknown>;

@@ -1,20 +1,7 @@
 import { describe, it, expect } from 'vitest';
-import {
-  formatPagination,
-  formatEntryFull,
-  formatEntryMeta,
-  formatIndexLine,
-  formatActionFull,
-  formatActionMeta,
-  formatProjectFull,
-  formatProjectMeta,
-  formatArtifactMeta,
-  formatArtifactIndex,
-  formatInstanceLine,
-  formatIssueSummary,
-  formatScalar,
-} from '../src/mcp/format.js';
-import type { Action, Entry, IndexItem } from '../src/core/types.js';
+import {formatPagination, formatArtifactFull, formatArtifactMeta, formatArtifactIndex, formatAttachmentFiles, formatIssueSummary} from '../src/mcp/format.js';
+import {formatInstanceLine, formatScalar} from '../src/core/text.js';
+import type { Artifact } from '../src/core/types.js';
 
 describe('formatInstanceLine', () => {
   it('leads with name and description, trailing the path', () => {
@@ -58,224 +45,97 @@ describe('formatPagination', () => {
   });
 });
 
-describe('formatIndexLine', () => {
-  it('formats id and description with em dash', () => {
-    const item: IndexItem = { id: '2026-05-05T14:00', description: 'A test entry' };
-    expect(formatIndexLine(item)).toBe('2026-05-05T14:00 — A test entry');
+describe('formatArtifactIndex', () => {
+  it('formats the handle and description with em dash', () => {
+    expect(formatArtifactIndex({ id: '2026-05-05-plan', description: 'A test artifact' })).toBe('#artifact/2026-05-05-plan — A test artifact');
   });
 });
 
-describe('formatEntryFull', () => {
-  it('includes id line', () => {
-    const entry: Entry = {
-      meta: { created: '2026-05-05T14:00' },
-      content: 'Entry body text.',
-      weekFile: '2026-05-04.md',
-    };
-    const result = formatEntryFull(entry);
-    expect(result).toContain('id: 2026-05-05T14:00');
-  });
-
-  it('frames the authored content as an indented block', () => {
-    const entry: Entry = {
-      meta: { created: '2026-05-05T14:00' },
-      content: 'Entry body text.',
-      weekFile: '2026-05-04.md',
-    };
-    const result = formatEntryFull(entry);
-    expect(result).toContain('\ncontent: |\n  Entry body text.');
-  });
-
-  it('includes projects when present', () => {
-    const entry: Entry = {
-      meta: { created: '2026-05-05T14:00', projects: ['proj-a', 'proj-b'] },
-      content: 'Body.',
-      weekFile: '2026-05-04.md',
-    };
-    const result = formatEntryFull(entry);
-    expect(result).toContain('projects: [proj-a, proj-b]');
-  });
-
-  it('omits projects line when absent', () => {
-    const entry: Entry = {
-      meta: { created: '2026-05-05T14:00' },
-      content: 'Body.',
-      weekFile: '2026-05-04.md',
-    };
-    const result = formatEntryFull(entry);
-    expect(result).not.toContain('projects:');
-  });
-
-  it('includes actions when present', () => {
-    const entry: Entry = {
-      meta: { created: '2026-05-05T14:00', actions: ['action-x'] },
-      content: 'Body.',
-      weekFile: '2026-05-04.md',
-    };
-    const result = formatEntryFull(entry);
-    expect(result).toContain('actions: [action-x]');
-  });
-
-  it('omits actions line when absent', () => {
-    const entry: Entry = {
-      meta: { created: '2026-05-05T14:00' },
-      content: 'Body.',
-      weekFile: '2026-05-04.md',
-    };
-    const result = formatEntryFull(entry);
-    expect(result).not.toContain('actions:');
-  });
-});
-
-describe('formatIndexLine', () => {
-  it('formats id and description with em dash', () => {
-    const item: IndexItem = { id: '2026-05-05-do-thing', description: 'Do the thing' };
-    expect(formatIndexLine(item)).toBe('2026-05-05-do-thing — Do the thing');
-  });
-});
-
-describe('formatActionFull', () => {
-  const baseAction = {
-    frontMatter: { name: 'Do Thing', created: '2026-05-05T14:00' },
-    body: 'Action details here.',
+describe('formatArtifactFull', () => {
+  const baseArtifact: Artifact = {
+    frontMatter: { name: 'Plan', created: '2026-05-05T14:00' },
+    body: 'Artifact details here.',
   };
 
-  it('includes id, name, created', () => {
-    const result = formatActionFull('2026-05-05-do-thing', baseAction, []);
-    expect(result).toContain('id: 2026-05-05-do-thing');
-    expect(result).toContain('name: Do Thing');
+  it('includes id, handle, name, created', () => {
+    const result = formatArtifactFull('2026-05-05-plan', baseArtifact, [], [], []);
+    expect(result).toContain('id: 2026-05-05-plan');
+    expect(result).toContain('handle: #artifact/2026-05-05-plan');
+    expect(result).toContain('name: Plan');
     expect(result).toContain('created: 2026-05-05T14:00');
   });
 
   it('frames the authored body as an indented block', () => {
-    const result = formatActionFull('2026-05-05-do-thing', baseAction, []);
-    expect(result).toContain('\nbody: |\n  Action details here.');
+    const result = formatArtifactFull('2026-05-05-plan', baseArtifact, [], [], []);
+    expect(result).toContain('\nbody: |\n  Artifact details here.');
   });
 
-  it('includes scheduled when present', () => {
-    const action = { frontMatter: { ...baseAction.frontMatter, scheduled: '2026-05-10T10:00' }, body: 'Body.' };
-    const result = formatActionFull('2026-05-05-do-thing', action, []);
-    expect(result).toContain('scheduled: 2026-05-10T10:00');
-  });
-
-  it('omits scheduled when absent', () => {
-    const result = formatActionFull('2026-05-05-do-thing', baseAction, []);
-    expect(result).not.toContain('scheduled:');
-  });
-
-  it('includes deadline when present', () => {
-    const action = { frontMatter: { ...baseAction.frontMatter, deadline: '2026-05-15T17:00' }, body: 'Body.' };
-    const result = formatActionFull('2026-05-05-do-thing', action, []);
-    expect(result).toContain('deadline: 2026-05-15T17:00');
-  });
-
-  it('includes resolution when present', () => {
-    const action = { frontMatter: { ...baseAction.frontMatter, resolution: 'cancelled' as const }, body: 'Body.' };
-    const result = formatActionFull('2026-05-05-do-thing', action, []);
-    expect(result).toContain('resolution: cancelled');
-  });
-
-  it('includes projects when non-empty', () => {
-    const result = formatActionFull('2026-05-05-do-thing', baseAction, ['proj-a', 'proj-b']);
+  it('includes each association list when present', () => {
+    const result = formatArtifactFull('2026-05-05-plan', baseArtifact, ['proj-a', 'proj-b'], ['action-x'], ['#entry/2026-05-05T14:00']);
     expect(result).toContain('projects: [proj-a, proj-b]');
+    expect(result).toContain('actions: [action-x]');
+    expect(result).toContain('backlinks: [#entry/2026-05-05T14:00]');
   });
 
-  it('omits projects line when empty', () => {
-    const result = formatActionFull('2026-05-05-do-thing', baseAction, []);
+  it('omits each association line when empty', () => {
+    const result = formatArtifactFull('2026-05-05-plan', baseArtifact, [], [], []);
     expect(result).not.toContain('projects:');
+    expect(result).not.toContain('actions:');
+    expect(result).not.toContain('backlinks:');
+  });
+
+  it('includes a description only when present, on one line', () => {
+    expect(formatArtifactMeta('2026-05-05-plan', baseArtifact, [], [], [])).not.toContain('description:');
+    expect(formatArtifactMeta('2026-05-05-plan', baseArtifact, [], [], [], 'Line one\nLine two')).toContain('description: Line one Line two');
   });
 });
 
-describe('formatProjectFull', () => {
-  const openProject = {
-    frontMatter: { name: 'My Project', created: '2026-01-01T09:00' },
-    body: 'Project description.',
-  };
-
-  it('includes id, name, created', () => {
-    const result = formatProjectFull('2026-01-01-my-proj', openProject);
-    expect(result).toContain('id: 2026-01-01-my-proj');
-    expect(result).toContain('name: My Project');
-    expect(result).toContain('created: 2026-01-01T09:00');
+describe('formatAttachmentFiles', () => {
+  it('omits the block for an artifact without attachments', () => {
+    expect(formatAttachmentFiles(undefined, 'plan', [])).toEqual([]);
   });
 
-  it('shows status open when no ended date', () => {
-    const result = formatProjectFull('2026-01-01-my-proj', openProject);
-    expect(result).toContain('status: open');
+  it('lists each file with its observed handle, path, or error', () => {
+    const files = [{ filename: 'a.pdf', handle: '#artifact/plan/a.pdf', path: '/data/a.pdf' }, { filename: 'b.pdf', error: 'Missing file' }];
+    expect(formatAttachmentFiles(files, 'plan', ['a.pdf', 'b.pdf'])).toEqual([
+      'attachment_files:', '  - filename: a.pdf', '    handle: #artifact/plan/a.pdf', '    path: /data/a.pdf', '  - filename: b.pdf', '    error: Missing file',
+    ]);
+  });
+});
+
+describe('formatIssueSummary', () => {
+  const issue = (file?: string) => ({ severity: 'error' as const, code: 'bad_value', message: 'Bad value', ...(file ? { file } : {}) });
+
+  it('returns null when there is nothing to report', () => {
+    expect(formatIssueSummary([])).toBeNull();
   });
 
-  it('shows status closed and ended date when ended present', () => {
-    const closedProject = {
-      frontMatter: { ...openProject.frontMatter, ended: '2026-03-01' },
-      body: 'Done.',
-    };
-    const result = formatProjectFull('2026-01-01-my-proj', closedProject);
-    expect(result).toContain('status: closed');
-    expect(result).toContain('ended: 2026-03-01');
+  it('counts issues and distinct files with singular and plural grammar', () => {
+    expect(formatIssueSummary([issue()], 5, 'note')).toBe('⚠ 1 parsing issue (note):\n  Bad value');
+    expect(formatIssueSummary([issue('/a.md'), issue('/a.md'), issue('/b.md')], 5, 'note')!.split('\n')[0]).toBe('⚠ 3 parsing issues in 2 files (note):');
+    expect(formatIssueSummary([issue('/a.md')], 5, 'note')).toBe('⚠ 1 parsing issue in 1 file (note):\n  /a.md: Bad value');
   });
 
-  it('omits ended line when not closed', () => {
-    const result = formatProjectFull('2026-01-01-my-proj', openProject);
-    expect(result).not.toContain('ended:');
-  });
-
-  it('frames the authored body as an indented block', () => {
-    const result = formatProjectFull('2026-01-01-my-proj', openProject);
-    expect(result).toContain('\nbody: |\n  Project description.');
-  });
-
-  it('includes related_projects when present', () => {
-    const project = {
-      frontMatter: {
-        ...openProject.frontMatter,
-        related_projects: [
-          { project: 'proj-a', description: 'Related A' },
-          { project: 'proj-b', description: 'Related B' },
-        ],
-      },
-      body: 'Body.',
-    };
-    const result = formatProjectFull('2026-01-01-my-proj', project);
-    expect(result).toContain('related_projects:\n  - project: proj-a\n    description: |\n      Related A\n  - project: proj-b\n    description: |\n      Related B');
-  });
-
-  it('preserves multiline relationship descriptions without creating metadata fields', () => {
-    const description = 'Depends on the platform work.\n\nid: authored-label\n  Keep this indentation.\n';
-    const project = {
-      frontMatter: { ...openProject.frontMatter, related_projects: [{ project: 'proj-a', description }] },
-      body: 'Body.',
-    };
-    const result = formatProjectFull('2026-01-01-my-proj', project);
-    const block = result.split('    description: |\n')[1].split('\nbody: |')[0];
-    expect(block.split('\n').map(line => line.slice(6)).join('\n')).toBe(description);
-    expect(result.match(/^id:/gm)).toHaveLength(1);
-  });
-
-  it('omits related_projects when absent', () => {
-    const result = formatProjectFull('2026-01-01-my-proj', openProject);
-    expect(result).not.toContain('related_projects:');
+  it('truncates past the row limit and names the remainder', () => {
+    const lines = formatIssueSummary([issue(), issue(), issue()], 2, 'note')!.split('\n');
+    expect(lines).toHaveLength(4);
+    expect(lines.at(-1)).toBe('  … (+1 more)');
   });
 });
 
 describe('canonical fields and record framing', () => {
-  it('returns entry IDs verbatim and action timestamps verbatim', () => {
-    const entry: Entry = { meta: { created: '2026-05-05T14:00' }, content: '', weekFile: '2026-05-04.md' };
-    expect(formatEntryMeta(entry)).toBe('id: 2026-05-05T14:00');
-    const action = { frontMatter: { name: 'Deploy', created: '2026-05-05T14:00', scheduled: '2026-05-08T09:30', deadline: '2026-05-10T17:00' }, body: '' };
-    const result = formatActionMeta('2026-05-05-deploy', action, []);
-    expect(result.match(/^created: (.+)$/m)?.[1]).toBe(action.frontMatter.created);
-    expect(result.match(/^scheduled: (.+)$/m)?.[1]).toBe(action.frontMatter.scheduled);
-    expect(result.match(/^deadline: (.+)$/m)?.[1]).toBe(action.frontMatter.deadline);
+  it('returns artifact timestamps verbatim', () => {
+    const artifact = { frontMatter: { name: 'Plan', created: '2026-05-05T14:00' }, body: '' };
+    expect(formatArtifactMeta('2026-05-05-plan', artifact, [], [], []).match(/^created: (.+)$/m)?.[1]).toBe(artifact.frontMatter.created);
   });
 
   it('keeps record-like body text and nested code inside the authored block', () => {
-    const content = 'First line\n\nid: fake-record\nfile: fake.md\n```yaml\nid: nested\n```\n';
-    const entry: Entry = { meta: { created: '2026-05-05T14:00' }, content, weekFile: '2026-05-04.md' };
-    const result = formatEntryFull(entry);
+    const body = 'First line\n\nid: fake-record\nfile: fake.md\n```yaml\nid: nested\n```\n';
+    const result = formatArtifactFull('2026-05-05-plan', { frontMatter: { name: 'Plan', created: '2026-05-05T14:00' }, body }, [], [], []);
     expect(result.match(/^id:/gm)).toHaveLength(1);
     expect(result).toContain('  id: fake-record\n  file: fake.md');
-    const restored = result.split('content: |\n')[1].split('\n').map(line => line.slice(2)).join('\n');
-    expect(restored).toBe(content);
+    const restored = result.split('body: |\n')[1].split('\n').map(line => line.slice(2)).join('\n');
+    expect(restored).toBe(body);
   });
 });
 
@@ -288,131 +148,94 @@ describe('lossless scalar framing', () => {
     expect(output).not.toContain('\nfile: forged');
   };
 
-  it('escapes every action scalar and related ID without creating records', () => {
-    const action: Action = {
-      frontMatter: { name: injected, created: injected, scheduled: injected, deadline: injected, timezone: injected, duration: injected, calendar: injected },
-      body: '',
-    };
-    const result = formatActionMeta(injected, action, [injected], injected);
-    expectSafe(result);
-    for (const key of ['id', 'file', 'name', 'created', 'scheduled', 'deadline', 'timezone', 'duration', 'calendar']) {
-      expect(readScalar(result, key)).toBe(injected);
-    }
-    expect(JSON.parse(result.match(/^projects: (.+)$/m)![1])).toEqual([injected]);
-    expect(result.match(/^id: /gm)).toHaveLength(1);
-  });
-
-  it('preserves multiline display names across every named entity kind', () => {
+  it('preserves multiline display names', () => {
     const name = 'Plan\n\n  Preserve indentation\n';
-    const action = { frontMatter: { name, created: '2026-10-03T09:00' }, body: '' };
-    const project = { frontMatter: { name, created: '2026-10-03T09:00' }, body: '' };
-    const artifact = { frontMatter: { name, created: '2026-10-03T09:00' }, body: '' };
-    for (const result of [formatActionMeta('action', action, []), formatProjectMeta('project', project), formatArtifactMeta('artifact', artifact, [], [], [])]) {
-      expect(readScalar(result, 'name')).toBe(name);
-      expect(result.match(/^id: /gm)).toHaveLength(1);
-    }
+    const result = formatArtifactMeta('artifact', { frontMatter: { name, created: '2026-10-03T09:00' }, body: '' }, [], [], []);
+    expect(readScalar(result, 'name')).toBe(name);
+    expect(result.match(/^id: /gm)).toHaveLength(1);
   });
 
   it('distinguishes multiline names from literal quoted escape representations', () => {
     const multiline = 'Plan\nreview';
     const quoted = JSON.stringify(multiline);
     const names = [multiline, quoted, JSON.stringify(quoted), '  "Keep these spaces"  ', '"Quoted name"'];
-    const formatters = [
-      (name: string) => formatActionMeta('action', { frontMatter: { name, created: '2026-10-03T09:00' }, body: '' }, []),
-      (name: string) => formatProjectMeta('project', { frontMatter: { name, created: '2026-10-03T09:00' }, body: '' }),
-      (name: string) => formatArtifactMeta('artifact', { frontMatter: { name, created: '2026-10-03T09:00' }, body: '' }, [], [], []),
-    ];
-    for (const format of formatters) {
-      const encoded = names.map(name => format(name).match(/^name: (.+)$/m)![1]);
-      expect(new Set(encoded).size).toBe(names.length);
-      expect(encoded.map(value => JSON.parse(value))).toEqual(names);
-    }
+    const format = (name: string) => formatArtifactMeta('artifact', { frontMatter: { name, created: '2026-10-03T09:00' }, body: '' }, [], [], []);
+    const encoded = names.map(name => format(name).match(/^name: (.+)$/m)![1]);
+    expect(new Set(encoded).size).toBe(names.length);
+    expect(encoded.map(value => JSON.parse(value))).toEqual(names);
     for (const name of ['Plain name', 'null', '2026-10-03T09:00', '"An unfinished quote', 'Work: "iCloud"']) {
       expect(formatScalar(name)).toBe(name);
     }
   });
 
   it('distinguishes one punctuated list ID from multiple IDs while retaining canonical handles', () => {
-    const entry = { meta: { created: '2026-10-03T09:00', projects: ['literal, id'] }, content: '', weekFile: '' };
-    const combined = formatEntryMeta(entry);
-    const separate = formatEntryMeta({ ...entry, meta: { ...entry.meta, projects: ['literal', 'id'] } });
+    const artifact = { frontMatter: { name: 'Plan', created: '2026-10-03T09:00' }, body: '' };
+    const combined = formatArtifactMeta('2026-10-03-plan', artifact, ['literal, id'], [], []);
+    const separate = formatArtifactMeta('2026-10-03-plan', artifact, ['literal', 'id'], [], []);
     expect(combined).toContain('projects: ["literal, id"]');
     expect(separate).toContain('projects: [literal, id]');
     expect(combined).not.toBe(separate);
     const punctuated = ['literal]', '[literal', '{literal}', '  literal  ', '"unfinished'];
-    const encoded = formatEntryMeta({ ...entry, meta: { ...entry.meta, actions: punctuated } });
+    const encoded = formatArtifactMeta('2026-10-03-plan', artifact, [], punctuated, []);
     expect(JSON.parse(encoded.match(/^actions: (.+)$/m)![1])).toEqual(punctuated);
-    const artifact = { frontMatter: { name: 'Plan', created: '2026-10-03T09:00' }, body: '' };
     expect(formatArtifactMeta('2026-10-03-plan', artifact, [], [], ['#entry/2026-10-03T09:00', '#project/2026-10-03-work']))
       .toContain('backlinks: [#entry/2026-10-03T09:00, #project/2026-10-03-work]');
   });
 
   it('quotes an index ID containing the row separator without quoting ordinary descriptions', () => {
     const id = '2026-a — b';
-    for (const format of [formatIndexLine, formatArtifactIndex]) {
-      const combined = format({ id, description: 'c' });
-      const ordinary = format({ id: '2026-a', description: 'b — c' });
-      expect(combined).not.toBe(ordinary);
-      const fields = combined.match(/^("(?:[^"\\]|\\.)*") — (.*)$/)!;
-      expect(JSON.parse(fields[1])).toBe(format === formatArtifactIndex ? `#artifact/${id}` : id);
-      expect(fields[2]).toBe('c');
-      expect(ordinary).toBe(`${format === formatArtifactIndex ? '#artifact/' : ''}2026-a — b — c`);
-    }
-    expect(formatIndexLine({ id: '2026-10-03-plan', description: 'Plan, draft — review' }))
-      .toBe('2026-10-03-plan — Plan, draft — review');
+    const combined = formatArtifactIndex({ id, description: 'c' });
+    const ordinary = formatArtifactIndex({ id: '2026-a', description: 'b — c' });
+    expect(combined).not.toBe(ordinary);
+    const fields = combined.match(/^("(?:[^"\\]|\\.)*") — (.*)$/)!;
+    expect(JSON.parse(fields[1])).toBe(`#artifact/${id}`);
+    expect(fields[2]).toBe('c');
+    expect(ordinary).toBe('#artifact/2026-a — b — c');
+    expect(formatArtifactIndex({ id: '2026-10-03-plan', description: 'Plan, draft — review' }))
+      .toBe('#artifact/2026-10-03-plan — Plan, draft — review');
   });
 
-  it('escapes malformed entry IDs and paths while retaining inline link lists', () => {
-    const entry: Entry = { meta: { created: injected, projects: [injected], actions: [injected] }, content: '', weekFile: '' };
-    const result = formatEntryMeta(entry, injected);
-    expectSafe(result);
-    expect(readScalar(result, 'id')).toBe(injected);
-    expect(readScalar(result, 'file')).toBe(injected);
-    expect(JSON.parse(result.match(/^projects: (.+)$/m)![1])).toEqual([injected]);
-    expect(JSON.parse(result.match(/^actions: (.+)$/m)![1])).toEqual([injected]);
-  });
-
-  it('escapes project end times and related IDs without modifying relationship text', () => {
-    const project = { frontMatter: { name: 'Plan', created: injected, ended: injected, related_projects: [{ project: injected, description: 'Exact relationship' }] }, body: '' };
-    const result = formatProjectMeta(injected, project, injected);
-    expectSafe(result);
-    for (const key of ['id', 'file', 'created', 'ended']) expect(readScalar(result, key)).toBe(injected);
-    expect(JSON.parse(result.match(/^  - project: (.+)$/m)![1])).toBe(injected);
-    expect(result).toContain('    description: |\n      Exact relationship');
-  });
-
-  it('escapes artifact handles, attachment filenames, and all association lists', () => {
-    const artifact = { frontMatter: { name: 'Plan', created: injected, attachments: [injected] }, body: '' };
-    const result = formatArtifactMeta(injected, artifact, [injected], [injected], [injected]);
+  it('escapes artifact scalars, attachment filenames, and all association lists', () => {
+    const artifact = { frontMatter: { name: injected, created: injected, attachments: [injected] }, body: '' };
+    const result = formatArtifactMeta(injected, artifact, [injected], [injected], [injected], undefined,
+      [{filename: injected, error: 'Invalid attachment fixture'}]);
     expectSafe(result);
     expect(readScalar(result, 'id')).toBe(injected);
     expect(readScalar(result, 'handle')).toBe(`#artifact/${injected}`);
+    expect(readScalar(result, 'name')).toBe(injected);
     expect(readScalar(result, 'created')).toBe(injected);
+    expect(result.match(/^id: /gm)).toHaveLength(1);
     for (const key of ['attachments', 'projects', 'actions', 'backlinks']) {
       expect(JSON.parse(result.match(new RegExp(`^${key}: (.+)$`, 'm'))![1])).toEqual([injected]);
     }
-    const valid = formatArtifactMeta('2026-10-03-plan', { frontMatter: { name: 'Plan', created: '2026-10-03T09:00', attachments: ['final % draft.pdf'] }, body: '' }, [], [], []);
+    const valid = formatArtifactMeta('2026-10-03-plan', { frontMatter: { name: 'Plan', created: '2026-10-03T09:00', attachments: ['final % draft.pdf'] }, body: '' }, [], [], [], undefined,
+      [{filename: 'final % draft.pdf', handle: '#artifact/2026-10-03-plan/final%20%25%20draft.pdf', path: '/fixture/final % draft.pdf'}]);
     expect(valid).toContain('attachments: [final % draft.pdf]');
     expect(valid).toContain('target: #artifact/2026-10-03-plan/final%20%25%20draft.pdf');
   });
 
-  it('keeps every index item on one row and preserves the one-line description rule', () => {
-    const item = { id: injected, description: 'Line one\r\nLine two\rLine three\u001b[0m\u2028four' };
-    for (const format of [formatIndexLine, formatArtifactIndex]) {
-      const result = format(item);
-      expectSafe(result);
-      expect(result.split('\n')).toHaveLength(1);
-      const [id, description] = result.split(' — ');
-      expect(JSON.parse(id)).toBe(format === formatArtifactIndex ? `#artifact/${injected}` : injected);
-      expect(JSON.parse(description)).toBe('Line one Line two Line three\u001b[0m\u2028four');
+  it('escapes attachment file rows without forging records', () => {
+    const lines = formatAttachmentFiles([{filename: injected, handle: injected, path: injected, error: injected}], 'plan', [injected]);
+    expectSafe(lines.join('\n'));
+    expect(lines).toHaveLength(5);
+    for (const [index, key] of ['filename', 'handle', 'path', 'error'].entries()) {
+      expect(JSON.parse(lines[index + 1].split(`${key}: `)[1])).toBe(injected);
     }
   });
 
+  it('keeps every index item on one row and preserves the one-line description rule', () => {
+    const result = formatArtifactIndex({ id: injected, description: 'Line one\r\nLine two\rLine three\u001b[0m\u2028four' });
+    expectSafe(result);
+    expect(result.split('\n')).toHaveLength(1);
+    const [id, description] = result.split(' — ');
+    expect(JSON.parse(id)).toBe(`#artifact/${injected}`);
+    expect(JSON.parse(description)).toBe('Line one Line two Line three\u001b[0m\u2028four');
+  });
+
   it('keeps ordinary scalar values and intentional spaces unchanged', () => {
-    const action = { frontMatter: { name: '  Exact display name  ', created: '2026-10-03T09:00', scheduled: '2026-10-04T10:00', timezone: 'America/Los_Angeles', calendar: 'Work: "iCloud"', duration: 'PT1H' }, body: '' };
-    expect(formatActionMeta('2026-10-03-plan', action, ['project-a'], '/data/actions/plan.md', 'Plain description')).toBe([
-      'id: 2026-10-03-plan', 'file: /data/actions/plan.md', 'name:   Exact display name  ', 'created: 2026-10-03T09:00', 'description: Plain description',
-      'scheduled: 2026-10-04T10:00', 'timezone: America/Los_Angeles', 'duration: PT1H', 'calendar: Work: "iCloud"', 'projects: [project-a]',
+    const artifact = { frontMatter: { name: '  Exact display name  ', created: '2026-10-03T09:00' }, body: '' };
+    expect(formatArtifactMeta('2026-10-03-plan', artifact, ['project-a'], [], [], 'Plain description')).toBe([
+      'id: 2026-10-03-plan', 'handle: #artifact/2026-10-03-plan', 'name:   Exact display name  ', 'created: 2026-10-03T09:00', 'description: Plain description', 'projects: [project-a]',
     ].join('\n'));
   });
 

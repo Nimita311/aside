@@ -6,9 +6,8 @@ import ts from 'typescript';
 
 const defaultWebappDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const labels = {
-  instance: 'Instance', entry: 'Entry', project: 'Project', action: 'Action', asset: 'Artifact / file', date: 'Date',
-  WAITING_CLOCK: 'Slipped clock', EMPTY_SLOT: 'Backlog slot', OPEN_DETAIL_ICON: 'Open details',
-  CALENDAR_OFF_ICON: 'Calendar unavailable', WARNING_ICON: 'Instance warning', WORKTREE_ICON: 'Git worktree',
+  OPEN_DETAIL_ICON: 'Open details',
+  CALENDAR_OFF_ICON: 'Calendar unavailable', WARNING_ICON: 'Instance warning',
   ARROW_UP: 'Previous period', ARROW_DOWN: 'Next period',
   'btn-instance-switch': 'Instance menu', 'connection-status': 'Offline connection', 'btn-settings': 'Settings',
   'btn-theme-toggle': 'Theme', 'btn-add-instance': 'Add instance', 'btn-panel-retract': 'Retract panel',

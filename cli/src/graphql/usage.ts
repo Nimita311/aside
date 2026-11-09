@@ -1,23 +1,21 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { constants, realpathSync } from 'node:fs';
-import { chmod, lstat, mkdir, open, readdir, rmdir, stat, unlink } from 'node:fs/promises';
+import { constants } from 'node:fs';
+import { chmod, lstat, mkdir, open, readdir, rmdir, unlink } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { Kind, getOperationAST, type DocumentNode, type SelectionNode } from 'graphql';
 import type { GraphQLResult } from './schema.js';
-import type { MutationChange } from '../mcp/tools/mutation-result.js';
+import type { MutationChange } from '../source/mutation-result.js';
 import { daemonPaths } from '../daemon/paths.js';
-import { readManifestResult } from '../core/instance.js';
 import { DIAGNOSTIC_RETENTION_DAYS } from '../core/system-config.js';
 
 const DAY = 86_400_000;
 const FILE = /^(\d{4}-\d{2}-\d{2})-(\d{3,})\.jsonl$/;
 const BUCKET = /^[a-f0-9]{64}$/;
 export const usageBaseDirectory = (logs = daemonPaths().logs) => join(logs, 'graphql');
-export const usageDirectory = (root: string, logs = daemonPaths().logs) => {
-  let canonical = resolve(root);
-  try { canonical = realpathSync(root); } catch { /* Retain the canonical path supplied by the collector. */ }
-  return join(usageBaseDirectory(logs), createHash('sha256').update(canonical).digest('hex'));
-};
+// Admission supplies canonical instance roots. Logging preserves that identity
+// even after the source disappears or an admission alias changes its target.
+export const usageDirectory = (root: string, logs = daemonPaths().logs) =>
+  join(usageBaseDirectory(logs), createHash('sha256').update(resolve(root)).digest('hex'));
 export const legacyUsageDirectory = (root: string) => join(root, '.aside-logs', 'graphql');
 export interface EffectCounts { created: number; updated: number; removed: number }
 export interface UsageEvent {
@@ -55,43 +53,42 @@ export class UsageRequest {
   private started = performance.now();
   private timestamp = new Date().toISOString();
   private requestId = randomUUID();
-  private scopes = new Map<string, EffectCounts>();
+  private scopes = new Map<string, {effects: EffectCounts; identity: string}>();
   private description: ReturnType<typeof queryShape> = null;
   private executed = false;
   constructor(private logger: GraphQLUsageLog, private operation: 'query' | 'mutation') {}
-  touch(root: string): void {
-    try {
-      const canonical = realpathSync(root);
-      if (!this.scopes.has(canonical)) this.scopes.set(canonical, {created: 0, updated: 0, removed: 0});
-    } catch { /* A removed or unavailable instance cannot receive a log. */ }
+  touch(root: string, identity?: string): void {
+    const canonical = resolve(root);
+    const scope = this.scopes.get(canonical);
+    if (!scope) this.scopes.set(canonical, {effects: {created: 0, updated: 0, removed: 0}, identity: identity ?? ''});
+    else if (identity !== undefined) scope.identity = identity;
   }
   describe(document: DocumentNode, operationName?: string): void { this.description = queryShape(document, operationName); }
   executing(): void { this.executed = true; }
   validationFailed(): void { this.executed = false; }
-  changes(root: string, changes: readonly MutationChange[]): void {
-    this.touch(root);
-    let canonical: string;
-    try { canonical = realpathSync(root); } catch { return; }
-    const effects = this.scopes.get(canonical)!;
+  changes(root: string, changes: readonly MutationChange[], identity?: string): void {
+    this.touch(root, identity);
+    const canonical = resolve(root);
+    const effects = this.scopes.get(canonical)!.effects;
     for (const change of changes) effects[change.effect === 'CREATED' ? 'created' : change.effect === 'UPDATED' ? 'updated' : 'removed']++;
   }
-  finish(result: GraphQLResult | undefined, fallback: string | null, cancelled: boolean): void {
+  finish(result: GraphQLResult | undefined, fallback: string | null, cancelled: boolean, fallbackIdentity?: string): void {
     // Introspection/discovery with no instance context does not invent one.
-    if (!this.scopes.size && fallback) this.touch(fallback);
+    if (!this.scopes.size && fallback) this.touch(fallback, fallbackIdentity);
     const mutations = result?.extensions?.mutations;
     const mutationErrors = Array.isArray(mutations) ? mutations.filter(m => m?.error).length : 0;
     const errorCount = (result?.errors?.length ?? (result ? 0 : 1)) + mutationErrors;
-    const effects = [...this.scopes.values()];
+    const effects = [...this.scopes.values()].map(scope => scope.effects);
     const hasChanges = effects.some(e => e.created + e.updated + e.removed > 0);
     const hasData = !!result?.data && Object.values(result.data).some(v => v !== null && v !== undefined);
     const outcome = cancelled ? 'cancelled' : !errorCount ? 'success' : hasChanges || hasData ? 'partial' : 'failure';
     const errorCategory = cancelled ? 'cancelled' : !errorCount ? null : !this.executed ? 'validation' : mutationErrors ? 'mutation' : 'execution';
     const durationMs = Math.round((performance.now() - this.started) * 100) / 100;
-    for (const [root, instanceEffects] of this.scopes) this.logger.record(root, {
+    for (const [root, scope] of this.scopes) this.logger.record(root, {
       schemaVersion: 1, timestamp: this.timestamp, requestId: this.requestId, operation: this.operation,
       shape: this.description?.shape ?? null, shapeHash: this.description?.shapeHash ?? null, fields: this.description?.fields ?? [],
-      durationMs, outcome, errorCategory, errorCount, effects: instanceEffects,
-    });
+      durationMs, outcome, errorCategory, errorCount, effects: scope.effects,
+    }, scope.identity);
   }
 }
 
@@ -113,14 +110,14 @@ export class GraphQLUsageLog {
   }
   start(operation: 'query' | 'mutation'): UsageRequest { return new UsageRequest(this, operation); }
   status() { return {queuedBytes: this.queuedBytes, dropped: this.dropped, errors: this.errors}; }
-  record(root: string, event: UsageEvent): void {
-    try { root = realpathSync(root); } catch { this.errors++; this.dropped++; return; }
+  record(root: string, event: UsageEvent, identity = ''): void {
+    root = resolve(root);
     const line = JSON.stringify(event) + '\n';
     const bytes = Buffer.byteLength(line);
     if (bytes + 1 > this.limits.maxBytes || bytes > 256 * 1024 || this.queuedBytes + bytes > this.limits.queueBytes) { this.dropped++; return; }
     this.queuedBytes += bytes;
     void this.serialize(usageDirectory(root, this.logs), async () => {
-      try { await this.append(root, line, bytes); }
+      try { await this.append(root, line, bytes, identity); }
       catch { this.errors++; this.dropped++; }
       finally { this.queuedBytes -= bytes; }
     });
@@ -202,9 +199,9 @@ export class GraphQLUsageLog {
     }
     return {files, removed};
   }
-  private async append(root: string, line: string, bytes: number): Promise<void> {
-    // The instance is only read. All collection files live beside daemon.log.
-    if (!(await stat(join(root, 'aside.md'))).isFile()) throw new Error('Instance is unavailable');
+  private async append(root: string, line: string, bytes: number, identity: string): Promise<void> {
+    // Request attribution is captured from published state. Appending touches
+    // only private log storage, even when source files change before this runs.
     if (!await this.directory(this.logs)) await mkdir(this.logs, {recursive: true, mode: 0o700});
     await this.directory(this.logs);
     await chmod(this.logs, 0o700);
@@ -221,7 +218,7 @@ export class GraphQLUsageLog {
     try {
       if (!(await metadata.stat()).isFile()) throw new Error('Invalid instance metadata');
       await metadata.chmod(0o600);
-      await metadata.writeFile(JSON.stringify({schemaVersion: 1, path: root, id: readManifestResult(root).value.id}) + '\n');
+      await metadata.writeFile(JSON.stringify({schemaVersion: 1, path: root, id: identity}) + '\n');
     } finally { await metadata.close(); }
     const now = Date.now();
     const today = new Date(now).toISOString().slice(0, 10);

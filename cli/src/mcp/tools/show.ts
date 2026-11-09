@@ -1,4 +1,4 @@
-// The show tool's route building: validate the target against the store and
+// Show route building: validate the target against the store and
 // the webapp's route grammar, and emit the route the webapp navigates by.
 // Mirrors webapp/src/route.ts (buildRoute): segments are
 // encodeURIComponent-ed with ':' kept raw so entry-id timestamps read clean,
@@ -6,11 +6,14 @@
 import { realpathSync, statSync } from 'node:fs';
 import { join, normalize, relative, sep } from 'node:path';
 import { assertArtifactId } from '../../core/artifact.js';
+import { artifactHandle, assertAttachmentFilename, parseArtifactHandle } from '../../core/artifact-reference.js';
 import { contentAttachmentPath } from '../../core/content-attachment.js';
 import { assertManagedPath, isManagedInstancePath } from '../../core/managed-path.js';
-import type { Store } from '../store.js';
+import type { Store } from '../../source/store.js';
 
 export interface ShowArgs {
+  source?: string;
+  search?: string;
   project?: string;
   action?: string;
   entry?: string;
@@ -24,7 +27,6 @@ export interface ShowPayload {
   route: string;
   url: string;
   outcome: 'OPENED' | 'UNAVAILABLE';
-  receipt: string;
 }
 
 export async function finishShow(
@@ -32,12 +34,7 @@ export async function finishShow(
   open: (url: string) => Promise<boolean>,
 ): Promise<ShowPayload> {
   const url = requestedUrl ?? `http://localhost:${port}/${route}`;
-  const outcome = await open(launchUrl ?? url) ? 'OPENED' : 'UNAVAILABLE';
-  const description = {
-    OPENED: 'opened browser',
-    UNAVAILABLE: 'no browser available — run aside show locally to authorize a browser',
-  }[outcome];
-  return { route: `/${route}`, url, outcome, receipt: `showing: /${route}\nurl: ${url}\ntab: ${description}` };
+  return { route: `/${route}`, url, outcome: await open(launchUrl ?? url) ? 'OPENED' : 'UNAVAILABLE' };
 }
 
 function encodeSegment(segment: string): string {
@@ -60,22 +57,37 @@ export function buildShowRoute(store: Store, args: ShowArgs): string {
     throw new Error('detail opens a project or action record — pass project or action with it.');
   }
 
+  let source: string | undefined;
+  if (args.source !== undefined) {
+    const target = parseArtifactHandle(args.source);
+    if (!target?.filename) throw new Error('source must name an exact artifact attachment: #artifact/<id>/<filename>.');
+    assertArtifactId(target.id); assertAttachmentFilename(target.filename);
+    const record = store.getArtifact(target.id);
+    if (!record) throw new Error(`source artifact "${target.id}" not found.\nHint: query artifacts to find the correct ID.`);
+    if (!record.frontMatter.attachments?.includes(target.filename)) {
+      throw new Error(`source attachment "${args.source}" is not indexed by its artifact.`);
+    }
+    try { contentAttachmentPath(store.getDataDir(), target.id, target.filename); }
+    catch { throw new Error(`source attachment "${args.source}" not found or unavailable.`); }
+    source = artifactHandle(target.id, target.filename);
+  }
+
   const parts: string[] = [];
   if (args.project) {
     if (!store.getProject(args.project)) {
-      throw new Error(`project "${args.project}" not found.\nHint: use query_projects to find the correct ID.`);
+      throw new Error(`project "${args.project}" not found.\nHint: query projects to find the correct ID.`);
     }
     parts.push('project', encodeSegment(args.project));
   }
   if (args.action) {
     if (!store.getAction(args.action)) {
-      throw new Error(`action "${args.action}" not found.\nHint: use query_actions to find the correct ID.`);
+      throw new Error(`action "${args.action}" not found.\nHint: query actions to find the correct ID.`);
     }
     parts.push('action', encodeSegment(args.action));
   }
   if (args.entry) {
     if (!store.getEntryFile(args.entry)) {
-      throw new Error(`entry "${args.entry}" not found.\nHint: use query_entries to find the correct ID (the entry's created timestamp).`);
+      throw new Error(`entry "${args.entry}" not found.\nHint: query entries to find the correct ID (the entry's created timestamp).`);
     }
     parts.push(encodeSegment(args.entry));
   } else if (args.detail) {
@@ -83,7 +95,7 @@ export function buildShowRoute(store: Store, args: ShowArgs): string {
   } else if (args.artifact) {
     assertArtifactId(args.artifact);
     if (!store.getArtifact(args.artifact)) {
-      throw new Error(`artifact "${args.artifact}" not found.\nHint: use query_artifacts to find the correct ID.`);
+      throw new Error(`artifact "${args.artifact}" not found.\nHint: query artifacts to find the correct ID.`);
     }
     parts.push('artifact', encodeSegment(args.artifact));
     if (args.filename !== undefined) {
@@ -107,5 +119,8 @@ export function buildShowRoute(store: Store, args: ShowArgs): string {
     }
     parts.push('asset', assetPath.split('/').map(encodeSegment).join('/'));
   }
-  return parts.join('/');
+  const query = new URLSearchParams();
+  if (source !== undefined) query.set('source', source);
+  if (args.search?.trim()) query.set('search', args.search.trim());
+  return parts.join('/') + (query.size ? `?${query}` : '');
 }

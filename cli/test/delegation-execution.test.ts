@@ -1,8 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { init } from '../src/commands/init.js';
-import { Store } from '../src/mcp/store.js';
+import { init } from '../src/source/bootstrap.js';
+import { Store } from '../src/source/store.js';
 import { createArtifact } from '../src/mcp/tools/artifact.js';
 import { handleCapture } from '../src/mcp/tools/capture.js';
 import { handleUpdateAction } from '../src/mcp/tools/update.js';
@@ -10,6 +10,7 @@ import { InstanceHost } from '../src/daemon/host.js';
 import { CalClient } from '../src/mcp/calendar/client.js';
 import { projectionId } from '../src/core/recurrence.js';
 import * as models from '../src/automation/models.js';
+import {hostGraphQL} from './support/graphql-host.js';
 
 // Exercise the actual worker deadlines without waiting for the next wall minute.
 const workerClock = vi.hoisted(() => ({beforeDeadlineMs: undefined as number | undefined}));
@@ -48,7 +49,7 @@ function agent(body: string) {
 }
 const declaration = () => ({run: {model: 'external', prompt: `#artifact/${prompt}`}});
 function task(fields: Record<string, any> = {}) {return handleCapture(host.load(dir).store, {content: 'Context', description: 'Context', actions: [{name: 'Delegated work', description: 'Work', body: 'Action-specific context.', delegation: declaration(), ...fields}]}).createdActionIds[0];}
-async function graph(document: string, mode = 'query', variables?: Record<string, unknown>) {return JSON.parse((await host.tool(dir, mode, {document, variables})).text);}
+async function graph(document: string, mode = 'query', variables?: Record<string, unknown>) {return JSON.parse((await hostGraphQL(host, dir, mode, {document, variables})).text);}
 async function dispatch(id: string) {return graph('mutation($id: ID!) {runDelegation(id: $id) {__typename id name status filePath stdoutLog stderrLog latenessMs action {id status occurrence {projected}} automation {name}}}', 'mutate', {id});}
 async function finished(id: string) {
   let result: any;

@@ -7,42 +7,55 @@ import { catalogFor, type ModelCatalogSnapshot } from '../automation/models.js';
 import { AutomationView, executionView, type AutomationOwner } from './automations.js';
 import { buildReferenceGraph, type ReferenceGraph } from './references.js';
 import {
-  buildSchema, printSchema, getOperationAST, getArgumentValues, getVariableValues, valueFromASTUntyped, GraphQLError, GraphQLScalarType, AbortedGraphQLExecutionError,
+  buildSchema, printSchema, getOperationAST, getArgumentValues, getVariableValues, getDirectiveValues, GraphQLSkipDirective, GraphQLIncludeDirective, valueFromASTUntyped, GraphQLError, GraphQLScalarType, AbortedGraphQLExecutionError,
   Kind as ASTKind, parse, validate, type DocumentNode, type GraphQLEnumType, type SelectionNode, type GraphQLResolveInfo, type GraphQLSchema, type FieldNode,
 } from 'graphql';
-import { Store } from '../mcp/store.js';
+import type { Store } from '../source/store.js';
 import { attachmentFiles } from '../mcp/attachments.js';
 import { artifactContentFilename } from '../core/artifact.js';
-import { isAsideDir, readInstanceRecordResult } from '../core/instance.js';
 import { isAbsolute, resolve } from 'node:path';
 import { isCalendarDate } from '../core/scheduling.js';
 import { assertRecurrence } from '../core/recurrence.js';
 import { parseArtifactHandle } from '../core/artifact-reference.js';
 import { prepareAutomationPrompts } from './automation-prompts.js';
-import { QueryView, status, type Kind, type RecordNode } from './query.js';
+import { QueryView, status, type DefaultProjectionRange, type Kind, type RecordNode } from './query.js';
 import type { SearchMatcher } from '../mcp/search.js';
+import type { SemanticSearchService } from '../semantic/search.js';
+import { searchSourceVersion } from '../semantic/source-version.js';
+import { SemanticSetupError } from '../semantic/embedding.js';
+import { unifiedSearch, type UnifiedSearchInput } from './search.js';
 import type { InstanceSession } from '../mcp/instance-session.js';
+import { InstancePathError } from '../core/instance.js';
 import { validate as validateInstance } from '../core/validator.js';
-import type { CalendarInfo } from '../mcp/calendar/info.js';
+import type { CalendarSystemInfo, CalendarSyncInfo } from '../mcp/calendar/info.js';
+import { systemInfoView, calendarSystemPayload, calendarSyncPayload, type SystemInfoOptions } from './system-info.js';
 import type { ShowArgs, ShowPayload } from '../mcp/tools/show.js';
-import type { InstanceRecord, ParseIssue } from '../core/types.js';
+import type { InstanceRecord, ParseIssue, ParseResult } from '../core/types.js';
 import type { AutomationRuntimeSnapshot, AutomationLogPage, AutomationLogStream } from './automation-runtime.js';
 import { normalizeMutationArguments, normalizeActionStatus, authoredAutomationModels } from './inputs.js';
 import { summarizeMutationError, deriveMutationPayloadIds, isFullMutationFailure } from './results.js';
-import { MutationWriteError, trackMutation, beforeMutationWrite, type MutationResult } from '../mcp/tools/mutation-result.js';
+import { MutationWriteError, type MutationResult } from '../source/mutation-result.js';
 import type { GraphQLUsageLog, UsageRequest } from './usage.js';
+import { normalizeGeocodeAddressInput, type GeocodeAddressInput, type GeocodeAddressResult } from '../mcp/geocoding.js';
+import { missingLocationGeoNotices, type LocationWriteNotice } from './location-notices.js';
+import type {ExecutionContextSnapshot} from '../core/execution-context.js';
 
 export interface GraphQLArgs { document: string; variables?: Record<string, unknown>; operationName?: string }
 export interface MutationOutcome {
-  text: string;
+  // The `aside artifact` receipt; GraphQL reads the structured fields.
+  text?: string;
   warnings?: string[];
   id?: string;
   entryId?: string;
   createdProjectIds?: string[];
   createdActionIds?: string[];
   mutationResult?: MutationResult;
+  readbackError?: string;
 }
-export type MutationRunner = (name: string, args: Record<string, unknown>) => MutationOutcome;
+/** The owner executes the primary operation and any prepared linked writes in
+ * one transaction, then publishes its final receipt and readback status. */
+export interface MutationPlan {operation: string; input: Record<string, unknown>; beforeWrite?: () => void}
+export type MutationRunner = (prepare: () => MutationPlan) => MutationOutcome & {mutationResult: MutationResult};
 export interface GraphQLResult {
   [key: string]: unknown;
   data?: Record<string, unknown> | null;
@@ -50,51 +63,9 @@ export interface GraphQLResult {
   extensions?: Record<string, unknown>;
 }
 
-const calendarGuidance = (text: string) => text
-  .replaceAll('calendar_info', 'calendarInfo via mutate')
-  .replaceAll('update_action', 'updateAction via mutate');
-// Receipts can contain authored names. Translate only generated recovery lines.
-const receiptGuidance = (text: string) => text.replace(/^[ \t]*recovery: .*$/gm, calendarGuidance);
-
-// Shared handlers also serve legacy MCP. Translate their generated guidance at
-// this boundary, preserving quoted IDs, authored names, and GraphQL error data.
-const errorHints = new Map([
-  ...(['project', 'action', 'entry', 'artifact'] as const).map<[string, string]>(kind => {
-    const plural = kind === 'entry' ? 'entries' : `${kind}s`;
-    const suffix = kind === 'entry' ? " (the entry's created timestamp)." : '.';
-    return [`\nHint: use query_${plural} to find the correct ID${suffix}`, `\nHint: query ${plural} to find the correct ID${suffix}`];
-  }),
-  ...(['project', 'action'] as const).flatMap<[string, string]>(kind => [
-    [`\nHint: use query_${kind}s to verify the ID; create new ${kind}s with capture or update_entry.`,
-      `\nHint: query ${kind}s to verify the ID; create new ${kind}s with capture or updateEntry through mutate.`],
-    [`\nHint: pass an object with {name, description} to create a new ${kind}, or use query_${kind}s to find the correct ID.`,
-      `\nHint: use {create: {name, description}} to create a new ${kind}, or query ${kind}s for the correct ID and link it with existingId.`],
-  ]),
-  ['\nHint: use query_entries to verify the ID, or capture to create a new entry.',
-    '\nHint: query entries to verify the ID, or use capture through mutate to create a new entry.'],
-  ['\nHint: use query_artifacts to verify the ID.', '\nHint: query artifacts to verify the ID.'],
-]);
-const errorOperations: Record<string, string> = {
-  query_entries: 'entries', query_projects: 'projects', query_actions: 'actions', query_artifacts: 'artifacts',
-  update_entry: 'updateEntry', update_project: 'updateProject', update_action: 'updateAction', update_occurrence: 'updateOccurrence',
-  create_artifact: 'createArtifact', update_artifact: 'updateArtifact', update_instance: 'updateInstance', create_instance: 'createInstance',
-};
-function errorGuidance(message: string): string {
-  for (const [legacy, graphql] of errorHints) if (message.endsWith(legacy)) {
-    return message.slice(0, -legacy.length) + graphql;
-  }
-  if (message === 'An occurrence edit is required; use planning_actions to read projections.') {
-    return 'An occurrence edit is required; use actions through query to read projections.';
-  }
-  if (message === 'Original occurrence does not exist in this template schedule. Query planning_actions for its exact identity.') {
-    return 'Original occurrence does not exist in this template schedule. Query actions for its exact occurrence identity.';
-  }
-  if (message.startsWith('Artifact ID "') && message.endsWith(' already exists. Choose another name or use update_artifact.')) {
-    return message.slice(0, -'update_artifact.'.length) + 'updateArtifact through mutate.';
-  }
-  return message.replace(/^Invalid ([a-z_]+) arguments:/, (prefix, operation: string) =>
-    errorOperations[operation] ? `Invalid ${errorOperations[operation]} arguments:` : prefix);
-}
+// Internal operation names are not API. Typed inputs preflight under their public
+// field names; instance creation validates in the session.
+const errorGuidance = (message: string) => message.replace(/^Invalid create_instance arguments:/, 'Invalid createInstance arguments:');
 
 // These are API views and typed inputs over the existing records, not new stored
 // entities or relationships. All persistence stays in the original handlers.
@@ -102,7 +73,7 @@ export function buildGraphQLSchema(): GraphQLSchema {
   const schema = buildSchema(graphQLSDL());
 
   // Reuse domain values while exposing familiar GraphQL enum spellings.
-  for (const type of ['ActionStatus', 'ProjectStatus', 'ProjectRelationDirection', 'AutomationOverlap', 'AutomationRunStatus', 'AutomationLogStream']) {
+  for (const type of ['ActionStatus', 'ProjectStatus', 'ProjectRelationDirection', 'AutomationOverlap', 'AutomationRunStatus', 'AutomationLogStream', 'SearchRecordKind']) {
     for (const value of (schema.getType(type) as GraphQLEnumType).getValues()) value.value = value.name.toLowerCase();
   }
   for (const value of (schema.getType('CalendarSyncState') as GraphQLEnumType).getValues()) value.value = value.name.toLowerCase();
@@ -192,11 +163,35 @@ function needsRecordNodes(info: GraphQLResolveInfo): boolean {
     selection.kind !== ASTKind.FIELD || selection.name.value === 'nodes'));
 }
 
+function projectionPath(info: GraphQLResolveInfo): string {
+  const parts: string[] = [];
+  for (let path: GraphQLResolveInfo['path'] | undefined = info.path; path; path = path.prev) {
+    parts.push(typeof path.key === 'number' ? '*' : path.key);
+  }
+  return parts.reverse().join('.');
+}
+
+function needsSearchRanking(info: GraphQLResolveInfo): boolean {
+  const visited = new Set<string>();
+  const selected = (selection: SelectionNode): boolean => {
+    if (getDirectiveValues(GraphQLSkipDirective, selection, info.variableValues)?.if === true
+      || getDirectiveValues(GraphQLIncludeDirective, selection, info.variableValues)?.if === false) return false;
+    if (selection.kind === ASTKind.FIELD) return ['hits', 'model', 'indexedChunks'].includes(selection.name.value);
+    if (selection.kind === ASTKind.FRAGMENT_SPREAD) {
+      if (visited.has(selection.name.value)) return false;
+      visited.add(selection.name.value);
+      return info.fragments[selection.name.value]?.selectionSet.selections.some(selected) ?? false;
+    }
+    return selection.selectionSet.selections.some(selected);
+  };
+  return info.fieldNodes.some(node => node.selectionSet?.selections.some(selected));
+}
+
 // CLI and daemon share document validation. The CLI can reject invalid source
 // and operation modes before starting or connecting to the daemon.
 export function prepareGraphQL(mode: 'query' | 'mutation', args: GraphQLArgs): { document?: DocumentNode; errors?: readonly unknown[] } {
   try {
-    if (args.document.length > 64_000 || JSON.stringify(args.variables ?? {}).length > 256_000) throw new GraphQLError('GraphQL request is too large.');
+    if (args.document.length > 64_000 || JSON.stringify(args.variables ?? {}).length > 256_000) throw new GraphQLError('GraphQL request is too large. Supply long content through contentFile or bodyFile.');
     checkVariables(args.variables);
     const document = parse(args.document, { maxTokens: 5_000 });
     checkSelections(document);
@@ -211,12 +206,28 @@ export function prepareGraphQL(mode: 'query' | 'mutation', args: GraphQLArgs): {
   }
 }
 
-export interface GraphQLExecutionOptions extends ExecutionLimits {
+export interface GraphQLExecutionOptions extends ExecutionLimits, SystemInfoOptions {
   mutate?: MutationRunner; matcher?: SearchMatcher; signal?: AbortSignal; instances?: InstanceSession;
+  semanticSearch?: SemanticSearchService['search'];
+  semanticReconcile?: (store: Store, options: {signal?: AbortSignal}) => Promise<unknown>;
+  /** Schedule derived-data maintenance for roots with confirmed persisted changes. */
+  onMutation?: (roots: readonly string[]) => void;
+  // A field reached an instance whose directory is gone. Its error is returned as
+  // data, so the owner hears about it here rather than from a rejected request.
+  onInstancePathError?: () => void;
+  /** Resolve requested cross-instance content through its lifecycle owner. */
+  resolveStore?: (path: string) => Store | undefined;
+  /** Read already loaded metadata without activating an instance or its features. */
+  loadedInstance?: (path: string) => ParseResult<InstanceRecord> | undefined;
+  executionContext?: (path: string) => ExecutionContextSnapshot | undefined;
+  /** Explicit passive admission for a target selected by this mutation. */
+  observeInstance?: (path: string) => boolean;
   usageLog?: GraphQLUsageLog;
   show?: (input: ShowArgs) => Promise<ShowPayload>;
   showUrl?: (input: ShowArgs) => Promise<string>;
-  calendarInfo?: () => Promise<CalendarInfo>;
+  geocodeAddress?: (input: GeocodeAddressInput, options: {signal?: AbortSignal}) => Promise<GeocodeAddressResult>;
+  requestCalendarAccess?: () => Promise<CalendarSystemInfo>;
+  calendarSync?: (root: string) => CalendarSyncInfo;
   runDelegation?: (root: string, id: string) => Promise<DelegationDispatchResult>;
   automationRuntime?: (root: string) => Promise<AutomationRuntimeSnapshot>;
   automationLog?: (root: string, runId: string, stream: AutomationLogStream, offset: number, limit: number) => Promise<AutomationLogPage | null>;
@@ -229,42 +240,63 @@ export async function executeGraphQL(
   const budget = new ExecutionBudget(options, options.signal);
   const usage = options.usageLog?.start(mode);
   const fallback = options.instances?.registry.activeInstance ?? (typeof source === 'function' ? null : source.getDataDir());
+  let fallbackIdentity: string | undefined;
+  if (usage) try {fallbackIdentity = typeof source === 'function' ? fallback ? options.loadedInstance?.(fallback)?.value.manifest.id : undefined : source.getInstance()?.manifest.id;} catch { /* Logging cannot change execution availability. */ }
+  const changedRoots = new Set<string>();
   let result: GraphQLResult | undefined;
   try {
-    result = await executeGraphQLImpl(source, mode, args, { ...options, signal: budget.signal }, budget, usage);
+    result = await executeGraphQLImpl(source, mode, args, { ...options, signal: budget.signal }, budget, usage, changedRoots);
     // Include validation failures and diagnostics in the query response ceiling.
     // Aborted requests already return a compact error without partial data.
     if (mode === 'query' && !budget.signal.aborted) budget.checkResponse(result);
     return result;
   } catch (error) {
     if (!(error instanceof GraphQLBudgetError)) throw error;
-    result = { errors: [{ message: error.message }], extensions: { diagnostics: [], complete: false, mutations: [] } };
+    result = { errors: [{ message: error.message }], extensions: { diagnostics: [], complete: false, mutations: [], defaultProjectionRanges: [] } };
     return result;
   } finally {
-    usage?.finish(result, fallback, options.signal?.aborted ?? false);
+    if (mode === 'mutation' && changedRoots.size && options.onMutation) {
+      // Saved writes remain authoritative even if maintenance cannot be queued.
+      // The host owns reconciliation failures and retries; this hook never
+      // converts a successful/partial write into a failed GraphQL mutation.
+      try { options.onMutation([...changedRoots]); } catch {}
+    }
+    usage?.finish(result, fallbackIdentity === undefined ? null : fallback, options.signal?.aborted ?? false, fallbackIdentity);
   }
 }
 
 async function executeGraphQLImpl(
   source: Store | (() => Store), mode: 'query' | 'mutation', args: GraphQLArgs,
-  options: GraphQLExecutionOptions, budget: ExecutionBudget, usage?: UsageRequest,
+  options: GraphQLExecutionOptions, budget: ExecutionBudget, usage: UsageRequest | undefined, changedRoots: Set<string>,
 ): Promise<GraphQLResult> {
-  const results: {operation: string; error: string | null; changes: MutationResult['changes']}[] = [];
+  const recordChanges = (root: string, changes: MutationResult['changes'], identity?: string) => {
+    if (changes.length) changedRoots.add(root);
+    usage?.changes(root, changes, identity ?? (store?.getDataDir() === root ? store.getManifest().id : metadata(root).value.manifest.id));
+  };
+  const results: {operation: string; error: string | null; changes: MutationResult['changes']; notices?: LocationWriteNotice[]}[] = [];
+  const calendarSyncSnapshots = new Map<string, ReturnType<typeof calendarSyncPayload>>();
+  const metadataSnapshots = new Map<string, ParseResult<InstanceRecord>>();
+  const executionSnapshots = new Map<string, ExecutionContextSnapshot | undefined>();
   let activationFailure: string | undefined;
   const effectAllowed = () => {
     if (activationFailure) throw new GraphQLError(`Later mutation fields were skipped because instance activation failed: ${activationFailure}`);
     if (options.signal?.aborted) throw new GraphQLError('GraphQL request cancelled.');
+    // A serial mutation root can change sync observations even when it returns
+    // the same instance. Share snapshots within its payload, not across roots.
+    calendarSyncSnapshots.clear();
+    metadataSnapshots.clear();
+    executionSnapshots.clear();
   };
-  let store: Store | undefined;
+  let store: Store | undefined = typeof source === 'function' ? undefined : source;
   let view: QueryView | undefined;
-  const rebuildRequired = new Set<string>();
+  let viewSourceVersion: string | undefined;
   let instanceRecord: InstanceRecord | null = null;
   const scopedViews = new Map<string, QueryView>();
   const nodePaths = new WeakMap<RecordNode, string>();
-  const referenceGraphs = new WeakMap<QueryView, ReferenceGraph>();
+  const referenceGraphs = new WeakMap<QueryView, {actions: number; graph: ReferenceGraph}>();
   const referenceIssues: ParseIssue[] = [];
-  const rememberView = (path: string, snapshot: QueryView) => {
-    usage?.touch(path);
+  const rememberView = (path: string, snapshot: QueryView, identity: string) => {
+    usage?.touch(path, identity);
     scopedViews.set(path, snapshot);
     for (const collection of Object.values(snapshot.records)) for (const node of collection.values()) nodePaths.set(node, path);
     return snapshot;
@@ -272,15 +304,51 @@ async function executeGraphQLImpl(
   const validations = new Map<string, ReturnType<typeof validateInstance>>();
   const runtimeSnapshots = new Map<string, Promise<AutomationRuntimeSnapshot>>();
   const runtimeIssues: ParseIssue[] = [];
+  const unavailable = (state: string, path: string) => new GraphQLError(
+    `Lifecycle-provided ${state} is unavailable for ${JSON.stringify(path)}. Select or register the instance before querying its content.`,
+    {extensions: {code: 'LIFECYCLE_STATE_UNAVAILABLE', state}},
+  );
+  const executionContext = (path: string) => {
+    if (!executionSnapshots.has(path)) {
+      const captured = options.executionContext?.(path)
+        ?? (store?.getDataDir() === path ? store.getExecutionContext?.() : undefined);
+      if (captured) executionSnapshots.set(path, structuredClone(captured));
+    }
+    const captured = executionSnapshots.get(path);
+    if (!captured) throw unavailable('execution context', path);
+    return captured;
+  };
+  const metadata = (path: string): ParseResult<InstanceRecord> => {
+    let snapshot = metadataSnapshots.get(path);
+    if (!snapshot) {
+      // A record query has already captured the active instance. Otherwise peek
+      // at its owner; passive inspection must never load a Store or arm jobs.
+      const parsed = view && store?.getDataDir() === path && instanceRecord
+        ? {value: instanceRecord, issues: []} : options.loadedInstance?.(path);
+      if (!parsed) throw unavailable('instance metadata', path);
+      snapshot = {value: structuredClone(parsed.value), issues: parsed.issues.map(issue => ({...issue}))};
+      metadataSnapshots.set(path, snapshot);
+      runtimeIssues.push(...snapshot.issues);
+    }
+    return snapshot;
+  };
+  const metadataInstance = <T extends {path: string}>(info: T) => {
+    const record = metadata(info.path).value;
+    return {...info, ...record, id: record.manifest.id, name: record.manifest.name, description: record.manifest.description};
+  };
   const refreshView = () => {
-    view = rememberView(store!.getDataDir(), new QueryView(store!, options.matcher, options.signal, budget.exceed));
+    // Portable read-only adapters expose records without execution settings.
+    // A managed owner supplies the additional configuration capability.
+    const context = options.executionContext?.(store!.getDataDir()) ?? store!.getExecutionContext?.();
+    if (context) executionSnapshots.set(store!.getDataDir(), structuredClone(context));
+    view = rememberView(store!.getDataDir(), new QueryView(store!, options.matcher, options.signal, budget.exceed), store!.getInstance()?.manifest.id ?? '');
+    viewSourceVersion = undefined;
     instanceRecord = structuredClone(store!.getInstance());
     return view;
   };
   const records = () => {
     if (!view) {
       store = typeof source === 'function' ? source() : source;
-      if (rebuildRequired.has(store.getDataDir())) { store.rebuild(); rebuildRequired.delete(store.getDataDir()); }
       return refreshView();
     }
     return view;
@@ -289,9 +357,11 @@ async function executeGraphQLImpl(
     if (path === options.instances?.registry.activeInstance || path === store?.getDataDir()) return records();
     let snapshot = scopedViews.get(path);
     if (!snapshot) {
-      const passive = new Store(path);
-      try { snapshot = rememberView(path, new QueryView(passive, options.matcher, options.signal, budget.exceed)); }
-      finally { passive.close(); }
+      const managed = options.resolveStore?.(path);
+      if (!managed) throw unavailable('records', path);
+      const context = options.executionContext?.(path) ?? managed.getExecutionContext?.();
+      if (context) executionSnapshots.set(path, structuredClone(context));
+      snapshot = rememberView(path, new QueryView(managed, options.matcher, options.signal, budget.exceed), managed.getInstance()?.manifest.id ?? '');
     }
     return snapshot;
   };
@@ -304,17 +374,31 @@ async function executeGraphQLImpl(
       workspace: options.instances?.registry.selection().workspace.includes(store!.getDataDir()) ?? false };
   };
   const catalogs = new Map<string, ModelCatalogSnapshot>();
+  const catalogContexts = new Map<string, string>();
+  const catalogForContext = async (path: string, refresh = false) => {
+    const context = executionContext(path), cached = catalogs.get(path);
+    if (!refresh && cached && catalogContexts.get(path) === context.revision) return cached;
+    const snapshot = await catalogFor(path, {refresh, signal: options.signal, executionContext: context});
+    catalogs.set(path, snapshot); catalogContexts.set(path, context.revision);
+    return snapshot;
+  };
   const extension = () => {
     const diagnostics = [...new Map([...(options.instances?.diagnostics ?? []), ...[...scopedViews].flatMap(([path, value]) => value.issues.map(issue =>
       issue.file && !isAbsolute(issue.file) && !issue.file.startsWith('#') ? {...issue, file: resolve(path, issue.file)} : issue)),
       ...referenceIssues, ...runtimeIssues, ...[...catalogs].flatMap(([path, value]) => value.diagnostics.map<ParseIssue>(message => ({severity: 'warning', code: 'model_discovery', file: resolve(path, '.aside'), message})))]
       .map(issue => [JSON.stringify([issue.severity, issue.code, issue.file, issue.field, issue.message]), issue])).values()];
-    return { diagnostics, complete: diagnostics.length === 0, mutations: results };
+    const ranges = new Map<string, DefaultProjectionRange>();
+    for (const snapshot of scopedViews.values()) for (const range of snapshot.defaultProjectionRanges) {
+      const previous = ranges.get(range.path);
+      ranges.set(range.path, {...range, templates: [...new Set([...(previous?.templates ?? []), ...range.templates])].sort()});
+    }
+    return { diagnostics, complete: diagnostics.length === 0, mutations: results,
+      defaultProjectionRanges: [...ranges.values()].sort((a, b) => a.path.localeCompare(b.path)) };
   };
   try {
     budget.check();
-    if (typeof source !== 'function') records();
-    if (args.document.length > 64_000 || JSON.stringify(args.variables ?? {}).length > 256_000) throw new GraphQLError('GraphQL request is too large.');
+    if (mode === 'query' && typeof source !== 'function') records();
+    if (args.document.length > 64_000 || JSON.stringify(args.variables ?? {}).length > 256_000) throw new GraphQLError('GraphQL request is too large. Supply long content through contentFile or bodyFile.');
     checkVariables(args.variables);
     const document = parse(args.document, { maxTokens: 5_000 });
     checkSelections(document);
@@ -343,6 +427,9 @@ async function executeGraphQLImpl(
         ? fragments.get(selection.name.value)!.selectionSet : selection.selectionSet).selections) collectRoots(child);
     };
     for (const selection of operation.selectionSet.selections) collectRoots(selection);
+    if (rootFields.filter(field => field.name.value === 'geocodeAddress').length > 5) {
+      throw new GraphQLError('At most five location lookups are allowed per operation. Refine the query in separate requests.');
+    }
     const selectedPath = (field: FieldNode, variables: Record<string, unknown>): string | undefined => {
       if (!options.instances) return;
       const input: Record<string, any> = Object.fromEntries((field.arguments ?? []).map(arg => [arg.name.value, valueFromASTUntyped(arg.value, variables)]));
@@ -355,7 +442,11 @@ async function executeGraphQLImpl(
     if (mode === 'query') usage?.executing();
     // Record roots share one loaded snapshot with instance metadata regardless
     // of sibling field order; metadata-only inspections remain passive.
-    if (mode === 'query' && rootFields.some(field => ['entry', 'entries', 'project', 'projects', 'action', 'actions', 'artifact', 'artifacts'].includes(field.name.value))) records();
+    if (mode === 'query' && rootFields.some(field => ['entry', 'entries', 'project', 'projects', 'action', 'actions', 'artifact', 'artifacts', 'search'].includes(field.name.value))) records();
+    // No asynchronous work separates the shared record snapshot from this
+    // capture. Typed-only queries need no source hashing; search pins its
+    // source before any root can await regex workers or model inference.
+    if (mode === 'query' && rootFields.some(field => field.name.value === 'search')) viewSourceVersion = searchSourceVersion(store!);
     const prepared = new WeakMap<FieldNode, Record<string, unknown>>();
     if (mode === 'mutation') {
       const variableResult = getVariableValues(schema, operation.variableDefinitions ?? [], args.variables ?? {});
@@ -368,9 +459,10 @@ async function executeGraphQLImpl(
           const input = normalizeMutationArguments(selection.name.value, getArgumentValues(field, selection, variableResult.variableValues));
           const names = authoredAutomationModels(input);
           let choices = scope && catalogs.get(scope);
-          if (names.length && scope && isAsideDir(scope) && !choices) {
-            choices = await catalogFor(scope, {signal: options.signal});
-            catalogs.set(scope, choices);
+          if (names.length && scope && !choices) {
+            const admitted = options.observeInstance ? options.observeInstance(scope)
+              : scope === store?.getDataDir() || options.loadedInstance?.(scope) !== undefined;
+            if (admitted) choices = await catalogForContext(scope);
           }
           for (const name of names) if (choices && !choices.models.some(model => model.name === name)) {
             throw new GraphQLError(`Model ${name} is not selectable in the execution's instance.`);
@@ -381,28 +473,41 @@ async function executeGraphQLImpl(
     }
     usage?.executing();
     const roots: Record<string, unknown> = {};
+    const systemInfo = systemInfoView(options);
+    roots.systemInfo = () => systemInfo;
     const session = () => {
       if (!options.instances) throw new Error('Instance operations require an MCP session.');
       return options.instances;
     };
-    roots.instances = () => session().instances(false);
+    roots.geocodeAddress = async ({input}: {input: GeocodeAddressInput}) => {
+      budget.check();
+      const normalized = normalizeGeocodeAddressInput(input);
+      const result: GeocodeAddressResult = options.geocodeAddress
+        ? await options.geocodeAddress(normalized, {signal: options.signal})
+        : {status: 'UNAVAILABLE', provider: 'APPLE', candidates: [], error: 'Native geocoding requires the local agent API on macOS.'};
+      budget.check();
+      if (result.status === 'FAILED' || result.status === 'UNAVAILABLE') {
+        runtimeIssues.push({severity: 'warning', code: `geocoding_${result.status.toLowerCase()}`, file: '#geocoding',
+          message: result.error ?? 'Native geocoding could not complete.'});
+      }
+      return result;
+    };
+    roots.instances = async () => (await session().instances(metadata))
+      .map(metadataInstance);
     roots.activeInstance = async () => {
       if (!options.instances) return snapshotInstance();
-      const info = await session().activeInstance(false);
+      const info = await session().activeInstance(metadata);
       budget.check();
       if (!info) return null;
-      usage?.touch(info.path);
+      usage?.touch(info.path, metadata(info.path).value.manifest.id);
       if (view && store?.getDataDir() === info.path) return snapshotInstance();
-      // Metadata, model discovery and retained logs do not load Store or arm jobs.
-      const parsed = readInstanceRecordResult(info.path);
-      runtimeIssues.push(...parsed.issues);
-      return {...info, ...parsed.value};
+      return metadataInstance(info);
     };
     roots.show = async ({ input }: { input: ShowArgs }) => {
       effectAllowed();
-      if (options.instances?.registry.activeInstance) usage?.touch(options.instances.registry.activeInstance);
       if (!options.show) throw new Error('Show operations require an MCP session.');
       const result = await options.show(input);
+      if (options.instances?.registry.activeInstance) usage?.touch(options.instances.registry.activeInstance, metadata(options.instances.registry.activeInstance).value.manifest.id);
       const error = result.outcome === 'UNAVAILABLE'
         ? 'Could not open the default browser. Call showUrl with the same input and open its file:// URL in another local browser; authorization and redirection are automatic.'
         : null;
@@ -411,50 +516,18 @@ async function executeGraphQLImpl(
     };
     roots.showUrl = async ({ input }: { input: ShowArgs }) => {
       effectAllowed();
-      if (options.instances?.registry.activeInstance) usage?.touch(options.instances.registry.activeInstance);
       if (!options.showUrl) throw new Error('Show URL operations require an MCP session.');
       const url = await options.showUrl(input);
+      if (options.instances?.registry.activeInstance) usage?.touch(options.instances.registry.activeInstance, metadata(options.instances.registry.activeInstance).value.manifest.id);
       results.push({operation: 'showUrl', error: null, changes: []});
       return url;
     };
-    roots.calendarInfo = async () => {
+    roots.requestCalendarAccess = async () => {
       effectAllowed();
-      if (options.instances?.registry.activeInstance) usage?.touch(options.instances.registry.activeInstance);
-      if (!options.calendarInfo) throw new Error('Calendar information requires an MCP session.');
-      const result = await options.calendarInfo();
-      // Recovery guidance must name the operations exposed in this mode.
-      const diagnostic = (value: CalendarInfo['diagnostics'][number]) => ({ ...value, recovery: calendarGuidance(value.recovery) });
-      const payload = {
-        ...result, receipt: receiptGuidance(result.receipt), diagnostics: result.diagnostics.map(diagnostic),
-        syncStates: result.syncStates.map(state => ({ ...state, diagnostic: state.diagnostic ? diagnostic(state.diagnostic) : undefined })),
-        failures: result.failures.map(failure => ({ ...failure, diagnostic: diagnostic(failure.diagnostic) })),
-      };
-      const diagnosticMessage = (value: CalendarInfo['diagnostics'][number]) => `${value.reason} Recovery: ${value.recovery}`;
-      const problems = [...payload.failures, ...payload.syncStates.flatMap(state =>
-        state.diagnostic && state.diagnostic.category !== 'sync-pending'
-          // Inactive actions can retain a diagnostic from an earlier retry.
-          && !(state.status === 'disabled' && ['no calendar', 'action no longer exists'].includes(state.reason ?? ''))
-          ? [{id: state.id, diagnostic: state.diagnostic}] : [])];
-      const messages = [...payload.diagnostics.map(diagnosticMessage),
-        ...problems.map(value => `${value.id}: ${diagnosticMessage(value.diagnostic)}`)];
-      for (const state of payload.syncStates) {
-        if (state.status === 'failed' && (!state.diagnostic || state.diagnostic.category === 'sync-pending')) {
-          messages.push(`${state.id}: ${state.reason ?? 'Calendar sync failed.'}`);
-        }
-      }
-      for (const issue of payload.issues) {
-        // A scheduled action without a Calendar intentionally does not sync.
-        if (issue.reason === 'no calendar') continue;
-        if (payload.syncStates.some(state => state.id === issue.id && state.status === 'pending'
-          && state.diagnostic?.category === 'sync-pending' && state.reason === issue.reason)) continue;
-        if (!problems.some(value => value.id === issue.id && value.diagnostic.reason === issue.reason)
-          && !payload.syncStates.some(state => state.id === issue.id && state.status === 'failed' && state.reason === issue.reason)) {
-          messages.push(`${issue.id}: ${issue.reason}`);
-        }
-      }
-      const error = messages.length ? [...new Set(messages)].join('\n') : null;
-      results.push({operation: 'calendarInfo', error, changes: []});
-      return {...payload, error};
+      if (!options.requestCalendarAccess) throw new Error('Calendar authorization requires an MCP session.');
+      const payload = calendarSystemPayload(await options.requestCalendarAccess());
+      results.push({operation: 'requestCalendarAccess', error: payload.error, changes: []});
+      return payload;
     };
     for (const field of ['selectInstance', 'createInstance'] as const) {
       roots[field] = async ({ path, input }: any) => {
@@ -469,15 +542,18 @@ async function executeGraphQLImpl(
         const mutationResult: MutationResult = {status: result.error ? 'PARTIAL' : 'SUCCEEDED',
           changes: result.changes ?? (result.created ? [{kind: 'instance', id: result.instance.id, effect: 'CREATED', path: result.instance.path}] : []),
           failures: result.error ? [{kind: 'instance', id: result.instance.id, path: result.instance.path, message: result.error}] : [],
-          ...(result.error ? {recovery: result.receipt} : {})};
+          ...(result.error ? {recovery: result.error} : {})};
         const error = summarizeMutationError(mutationResult);
-        usage?.changes(result.instance.path, mutationResult.changes);
+        recordChanges(result.instance.path, mutationResult.changes, result.instance.id);
         results.push({operation: field, error, changes: mutationResult.changes});
         // Following mutation fields must use the newly active store.
         view = undefined; store = undefined; instanceRecord = null; validations.clear();
         instanceOwners.clear(); automationViews.clear(); runtimeSnapshots.clear(); scopedViews.clear();
         if (result.error) activationFailure = result.error;
-        return {...result, error};
+        // A partial bootstrap has explicit durable identity but no confirmed
+        // owner state yet. Preserve its receipt; deeper fields require the owner.
+        const instance = result.created && !result.activated && result.error ? result.instance : metadataInstance(result.instance);
+        return {...result, instance, error};
       };
     }
     const automationViews = new Map<string, AutomationView>();
@@ -485,9 +561,7 @@ async function executeGraphQLImpl(
     const instanceOwner = (path: string): AutomationOwner => {
       let owner = instanceOwners.get(path);
       if (!owner) {
-        const parsed = view && store?.getDataDir() === path && instanceRecord
-          ? {value: instanceRecord, issues: []} : readInstanceRecordResult(path);
-        runtimeIssues.push(...parsed.issues);
+        const parsed = metadata(path);
         owner = {declarations: parsed.value.manifest.automations, filePath: resolve(path, 'aside.md')};
         instanceOwners.set(path, owner);
       }
@@ -549,8 +623,27 @@ async function executeGraphQLImpl(
     };
     for (const [kind, plural] of Object.entries({ entry: 'entries', project: 'projects', action: 'actions', artifact: 'artifacts' }) as [Kind, string][]) {
       roots[kind] = ({ id }: { id: string }) => kind === 'action' ? actionNode(store!.getDataDir(), id) ?? null : records().records[kind].get(id) ?? null;
-      roots[plural] = (input: any, info: GraphQLResolveInfo) => records().list(kind, input, undefined, undefined, needsRecordNodes(info));
+      roots[plural] = (input: any, info: GraphQLResolveInfo) => records().list(kind, input, undefined, undefined, needsRecordNodes(info), projectionPath(info));
     }
+    roots.search = async (input: UnifiedSearchInput, info: GraphQLResolveInfo) => {
+      const snapshot = records();
+      const version = viewSourceVersion!;
+      const current = () => {
+        budget.check();
+        if (searchSourceVersion(store!) !== version) throw new GraphQLError('Aside changed during search. Retry to retrieve passages and source records from the same revision.');
+      };
+      current();
+      try {
+        return await unifiedSearch(snapshot, store!, input, {semanticSearch: options.semanticSearch, semanticReconcile: options.semanticReconcile,
+          signal: options.signal, check: current, needsRanking: needsSearchRanking(info)});
+      } catch (error) {
+        if (error instanceof SemanticSetupError) throw new GraphQLError(error.message, {extensions: {
+          code: error.reason === 'OLLAMA_ERROR' ? 'SEMANTIC_SEARCH_FAILED' : 'SEMANTIC_SEARCH_UNAVAILABLE',
+          reason: error.reason, recovery: error.recovery, model: error.model,
+        }});
+        throw error;
+      }
+    };
     const delegationView = (path: string): DelegationView => new DelegationView(path, {
       diagnostics: runtimeIssues, signal: options.signal,
       runtime: () => executionRuntime(path),
@@ -572,69 +665,66 @@ async function executeGraphQLImpl(
         effectAllowed();
         const preparedInput = prepared.get(info.fieldNodes[0]) ?? normalizeMutationArguments(field, inputArgs);
         const {id, input} = preparedInput;
-        records();
+        store = typeof source === 'function' ? source() : source;
         if (!options.mutate) throw new Error('GraphQL mutations are unavailable.');
         if (options.signal?.aborted) throw new Error('GraphQL request cancelled.');
         const names = authoredAutomationModels(preparedInput);
         if (names.length) {
           const path = store!.getDataDir();
-          const choices = catalogs.get(path) ?? await catalogFor(path, {signal: options.signal});
-          catalogs.set(path, choices);
+          const choices = await catalogForContext(path);
           for (const name of names) if (!choices.models.some(model => model.name === name)) {
             throw new GraphQLError(`Model ${name} is not selectable in the execution's instance.`);
           }
         }
-        let operation = name;
-        let values = { ...input, ...(id === undefined ? {} : { id }) };
-        if (name === 'update_action') {
-          const action = actionNode(store!.getDataDir(), id);
-          if (action && !action.projected) values.id = action.id;
-          if (action?.projected) {
-            if (input.recurrence !== undefined) throw new GraphQLError('Recurrence commands apply to the template action, not an occurrence.');
-            const { template, original } = action.record.frontMatter.occurrence;
-            operation = 'update_occurrence';
-            values = { ...input, template, original };
-          }
-        }
-        if (kind === 'action') {
-          let current = id === undefined ? undefined : actionNode(store!.getDataDir(), id)?.record.frontMatter;
-          if (operation === 'update_occurrence') {
-            const matching = [...records().records.action.values()].find(node =>
-              node.record.frontMatter.occurrence?.template === values.template
-              && node.record.frontMatter.occurrence?.original === values.original);
-            current = matching?.record.frontMatter ?? current ?? {occurrence: {template: values.template, original: values.original}, scheduled: values.original};
-          }
-          values = normalizeActionStatus(values, current ?? {});
-        }
-        const commitPrompts = prepareAutomationPrompts(store!, preparedInput);
         let result: MutationOutcome;
         let mutationResult: MutationResult;
         let failureMessage: string | undefined;
+        let readbackError: string | undefined;
         try {
-          const tracked = trackMutation(store!, () => {
-            const release = commitPrompts ? beforeMutationWrite(store!, commitPrompts) : undefined;
-            try {
-              const outcome = options.mutate!(operation, values);
-              // A valid edit can preserve an already-saved reference while
-              // creating its missing artifact. Commit after successful no-op
-              // validation too; the deferred callback is idempotent.
-              commitPrompts?.();
-              return outcome;
-            } finally {release?.();}
+          if (options.signal?.aborted) throw new Error('GraphQL request cancelled.');
+          result = options.mutate(() => {
+            // Lifecycle has admitted/repaired the source before preparing any
+            // record-dependent plan. Discard an earlier request projection.
+            view = undefined; instanceRecord = null;
+            records();
+            let operation = name;
+            let values = { ...input, ...(id === undefined ? {} : { id }) };
+            if (name === 'update_action') {
+              const action = actionNode(store!.getDataDir(), id);
+              if (action && !action.projected) values.id = action.id;
+              if (action?.projected) {
+                if (input.recurrence !== undefined) throw new GraphQLError('Recurrence commands apply to the template action, not an occurrence.');
+                const { template, original } = action.record.frontMatter.occurrence;
+                operation = 'update_occurrence';
+                values = { ...input, template, original };
+              }
+            }
+            if (kind === 'action') {
+              let current = id === undefined ? undefined : actionNode(store!.getDataDir(), id)?.record.frontMatter;
+              if (operation === 'update_occurrence') {
+                const matching = [...records().records.action.values()].find(node =>
+                  node.record.frontMatter.occurrence?.template === values.template
+                  && node.record.frontMatter.occurrence?.original === values.original);
+                current = matching?.record.frontMatter ?? current ?? {occurrence: {template: values.template, original: values.original}, scheduled: values.original};
+              }
+              values = normalizeActionStatus(values, current ?? {});
+            }
+            const beforeWrite = prepareAutomationPrompts(store!, preparedInput);
+            return {operation, input: values, beforeWrite};
           });
-          result = tracked.value;
-          // The outer journal covers the whole operation, including effects
-          // after a nested handler returns its own intermediate snapshot.
-          mutationResult = tracked.result;
+          if (!result.mutationResult) throw new Error('Lifecycle-provided mutation receipt is unavailable. Retry through the Aside daemon.');
+          mutationResult = result.mutationResult;
+          readbackError = result.readbackError;
         } catch (error) {
           if (error instanceof MutationWriteError) {
             mutationResult = error.partialResult;
             failureMessage = errorGuidance(error.originalMessage);
-            result = {text: ''};
+            readbackError = error.readbackError;
+            result = {};
           } else throw error;
         }
         mutationResult = {...mutationResult, failures: mutationResult.failures.map(failure => ({...failure, message: errorGuidance(failure.message)}))};
-        usage?.changes(store!.getDataDir(), mutationResult.changes);
+        recordChanges(store!.getDataDir(), mutationResult.changes);
         if (isFullMutationFailure(mutationResult)) throw new GraphQLError(errorGuidance(summarizeMutationError(mutationResult, {message: failureMessage})!));
         validations.clear();
         instanceOwners.clear();
@@ -642,17 +732,32 @@ async function executeGraphQLImpl(
         runtimeSnapshots.clear();
         let updatedView: QueryView | undefined;
         try {
-          if (failureMessage || rebuildRequired.has(store!.getDataDir())) { store!.rebuild(); rebuildRequired.delete(store!.getDataDir()); }
+          if (readbackError) throw new Error(readbackError);
           updatedView = refreshView();
         } catch (error) {
-          view = undefined; instanceRecord = null; rebuildRequired.add(store!.getDataDir()); scopedViews.delete(store!.getDataDir());
+          view = undefined; instanceRecord = null; scopedViews.delete(store!.getDataDir());
           const problem = `Saved changes could not be read back: ${error instanceof Error ? error.message : String(error)}`;
           failureMessage = failureMessage ? `${failureMessage}\n${problem}` : problem;
           if (!mutationResult.changes.length) throw new GraphQLError(problem);
         }
         const error = summarizeMutationError(mutationResult, {message: failureMessage, warnings: result.warnings});
-        results.push({operation: field, error, changes: mutationResult.changes});
         const ids = deriveMutationPayloadIds(kind, id, mutationResult, result);
+        const written = new Map<string, RecordNode>();
+        if (updatedView) {
+          for (const change of mutationResult.changes) {
+            if (change.effect === 'REMOVED' || !['entry', 'project', 'action', 'artifact'].includes(change.kind)) continue;
+            const node = updatedView.records[change.kind as Kind].get(change.id);
+            if (node) written.set(node.handle, node);
+          }
+          // A successful no-op still offers the agent an opportunity to enrich
+          // the existing mention, without reporting an error or a stored issue.
+          if (kind !== 'instance' && ids.id) {
+            const node = updatedView.records[kind].get(ids.id);
+            if (node) written.set(node.handle, node);
+          }
+        }
+        const notices = missingLocationGeoNotices(written.values());
+        results.push({operation: field, error, changes: mutationResult.changes, ...(notices.length ? {notices} : {})});
         const payload: Record<string, unknown> = {error};
         payload[kind] = !updatedView ? null : kind === 'instance' ? snapshotInstance() : updatedView.records[kind].get(ids.id!) ?? null;
         if (kind === 'entry') {
@@ -667,37 +772,47 @@ async function executeGraphQLImpl(
       typeResolver: source => source.__typename ?? ({entry: 'Entry', project: 'Project', action: 'Action', artifact: 'Artifact'} as const)[(source as RecordNode).kind],
       fieldResolver: (source: any, input, _context, info) => {
         const field = info.fieldName;
-        if (info.parentType.name === 'Instance' && ['body', 'settings', 'automations', 'automationLog', 'execution', 'validation'].includes(field)) usage?.touch(source.path);
+        if (info.parentType.name === 'SearchHit' && field === 'record') return records().records[source.kind as Kind].get(source.id) ?? null;
+        if (info.parentType.name === 'Instance' && ['body', 'settings', 'automations', 'automationLog', 'execution', 'validation', 'calendarSync'].includes(field)) usage?.touch(source.path, source.manifest?.id ?? metadata(source.path).value.manifest.id);
         if (field === 'links' || field === 'backlinks' || field === 'attachmentLinks') {
           const path = nodePaths.get(source) ?? store?.getDataDir();
           if (!path) throw new GraphQLError('Cannot resolve the link source instance.');
           const snapshot = scopedRecords(path);
-          let graph = referenceGraphs.get(snapshot);
-          if (!graph) {
-            graph = buildReferenceGraph(path, snapshot.records, options.signal);
-            referenceGraphs.set(snapshot, graph);
+          let cached = referenceGraphs.get(snapshot);
+          if (!cached || cached.actions !== snapshot.records.action.size) {
+            const graph = buildReferenceGraph(path, snapshot.records, {attachments: snapshot.attachments, roots: snapshot.referenceRoots, signal: options.signal});
+            cached = {actions: snapshot.records.action.size, graph};
+            referenceGraphs.set(snapshot, cached);
             referenceIssues.push(...graph.issues);
           }
-          const page = graph.page(source.handle ?? '', field, input.offset ?? 0, input.limit ?? 20);
+          const page = cached.graph.page(source.handle ?? '', field, input.offset ?? 0, input.limit ?? 20);
           for (const node of page.nodes) nodePaths.set(node as RecordNode, path);
           return page;
         }
         if (info.parentType.name === 'Instance' && ['body', 'settings'].includes(field)) {
-          const record = source.manifest ? source : readInstanceRecordResult(source.path).value;
+          const record = source.manifest ? source : metadata(source.path).value;
           if (field === 'body') return record.body;
           const config = record.manifest.config;
-          return {recurrenceLookaheadDays: config?.recurrenceLookaheadDays ?? 7,
+          return {webapp: {sidebar: config?.webapp?.sidebar ?? []},
             scheduledEventTitlePrefix: config?.scheduledEventTitlePrefix ?? '▢ ',
             doneEventTitlePrefix: config?.doneEventTitlePrefix ?? '✓ '};
         }
+        if (info.parentType.name === 'SystemCheck' && ['problems', 'fixes'].includes(field)) return source[field] ?? [];
+        if (info.parentType.name === 'SystemClaudeInstallation' && field === 'mcpServers') {
+          return source.mcpServers ? Object.entries(source.mcpServers).map(([name, value]) => ({name, ...(value as object)})) : null;
+        }
         if (info.parentType.name === 'Instance') {
+          if (field === 'calendarSync') {
+            if (!options.calendarSync) return null;
+            if (!calendarSyncSnapshots.has(source.path)) calendarSyncSnapshots.set(source.path, calendarSyncPayload(options.calendarSync(source.path)));
+            return calendarSyncSnapshots.get(source.path);
+          }
           if (field === 'automations') return automationView(source.path).list(instanceOwner(source.path), input);
           if (field === 'automationLog') return automationView(source.path).log({}, input);
-          if (field === 'execution') return executionView(source.path, {diagnostics: runtimeIssues, signal: options.signal,
+          if (field === 'execution') return executionView(source.path, {diagnostics: runtimeIssues, signal: options.signal, executionContext: executionContext(source.path),
             catalog: async refresh => {
-              const snapshot = refresh || !catalogs.has(source.path) ? await catalogFor(source.path, {refresh, signal: options.signal}) : catalogs.get(source.path)!;
+              const snapshot = await catalogForContext(source.path, refresh);
               budget.check();
-              catalogs.set(source.path, snapshot);
               return snapshot;
             }});
         }
@@ -711,16 +826,17 @@ async function executeGraphQLImpl(
           const node = source as RecordNode;
           const path = nodePaths.get(node) ?? store!.getDataDir();
           const nodeView = scopedRecords(path);
+          if (field === 'created' && node.projected) return null;
           if (field === 'relatedProjects') {
             const relations = new Map(nodeView.relatedProjectRelations(node).map(link => [link.project.id, link]));
             const filtered = input.direction == null ? input : {...input, where: {and: [input.where ?? {},
               {ids: [...relations.values()].filter(link => input.direction.includes(link.direction)).map(link => link.project.id)}]}};
-            return nodeView.list('project', filtered, node, field, needsRecordNodes(info)).then(page =>
+            return nodeView.list('project', filtered, node, field, needsRecordNodes(info), projectionPath(info)).then(page =>
               ({...page, nodes: page.nodes.map(project => relations.get(project.id)!)}));
           }
           if (['entries', 'projects', 'actions', 'artifacts'].includes(field)) {
             const target = field === 'relatedProjects' ? 'project' : field === 'entries' ? 'entry' : field.slice(0, -1) as Kind;
-            return nodeView.list(target, input, node, field, needsRecordNodes(info));
+            return nodeView.list(target, input, node, field, needsRecordNodes(info), projectionPath(info));
           }
           if (node.kind === 'action' && field === 'delegationLog') return delegationView(path).log(node.id, node.record, input);
           if (node.kind === 'action' && field === 'delegation') return delegationView(path).node(node.id, node.record, node.filePath ?? undefined);
@@ -731,11 +847,11 @@ async function executeGraphQLImpl(
             if (node.record.body.trim()) return {__typename: 'MarkdownContent', text: node.record.body};
             const filename = artifactContentFilename(node.record);
             if (filename === undefined) return null;
-            const content = {__typename: 'Attachment', ...attachmentFiles(path, node.id, [filename])[0]};
+            const content = {__typename: 'Attachment', ...attachmentFiles(nodeView.attachments.get(node.id), node.id, [filename])[0]};
             nodePaths.set(content as unknown as RecordNode, path);
             return content;
           }
-          if (field === 'attachments') return attachmentFiles(path, node.id, node.record.frontMatter.attachments ?? []).map(file => {
+          if (field === 'attachments') return attachmentFiles(nodeView.attachments.get(node.id), node.id, node.record.frontMatter.attachments ?? []).map(file => {
             nodePaths.set(file as unknown as RecordNode, path);
             return file;
           });
@@ -756,6 +872,7 @@ async function executeGraphQLImpl(
             return {...metadata.occurrence, template: valid ? template : null, projected: node.projected === true};
           }
           const storedField = field === 'calendarAccount' ? 'calendar_account' : field;
+          if (node.kind === 'action' && field === 'location' && typeof metadata.location !== 'string') return null;
           const value = field in node ? (node as any)[field] : field in node.record ? node.record[field] : metadata[storedField];
           return value ?? (field === 'related_projects' ? [] : value);
         }
@@ -769,6 +886,7 @@ async function executeGraphQLImpl(
     // GraphQL.js can reject variable coercion before invoking any resolver.
     // These results have errors and no data property, unlike execution errors.
     if (result.errors?.length && !('data' in result)) usage?.validationFailed();
+    if (result.errors?.some(error => error.originalError instanceof InstancePathError)) options.onInstancePathError?.();
     const response = { ...result, errors: result.errors?.map(error => ({ ...error.toJSON(), message: errorGuidance(error.message) })), extensions: extension() };
     return response;
   } catch (error) {
@@ -781,7 +899,8 @@ async function executeGraphQLImpl(
       : errorGuidance(reason instanceof Error ? reason.message : String(reason));
     // A budget failure returns a bounded error, never a partial query result.
     // Completed mutation effects remain authoritative and must not be discarded.
-    return { errors: [{ message }], extensions: budget.signal.aborted
-      ? { diagnostics: [], complete: false, mutations: results } : extension() };
+    const detail = !budget.signal.aborted && error instanceof GraphQLError ? error.toJSON() : {};
+    return { errors: [{ ...detail, message }], extensions: budget.signal.aborted
+      ? { diagnostics: [], complete: false, mutations: results, defaultProjectionRanges: [] } : extension() };
   }
 }

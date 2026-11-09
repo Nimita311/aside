@@ -8,7 +8,7 @@ import { collectProductionIcons, iconCataloguePlugin } from '../icon-catalogue.m
 describe('production icon source catalogue', () => {
   it('collects shipped SVGs with human names and source locations', async () => {
     const { icons, files, directories } = await collectProductionIcons();
-    expect(icons.map(icon => icon.label)).toEqual(expect.arrayContaining(['Instance', 'Project', 'Backlog slot', 'Slipped clock', 'Open details', 'Settings']));
+    expect(icons.map(icon => icon.label)).toEqual(expect.arrayContaining(['Open details', 'Calendar unavailable', 'Settings']));
     for (const icon of icons) {
       expect(icon.svg).toMatch(/^<svg\b[\s\S]*<\/svg>$/);
       expect(icon.sources.length).toBeGreaterThan(0);

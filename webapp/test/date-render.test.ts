@@ -38,6 +38,8 @@ describe('bare date smart elements', () => {
     ]);
     expect(chips[3].title).toContain('2026-10-15T01:30:12.125+09:00 (Thu)');
     expect(chips[2].title).toContain('Jump to range start');
+    // A calendar page keyed by the value: a clock for any time, spans for a range of days.
+    expect(chips.map(chip => chip.querySelector<SVGElement>(':scope > svg.entity-icon')?.dataset.state)).toEqual(['time', 'day', 'range', 'time']);
     expect(chips[0].getAttribute('href')).toBe('/work/project/2026-10-04-work/date/2026-10-15T09:30');
     expect(chips[0].getAttribute('aria-describedby')).toBeTruthy();
     expect(card.textContent).toContain('Meet on Thursday morning (');

@@ -3,9 +3,9 @@ import { mkdirSync, writeFileSync, readFileSync, rmSync, existsSync } from 'node
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { parse as parseYaml } from 'yaml';
-import { Store } from '../src/mcp/store.js';
+import { Store } from '../src/source/store.js';
 import { handleUpdateAction, handleUpdateProject, handleUpdateEntry } from '../src/mcp/tools/update.js';
-import { handleQueryActions, handleQueryProjects, handleQueryEntries } from '../src/mcp/tools/query.js';
+import { executeGraphQL } from '../src/graphql/schema.js';
 import { splitWeekFile } from '../src/mcp/tools/entry-file.js';
 
 function readFrontMatter(path: string): any {
@@ -18,6 +18,11 @@ describe('update_action / update_project', () => {
   let store: Store;
   let actionFile: string;
   let projectFile: string;
+  const read = async (document: string, variables?: Record<string, unknown>) => {
+    const result = await executeGraphQL(store, 'query', { document, variables });
+    expect(result.errors).toBeUndefined();
+    return result.data as any;
+  };
 
   beforeEach(() => {
     tempDir = join(tmpdir(), `aside-update-test-${Date.now()}`);
@@ -63,18 +68,30 @@ describe('update_action / update_project', () => {
     rmSync(tempDir, { recursive: true, force: true });
   });
 
+  it.each(['action', 'project'] as const)('does not recreate a deleted %s from published state during an update', kind => {
+    const file = kind === 'action' ? actionFile : projectFile;
+    const id = kind === 'action' ? '2026-01-15-deploy-db' : '2026-01-10-migration';
+    const update = kind === 'action' ? handleUpdateAction : handleUpdateProject;
+    const index = join(tempDir, kind === 'action' ? 'actions' : 'projects', '2026', 'index.yaml');
+    const before = readFileSync(index, 'utf8');
+    rmSync(file);
+    expect(() => update(store, {id, body: 'New body', description: 'New description'})).toThrow();
+    expect(existsSync(file)).toBe(false);
+    expect(readFileSync(index, 'utf8')).toBe(before);
+  });
+
   it('renames action and project displays while preserving identity and relationships', () => {
     const actionId = '2026-01-15-deploy-db';
     const projectId = '2026-01-10-migration';
-    const action = handleUpdateAction(store, { id: actionId, name: 'Deploy the new database' });
-    const project = handleUpdateProject(store, { id: projectId, name: 'Database migration' });
-    expect(action).toContain('name: Deploy the new database');
-    expect(project).toContain('name: Database migration');
+    expect(handleUpdateAction(store, { id: actionId, name: 'Deploy the new database' })).toBeUndefined();
+    expect(handleUpdateProject(store, { id: projectId, name: 'Database migration' })).toBeUndefined();
+    expect(store.getAction(actionId)?.frontMatter.name).toBe('Deploy the new database');
+    expect(store.getProject(projectId)?.frontMatter.name).toBe('Database migration');
     expect(store.getActionFile(actionId)).toBe(actionFile);
     expect(store.getProjectFile(projectId)).toBe(projectFile);
     expect(readFrontMatter(actionFile).created).toBe('2026-01-15T10:00');
     expect(readFrontMatter(projectFile).created).toBe('2026-01-10T09:00');
-    expect(store.getProjectsForAction(actionId)).toContain(projectId);
+    expect([...(store.getRelations().projectsByAction.get(actionId) ?? [])]).toContain(projectId);
     expect(store.getEntries()[0].meta.actions).toContain(actionId);
     expect(store.getEntries()[0].meta.projects).toContain(projectId);
     expect(store.getActionIds()).toEqual([actionId]);
@@ -91,9 +108,7 @@ describe('update_action / update_project', () => {
   });
 
   it('completes an action, preserving other fields', () => {
-    const result = handleUpdateAction(store, { id: '2026-01-15-deploy-db', resolution: 'done' });
-    expect(result).toContain('updated: 2026-01-15-deploy-db');
-    expect(result).toContain('resolution: done');
+    expect(handleUpdateAction(store, { id: '2026-01-15-deploy-db', resolution: 'done' })).toBeUndefined();
 
     const fm = readFrontMatter(actionFile);
     expect(fm.resolution).toBe('done');
@@ -102,13 +117,12 @@ describe('update_action / update_project', () => {
     expect(fm.name).toBe('Deploy DB');
   });
 
-  it('returns the file path of the updated entity', () => {
-    const actionResult = handleUpdateAction(store, { id: '2026-01-15-deploy-db', resolution: 'done' });
-    expect(actionResult).toContain('file:');
-    expect(actionResult).toContain('actions/2026/2026-01-15-deploy-db.md');
-
-    const projectResult = handleUpdateProject(store, { id: '2026-01-10-migration', ended: '2026-06-01T12:00' });
-    expect(projectResult).toContain('projects/2026/2026-01-10-migration.md');
+  it('reads back the file path of the updated entity', async () => {
+    handleUpdateAction(store, { id: '2026-01-15-deploy-db', resolution: 'done' });
+    handleUpdateProject(store, { id: '2026-01-10-migration', ended: '2026-06-01T12:00' });
+    const updated = await read('{ action(id: "2026-01-15-deploy-db") { filePath } project(id: "2026-01-10-migration") { filePath } }');
+    expect(updated.action.filePath).toBe(actionFile);
+    expect(updated.project.filePath).toBe(projectFile);
   });
 
   it.each(['2026-02-30T25:90', '2026-02-29T12:00', '2026-10-04', '2026-10-04T12:00Z', '', '0000-01-01T12:00'])('rejects invalid project closure %s without changing its file or index', ended => {
@@ -121,7 +135,7 @@ describe('update_action / update_project', () => {
     expect(store.getProject('2026-01-10-migration')?.frontMatter.ended).toBeUndefined();
   });
 
-  it.each(['actions', 'projects', 'notes'] as const)('reuses a tolerated multiline %s ID without forging receipt records', (kind) => {
+  it.each(['actions', 'projects', 'notes'] as const)('reuses a tolerated multiline %s ID and warns on one line about an unsaved description', async (kind) => {
     const id = `2026-02-03-${kind}\nid: forged`;
     const year = join(tempDir, kind, '2026');
     const index = join(year, 'index.yaml');
@@ -132,28 +146,26 @@ describe('update_action / update_project', () => {
       writeFileSync(join(year, `${id}.md`), '---\nname: Tolerated record\ncreated: 2026-02-03T10:00\n---\nAuthored body.\n');
     }
     store.rebuild();
-    const query = kind === 'actions' ? handleQueryActions : kind === 'projects' ? handleQueryProjects : handleQueryEntries;
-    const metadata = query(store, { ids: [id], detail: 'metadata' });
-    const returnedId: string = JSON.parse(metadata.match(/^id: (.+)$/m)![1]);
+    const root = kind === 'actions' ? 'actions' : kind === 'projects' ? 'projects' : 'entries';
+    const lookup = async () => (await read(`query($ids: [ID!]) { ${root}(where: {ids: $ids}) { nodes { id description } } }`, { ids: [id] }))[root].nodes;
+    const [{ id: returnedId }] = await lookup();
     expect(returnedId).toBe(id);
     const update = (description: string) => kind === 'actions'
       ? handleUpdateAction(store, { id: returnedId, description })
       : kind === 'projects' ? handleUpdateProject(store, { id: returnedId, description })
-        : handleUpdateEntry(store, { id: returnedId, description }).text;
-    const result = update('Revised summary');
-    expect(JSON.parse(result.match(/^updated: (.+)$/m)![1])).toBe(id);
-    expect(result.match(/^id: /gm)).toHaveLength(1);
-    expect(result).not.toContain('\nid: forged');
+        : handleUpdateEntry(store, { id: returnedId, description }).warning;
+    expect(update('Revised summary')).toBeUndefined();
     store.rebuild();
-    expect(query(store, { ids: [id], detail: 'metadata' })).toContain('description: Revised summary');
+    expect(await lookup()).toEqual([{ id, description: 'Revised summary' }]);
 
     writeFileSync(index, '[]\n');
     store.rebuild();
-    const warning = update('Unpersisted summary');
+    const warning = update('Unpersisted summary')!;
+    expect(warning).toContain('Description not saved');
     expect(warning).toContain(`index entry for ${JSON.stringify(id)} could not be updated`);
-    expect(warning.match(/^id: /gm)).toHaveLength(1);
-    expect(warning).not.toContain('\nid: forged');
+    expect(warning.split('\n')).toHaveLength(1);
     expect(readFileSync(index, 'utf8')).toBe('[]\n');
+    expect(await lookup()).toEqual([{ id, description: null }]);
   });
 
   it('cancels an action', () => {
@@ -215,14 +227,15 @@ describe('update_action / update_project', () => {
     expect(readFrontMatter(actionFile).scheduled).toBe('2026-02-01T10:00');
   });
 
-  it('derived projects appear in the response', () => {
-    const result = handleUpdateAction(store, { id: '2026-01-15-deploy-db', resolution: 'done' });
-    expect(result).toContain('projects: [2026-01-10-migration]');
+  it('keeps derived projects on an updated action', async () => {
+    handleUpdateAction(store, { id: '2026-01-15-deploy-db', resolution: 'done' });
+    const { action } = await read('{ action(id: "2026-01-15-deploy-db") { projects { nodes { id } } } }');
+    expect(action.projects.nodes).toEqual([{ id: '2026-01-10-migration' }]);
   });
 
-  it('closes a project', () => {
-    const result = handleUpdateProject(store, { id: '2026-01-10-migration', ended: '2026-06-01T12:00' });
-    expect(result).toContain('status: closed');
+  it('closes a project', async () => {
+    expect(handleUpdateProject(store, { id: '2026-01-10-migration', ended: '2026-06-01T12:00' })).toBeUndefined();
+    expect((await read('{ project(id: "2026-01-10-migration") { status } }')).project.status).toBe('CLOSED');
     expect(readFrontMatter(projectFile).ended).toBe('2026-06-01T12:00');
   });
 
@@ -254,8 +267,7 @@ describe('update_action / update_project', () => {
 
   it('a description-only update does not rewrite the project file', () => {
     const spy = vi.spyOn(store, 'saveProject');
-    const result = handleUpdateProject(store, { id: '2026-01-10-migration', description: 'Notion to text + tools' });
-    expect(result).toContain('description: Notion to text + tools');
+    expect(handleUpdateProject(store, { id: '2026-01-10-migration', description: 'Notion to text + tools' })).toBeUndefined();
     expect(spy).not.toHaveBeenCalled();
     expect(store.getProjectIndex().find(i => i.id === '2026-01-10-migration')?.description).toBe('Notion to text + tools');
     spy.mockRestore();
@@ -272,12 +284,11 @@ describe('update_action / update_project', () => {
     const index = join(tempDir, 'actions', '2026', 'index.yaml');
     const malformed = '- id: 2026-01-15-deploy-db\n  description: [unterminated\n';
     writeFileSync(index, malformed);
-    const result = handleUpdateAction(store, {
+    const warning = handleUpdateAction(store, {
       id: '2026-01-15-deploy-db', scheduled: '2026-02-03T11:00', body: 'New action details', description: 'New headline',
     });
-    expect(result).toContain('updated: 2026-01-15-deploy-db');
-    expect(result).toContain('description not saved');
-    expect(result).toContain('scheduled: 2026-02-03T11:00');
+    expect(warning).toContain('Description not saved');
+    expect(store.getAction('2026-01-15-deploy-db')?.frontMatter.scheduled).toBe('2026-02-03T11:00');
     expect(store.getAction('2026-01-15-deploy-db')?.body).toBe('New action details');
     expect(store.getActionIndex().find((item) => item.id === '2026-01-15-deploy-db')?.description).toBe('Deploy the database');
     expect(readFileSync(index, 'utf8')).toBe(malformed);
@@ -286,10 +297,33 @@ describe('update_action / update_project', () => {
     expect(store.getAction('2026-01-15-deploy-db')?.body).toBe('New action details');
   });
 
+  it('warns and changes nothing when a description lands on an unindexed record', () => {
+    const indexes = ['actions', 'projects', 'notes'].map(kind => join(tempDir, kind, '2026', 'index.yaml'));
+    writeFileSync(join(tempDir, 'actions', '2026', '2026-01-16-unindexed.md'), '---\nname: Unindexed action\ncreated: 2026-01-16T10:00\n---\n\nAction body.\n');
+    writeFileSync(join(tempDir, 'projects', '2026', '2026-01-16-unindexed.md'), '---\nname: Unindexed project\ncreated: 2026-01-16T10:00\n---\n\nProject body.\n');
+    const week = join(tempDir, 'notes', '2026', '2026-01-12.md');
+    writeFileSync(week, readFileSync(week, 'utf8') + '\n---\n```entry\ncreated: 2026-01-16T10:00\n```\n\nUnindexed entry.\n');
+    store.rebuild();
+    const files = [...indexes, week, store.getActionFile('2026-01-16-unindexed')!, store.getProjectFile('2026-01-16-unindexed')!];
+    const before = files.map(file => readFileSync(file, 'utf8'));
+    const warnings = [
+      handleUpdateAction(store, { id: '2026-01-16-unindexed', description: 'Lost action summary' }),
+      handleUpdateProject(store, { id: '2026-01-16-unindexed', description: 'Lost project summary' }),
+      handleUpdateEntry(store, { id: '2026-01-16T10:00', description: 'Lost entry summary' }).warning,
+    ];
+    for (const warning of warnings) expect(warning).toContain('Description not saved');
+    expect(files.map(file => readFileSync(file, 'utf8'))).toEqual(before);
+    expect(store.getIndexDescription('actions', '2026-01-16-unindexed')).toBeUndefined();
+    expect(store.getIndexDescription('projects', '2026-01-16-unindexed')).toBeUndefined();
+    expect(store.getIndexDescription('notes', '2026-01-16T10:00')).toBeUndefined();
+    expect(store.getAction('2026-01-16-unindexed')?.body).toBe('Action body.');
+    expect(store.getProject('2026-01-16-unindexed')?.body).toBe('Project body.');
+    expect(store.getEntries().find(e => e.meta.created === '2026-01-16T10:00')?.content).toBe('Unindexed entry.');
+  });
+
   it('a description-only update does not rewrite the action file', () => {
     const spy = vi.spyOn(store, 'saveAction');
-    const result = handleUpdateAction(store, { id: '2026-01-15-deploy-db', description: 'Cut over prod database' });
-    expect(result).toContain('description: Cut over prod database');
+    expect(handleUpdateAction(store, { id: '2026-01-15-deploy-db', description: 'Cut over prod database' })).toBeUndefined();
     expect(spy).not.toHaveBeenCalled();
     expect(store.getActionIndex().find(i => i.id === '2026-01-15-deploy-db')?.description).toBe('Cut over prod database');
     spy.mockRestore();
@@ -385,8 +419,7 @@ describe('update_action / update_project', () => {
   const ENTRY = '2026-01-15T10:00';
 
   it('edits entry content, keeping its links', () => {
-    const result = handleUpdateEntry(store, { id: ENTRY, content: 'Revised kickoff notes' });
-    expect(result.text).toContain(`updated: ${ENTRY}`);
+    expect(handleUpdateEntry(store, { id: ENTRY, content: 'Revised kickoff notes' })).toEqual({ createdProjectIds: [], createdActionIds: [] });
     const entry = store.getEntries().find(e => e.meta.created === ENTRY)!;
     expect(entry.content).toBe('Revised kickoff notes');
     expect(entry.meta.projects).toEqual(['2026-01-10-migration']);
@@ -433,13 +466,13 @@ describe('update_action / update_project', () => {
     expect(store.getIssues()).toHaveLength(0);
   });
 
-  it('returns the entry metadata with its weekly-file path', () => {
-    const result = handleUpdateEntry(store, { id: ENTRY, content: 'x' });
-    expect(result.text).toContain('file:');
-    expect(result.text).toContain('notes/2026/2026-01-12.md');
-    const returnedId = result.text.match(/^id: (.+)$/m)![1];
-    expect(returnedId).toBe(ENTRY);
-    expect(handleUpdateEntry(store, { id: returnedId, description: 'Reusable ID' }).text).toContain('description: Reusable ID');
+  it('reads back the updated entry ID with its weekly-file path', async () => {
+    handleUpdateEntry(store, { id: ENTRY, content: 'x' });
+    const { entry } = await read(`{ entry(id: "${ENTRY}") { id filePath } }`);
+    expect(entry.filePath).toBe(join(tempDir, 'notes', '2026', '2026-01-12.md'));
+    expect(entry.id).toBe(ENTRY);
+    handleUpdateEntry(store, { id: entry.id, description: 'Reusable ID' });
+    expect((await read(`{ entry(id: "${ENTRY}") { description } }`)).entry.description).toBe('Reusable ID');
   });
 
   it.each([
@@ -447,17 +480,15 @@ describe('update_action / update_project', () => {
     'created: "2026-01-15T10:00" # hand-edited timestamp',
     'created: "\\u0032026-01-15T10:00"',
     'created: |-\n  2026-01-15T10:00',
-  ])('reuses a queried entry ID with supported YAML timestamp syntax (%j)', (created) => {
+  ])('reuses a queried entry ID with supported YAML timestamp syntax (%j)', async (created) => {
     const week = join(tempDir, 'notes', '2026', '2026-01-12.md');
     const neighbour = '---\n```entry\ncreated: 2026-01-16T09:00\n```\n\nKeep this neighbouring entry.';
     writeFileSync(week, `---\nweek: 3\nweek_start: 2026-01-12\nweek_end: 2026-01-18\n---\n\n${neighbour}\n\n---\n\`\`\`entry\n${created}\nprojects: [2026-01-10-migration]\nactions: [2026-01-15-deploy-db]\n\`\`\`\n\nKickoff\n`);
     store.rebuild();
     expect(store.getIssues()).toEqual([]);
-    const metadata = handleQueryEntries(store, { ids: [ENTRY], detail: 'metadata' });
-    const returnedId = metadata.match(/^id: (.+)$/m)![1];
+    const { entry: { id: returnedId } } = await read(`{ entry(id: "${ENTRY}") { id } }`);
     expect(returnedId).toBe(ENTRY);
-    const result = handleUpdateEntry(store, { id: returnedId, content: 'Revised kickoff', projects: ['2026-01-05-infra'] });
-    expect(result.text).toContain(`updated: ${ENTRY}`);
+    handleUpdateEntry(store, { id: returnedId, content: 'Revised kickoff', projects: ['2026-01-05-infra'] });
     expect(readFileSync(week, 'utf8')).toContain(neighbour);
     store.rebuild();
     expect(store.getEntries()).toHaveLength(2);
@@ -468,7 +499,7 @@ describe('update_action / update_project', () => {
     expect(store.getIssues()).toEqual([]);
   });
 
-  it('preserves tolerated unusual entry and link IDs when rewriting parsed metadata', () => {
+  it('preserves tolerated unusual entry and link IDs when rewriting parsed metadata', async () => {
     const id = '2026-01-15T10:00```literal\nid: literal';
     const projectId = 'project, [literal]\nid: quoted';
     const taggedProjectId = '!custom tagged';
@@ -481,8 +512,8 @@ describe('update_action / update_project', () => {
     writeFileSync(week, `---\nweek: 3\nweek_start: 2026-01-12\nweek_end: 2026-01-18\n---\n\n---\n\`\`\`entry\ncreated: ${sourceScalar(id)}\nprojects: [${sourceScalar(projectId)}, ${sourceScalar(taggedProjectId)}]\nactions: [${sourceScalar(actionId)}]\n\`\`\`\n\nOriginal note.\n`);
     store.rebuild();
     expect(store.getIssues()).toEqual([]);
-    const metadata = handleQueryEntries(store, { ids: [id], detail: 'metadata' });
-    const returnedId: string = JSON.parse(metadata.match(/^id: (.+)$/m)![1]);
+    const { entries } = await read('query($ids: [ID!]) { entries(where: {ids: $ids}) { nodes { id } } }', { ids: [id] });
+    const returnedId: string = entries.nodes[0].id;
     expect(returnedId).toBe(id);
     handleUpdateEntry(store, { id: returnedId, content: 'Rewritten note.', projects: [projectId, taggedProjectId], actions: [actionId] });
     expect(readFileSync(week, 'utf8')).not.toContain('```literal');
@@ -493,27 +524,23 @@ describe('update_action / update_project', () => {
     expect(store.getIssues()).toEqual([]);
   });
 
-  it('replays one comma-containing relationship ID distinctly from two existing IDs', () => {
+  it('replays one comma-containing relationship ID distinctly from two existing IDs', async () => {
     const combined = 'literal, id';
     for (const id of [combined, 'literal', 'id']) {
       writeFileSync(join(tempDir, 'projects', '2026', `${id}.md`), '---\nname: Existing project\ncreated: 2026-01-15T10:00\n---\n');
     }
     store.rebuild();
-    const listOutputs: string[] = [];
     for (const expected of [[combined], ['literal', 'id']]) {
       handleUpdateEntry(store, { id: ENTRY, projects: expected });
       store.rebuild();
-      const metadata = handleQueryEntries(store, { ids: [ENTRY], detail: 'metadata' });
-      const encoded = metadata.match(/^projects: (.+)$/m)![1];
-      listOutputs.push(encoded);
-      const returnedIds: string[] = parseYaml(encoded);
+      const { entry } = await read(`{ entry(id: "${ENTRY}") { projects { nodes { id } } } }`);
+      const returnedIds: string[] = entry.projects.nodes.map((node: { id: string }) => node.id);
       expect(returnedIds).toEqual(expected);
       handleUpdateEntry(store, { id: ENTRY, projects: returnedIds, content: 'Replayed relationships.' });
       store.rebuild();
       expect(store.getEntries().find(entry => entry.meta.created === ENTRY)?.meta.projects).toEqual(expected);
       expect(store.getIssues()).toEqual([]);
     }
-    expect(listOutputs).toEqual(['["literal, id"]', '[literal, id]']);
   });
 
   it('a description-only edit leaves the weekly file untouched', () => {
@@ -591,7 +618,6 @@ describe('update_action / update_project', () => {
       actions: ['2026-01-15-deploy-db', { name: 'Write Runbook', description: 'Document the cutover steps', scheduled: '2026-02-03T09:00' }],
     }, new Date(2026, 0, 20, 12, 0));
     expect(result.createdActionIds).toEqual(['2026-01-20-write-runbook']);
-    expect(result.text).toContain('actions_created: [2026-01-20-write-runbook]');
     const entry = store.getEntries().find(e => e.meta.created === ENTRY)!;
     expect(entry.meta.actions).toEqual(['2026-01-15-deploy-db', '2026-01-20-write-runbook']);
     const fm = readFrontMatter(join(tempDir, 'actions', '2026', '2026-01-20-write-runbook.md'));
@@ -606,7 +632,6 @@ describe('update_action / update_project', () => {
       projects: [{ name: 'Runbooks', description: 'Operational runbooks' }],
     }, new Date(2026, 0, 20, 12, 0));
     expect(result.createdProjectIds).toEqual(['2026-01-20-runbooks']);
-    expect(result.text).toContain('projects_created: [2026-01-20-runbooks]');
     const entry = store.getEntries().find(e => e.meta.created === ENTRY)!;
     expect(entry.meta.projects).toEqual(['2026-01-20-runbooks']);
     expect(readFrontMatter(join(tempDir, 'projects', '2026', '2026-01-20-runbooks.md')).name).toBe('Runbooks');

@@ -1,11 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
-import { init } from '../src/commands/init.js';
-import { Store } from '../src/mcp/store.js';
+import { init } from '../src/source/bootstrap.js';
+import { Store } from '../src/source/store.js';
 import { InstanceHost } from '../src/daemon/host.js';
 import { CalClient } from '../src/mcp/calendar/client.js';
 import { assertDelegation } from '../src/core/delegation.js';
 import * as models from '../src/automation/models.js';
+import {hostGraphQL} from './support/graphql-host.js';
 
 let dir: string, host: InstanceHost;
 const run = {model: 'external', prompt: '#artifact/2026-10-12-instructions'};
@@ -16,7 +17,7 @@ beforeEach(() => {
   host = new InstanceHost(new CalClient(null));
 });
 afterEach(async () => {await host.close(); vi.restoreAllMocks(); rmSync(dir, {recursive: true, force: true});});
-async function graph(document: string, mode = 'mutate', variables?: Record<string, unknown>) {return JSON.parse((await host.tool(dir, mode, {document, variables})).text);}
+async function graph(document: string, mode = 'mutate', variables?: Record<string, unknown>) {return JSON.parse((await hostGraphQL(host, dir, mode, {document, variables})).text);}
 describe('delegation declarations', () => {
   it.each([{run: {script: 'echo'}}, {run: {...run, prompt: 'Instructions'}}, {run: {...run, prompt: {artifact: run.prompt}}}, {run, schedule: {at: '2099-01-01T00:00:00Z'}}, {run, timeout: null}, {run, timeout: 'PT0S'}, {run, overlap: 'skip'}])('rejects malformed declarations: %j', declaration => {
     expect(() => assertDelegation(declaration)).toThrow();

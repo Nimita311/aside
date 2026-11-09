@@ -1,13 +1,15 @@
+import {calendarMutationFixture} from './calendar-fixture.js';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { Store } from '../src/mcp/store.js';
+import { Store } from '../src/source/store.js';
 import { handleCapture } from '../src/mcp/tools/capture.js';
 import { handleUpdateAction } from '../src/mcp/tools/update.js';
 import { CalClient, CalError } from '../src/mcp/calendar/client.js';
-import { CalSync, storeAction } from '../src/mcp/calendar/sync.js';
+import {storeAction} from '../src/mcp/calendar/sync.js';
+import {CalendarSyncFixture as CalSync} from './calendar-fixture.js';
 import { buildMarker, parseMarker } from '../src/mcp/calendar/markers.js';
-import { handleCalendarInfo } from '../src/mcp/calendar/info.js';
+import { calendarReport } from './support/calendar-report.js';
 import { eventTimingDiagnostic } from '../src/mcp/calendar/timing.js';
 import { scheduleInstant, wallTimeAt } from '../src/core/scheduling.js';
 import type { CalEvent } from '../src/mcp/calendar/protocol.js';
@@ -38,7 +40,7 @@ function fixture() {
     return { eventId: key };
   });
   const remove = vi.spyOn(cal, 'deleteEvent').mockImplementation(async args => { const ev = events.get(args.eventId); const invalid = ev && eventTimingDiagnostic(ev); if (invalid) throw new CalError(invalid.reason, 'event-time-unrepresentable', invalid); events.delete(args.eventId); return { deleted: true }; });
-  const sync = new CalSync(cal, 'work', store); fixtures.push({ dir, store, sync });
+  const sync = new CalSync(cal, 'work', store, undefined, undefined, calendarMutationFixture(store)); fixtures.push({ dir, store, sync });
   const action = () => storeAction(store, id)!;
   const file = store.getActionFile(id)!;
   return { dir, store, id, file, sync, cal, event, events, upsert, remove, action };
@@ -70,7 +72,8 @@ describe('unrepresentable calendar times', () => {
     expect(readFileSync(f.file, 'utf8')).toBe(before); expect(JSON.stringify([...f.events])).toBe(original);
     expect(f.upsert).not.toHaveBeenCalled(); expect(f.remove).not.toHaveBeenCalled(); expect(f.sync.changesSinceStart()).toEqual([]);
     expect(f.sync.status(f.id)).toMatchObject({ status: 'failed', diagnostic: { category: 'event-time-unrepresentable' } });
-    const info = await handleCalendarInfo(f.cal, f.sync); expect(info).toContain(f.id); expect(info).toContain('event-time-unrepresentable'); expect(info).toContain('both directions'); expect(info).toContain('unambiguous'); expect(info).not.toContain('retry: true');
+    const state = (await calendarReport(f.cal, f.sync)).syncStates.find(item => item.id === f.id)!;
+    expect(state.diagnostic?.category).toBe('event-time-unrepresentable'); expect(state.diagnostic?.recovery).toContain('both directions'); expect(state.diagnostic?.recovery).toContain('unambiguous'); expect(state.retry).toBeUndefined();
   });
   it('detects an unsafe event on the first cold forward sweep without overwriting it', async () => {
     const f = fixture(), original = JSON.stringify([...f.events]); await f.sync.syncActions([f.action()], [f.action()]);

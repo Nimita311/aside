@@ -4,13 +4,14 @@ import { join } from 'node:path';
 import { RunStorage, type RunRecord } from '../src/automation/storage.js';
 import { AutomationScheduler } from '../src/automation/scheduler.js';
 import { automationRuntimeSnapshot, readAutomationLog } from '../src/graphql/automation-runtime.js';
-import { init } from '../src/commands/init.js';
+import { init } from '../src/source/bootstrap.js';
 import { InstanceHost } from '../src/daemon/host.js';
 import { CalClient } from '../src/mcp/calendar/client.js';
-import { Store } from '../src/mcp/store.js';
+import { Store } from '../src/source/store.js';
 import { InstanceRegistry } from '../src/mcp/instance-registry.js';
 import { InstanceSession } from '../src/mcp/instance-session.js';
 import { handleCapture } from '../src/mcp/tools/capture.js';
+import {lifecycleMetadataFixture} from './lifecycle-metadata-fixture.js';
 
 const workers = vi.hoisted(() => [] as Array<{
   emit(event: string, message: unknown): boolean;
@@ -30,6 +31,7 @@ vi.mock('node:worker_threads', async () => {
 });
 import { AutomationController } from '../src/automation/controller.js';
 import * as models from '../src/automation/models.js';
+import {hostGraphQL} from './support/graphql-host.js';
 
 let temporary: string, root: string, other: string, storage: string;
 let controller: AutomationController | undefined, host: InstanceHost | undefined;
@@ -195,7 +197,7 @@ describe('bounded automation logs', () => {
 
 describe('GraphQL daemon integration for automation inspection', () => {
   async function query(document: string, variables?: Record<string, unknown>) {
-    const result = JSON.parse((await host!.tool(root, 'query', { document, variables })).text);
+    const result = JSON.parse((await hostGraphQL(host!, root, 'query', { document, variables })).text);
     expect(result.errors).toBeUndefined(); return result.data;
   }
 
@@ -206,7 +208,7 @@ describe('GraphQL daemon integration for automation inspection', () => {
     saved.start({ ...run(root, 'selected-second'), started: '2026-10-09T08:00:00.000Z' });
     saved.start(run(other, 'private'));
     writeFileSync(join(directory, 'stdout.log'), 'hello world');
-    host = new InstanceHost(new CalClient(null)); host.configureAutomation(storage);
+    host = new InstanceHost(new CalClient(null)); host.configureAutomation(storage); host.load(root);
     const data = await query(`{
       activeInstance {
         automations { totalCount nodes { name } }
@@ -281,8 +283,8 @@ describe('GraphQL daemon integration for automation inspection', () => {
   });
 
   it('reports absent automation support explicitly instead of presenting empty state as available', async () => {
-    init(root, { name: 'Selected', description: 'Fixture' }); host = new InstanceHost(new CalClient(null));
-    const result = JSON.parse((await host.tool(root, 'query', {document: '{ activeInstance { automations { nodes { name } } automationLog { totalCount nodes { id } } } }'})).text);
+    init(root, { name: 'Selected', description: 'Fixture' }); host = new InstanceHost(new CalClient(null)); host.load(root);
+    const result = JSON.parse((await hostGraphQL(host, root, 'query', {document: '{ activeInstance { automations { nodes { name } } automationLog { totalCount nodes { id } } } }'})).text);
     expect(result.errors).toBeUndefined();
     expect(result.data.activeInstance).toMatchObject({ automations: {nodes: []}, automationLog: {totalCount: 0, nodes: []} });
     expect(result.extensions).toMatchObject({complete: false, diagnostics: expect.arrayContaining([
@@ -295,10 +297,12 @@ describe('GraphQL daemon integration for automation inspection', () => {
     init(root, { name: 'Selected', description: 'Fixture' });
     const manifest = join(root, 'aside.md');
     writeFileSync(manifest, readFileSync(manifest, 'utf8').replace('\n---\n', '\nautomations:\n  future:\n    schedule:\n      cron: "0 8 * * *"\n    run:\n      script: echo\n---\n'));
+    const metadata = lifecycleMetadataFixture(root);
     host = new InstanceHost(new CalClient(null)); host.configureAutomation(storage);
+    host.observeInstances([root]);
     const load = vi.spyOn(host, 'load').mockImplementation(() => { throw new Error('Runtime inspection must not load an instance'); });
     const registry = new InstanceRegistry([root]); registry.activate(root);
-    const session = new InstanceSession(registry, { knownInstances: async () => [root], issues: async () => [] }, [], true, true);
+    const session = new InstanceSession(registry, { knownInstances: async () => [root], issues: async () => [], instanceRecord: metadata.instanceRecord }, [], true);
     const result = await host.graphql(session, 'query', { document: '{ activeInstance { automations { nodes { name enabled timeout overlap next running schedule { cron } run { script } } } automationLog { totalCount } } }' });
     expect(result.errors).toBeUndefined();
     expect(result.data).toMatchObject({ activeInstance: {

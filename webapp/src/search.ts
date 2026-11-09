@@ -7,6 +7,8 @@ export interface SearchResult {
   type: SearchResultType;
   // Date results carry the YYYY-MM-DD to jump to; the rest their entity id.
   id: string;
+  // Server search includes names for records not cached in the browser.
+  name?: string;
   description?: string;
   // Context around a full-text match that is visible in neither the name nor
   // the description — the row's evidence for the hit.

@@ -2,12 +2,12 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { parse } from 'yaml';
-import { Store } from '../src/mcp/store.js';
+import { Store } from '../src/source/store.js';
 import { handleUpdateAction, handleUpdateEntry, handleUpdateProject } from '../src/mcp/tools/update.js';
 import { handleUpdateArtifact } from '../src/mcp/tools/artifact.js';
 import { splitFrontMatter } from '../src/core/parser.js';
-import { recurrenceHistoryPath } from '../src/mcp/recurrence-history.js';
-import { serializeAction, serializeProject } from '../src/mcp/tools/serialize.js';
+import { recurrenceHistoryPath } from '../src/source/recurrence-history.js';
+import { serializeAction, serializeProject } from '../src/source/serialize.js';
 import { parseActionFile, parseProjectFile } from '../src/core/parser.js';
 
 describe('unmanaged record metadata', () => {

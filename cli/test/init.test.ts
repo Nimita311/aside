@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { mkdirSync, writeFileSync, readFileSync, rmSync, existsSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { init } from '../src/commands/init.js';
+import { init } from '../src/source/bootstrap.js';
 import { readManifest } from '../src/core/instance.js';
 import { validate } from '../src/core/validator.js';
 import { VERSION } from '../src/version.js';

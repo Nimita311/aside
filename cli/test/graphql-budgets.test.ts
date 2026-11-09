@@ -1,14 +1,16 @@
 import {afterEach, describe, expect, it, vi} from 'vitest';
+import {lifecycleOperationsFixture} from './lifecycle-operations-fixture.js';
 import {existsSync, mkdtempSync, realpathSync, rmSync} from 'node:fs';
 import {join} from 'node:path';
 import {buildSchema, getIntrospectionQuery, parse, type GraphQLObjectType} from 'graphql';
-import {init} from '../src/commands/init.js';
+import {init} from '../src/source/bootstrap.js';
 import {formatUtcTimestamp} from '../src/core/date.js';
 import {executeGraphQL, type GraphQLResult} from '../src/graphql/schema.js';
 import {ExecutionBudget, executeWithBudget} from '../src/graphql/execution-budget.js';
-import {Store} from '../src/mcp/store.js';
+import {Store} from '../src/source/store.js';
 import {InstanceRegistry} from '../src/mcp/instance-registry.js';
 import {InstanceSession} from '../src/mcp/instance-session.js';
+import {lifecycleMetadataFixture} from './lifecycle-metadata-fixture.js';
 import {handleCapture} from '../src/mcp/tools/capture.js';
 import type {SearchOptions} from '../src/mcp/search.js';
 
@@ -238,10 +240,12 @@ describe('GraphQL execution budgets', () => {
     const registering = new Promise<void>(resolve => { started = resolve; });
     let release!: () => void;
     const paused = new Promise<void>(resolve => { release = resolve; });
-    const instances = new InstanceSession(new InstanceRegistry(), {
+    const metadata = lifecycleMetadataFixture();
+    const instances = new InstanceSession(new InstanceRegistry(), lifecycleOperationsFixture({
       knownInstances: async () => [],
-      issues: async () => { started(); await paused; return []; },
-    });
+      issues: async root => { started(); await paused; metadata.publish(root); return []; },
+      instanceRecord: metadata.instanceRecord,
+    }));
     const controller = new AbortController();
     const show = vi.fn();
     let settled = false;
@@ -251,7 +255,7 @@ describe('GraphQL execution budgets', () => {
         createInstance(input: {path: $path, name: "Created", description: "Destination"}) { instance { path } }
         show { outcome }
       }`, variables: {path},
-    }, {instances, signal: controller.signal, show}).then(result => {
+    }, {instances, loadedInstance: metadata.loadedInstance, signal: controller.signal, show}).then(result => {
       settled = true;
       serializedAtReturn = JSON.stringify(result);
       return result;

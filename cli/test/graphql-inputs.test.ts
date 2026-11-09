@@ -1,13 +1,13 @@
 import { describe, expect, it, vi } from 'vitest';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { init } from '../src/commands/init.js';
-import { Store } from '../src/mcp/store.js';
+import { init } from '../src/source/bootstrap.js';
+import { Store } from '../src/source/store.js';
 import { handleCapture } from '../src/mcp/tools/capture.js';
 import { handleUpdateAction, handleUpdateEntry } from '../src/mcp/tools/update.js';
 import { handleUpdateInstance } from '../src/mcp/tools/instance.js';
 import { authoredAutomationModels, authoredAutomationPrompts, normalizeActionStatus, normalizeMutationArguments } from '../src/graphql/inputs.js';
-import { executeGraphQL } from '../src/graphql/schema.js';
+import {executeGraphQLWithOwner as executeGraphQL, outcome} from './graphql-owner-fixture.js';
 
 const now = new Date(2026, 9, 8, 12);
 const job = (name = 'daily') => ({name, schedule: {cron: '0 9 * * *'}, run: {script: '/bin/true'}});
@@ -109,7 +109,7 @@ describe('GraphQL mutation input normalization', () => {
     ['updateArtifact', {removeAttachments: null}, 'removeAttachments'],
     ['updateAction', {calendarAccount: 42}, 'calendarAccount'],
     ['updateAction', {recurrence: {setEnd: {schedule: {dtstart: '2030-01-01'}, at: null}}}, 'recurrence.setEnd.at'],
-    ['updateInstance', {settings: {recurrenceLookaheadDays: null}}, 'settings.recurrenceLookaheadDays'],
+    ['updateInstance', {settings: {scheduledEventTitlePrefix: 42}}, 'settings.scheduledEventTitlePrefix'],
     ['updateEntry', {projects: {set: [{create: {name: 'P', description: 'P', bodyFile: null}}]}}, 'projects.set.0.create.bodyFile'],
     ['updateEntry', {actions: {add: [{create: {name: 'A', description: 'A', calendarAccount: null}}]}}, 'actions.add.0.create.calendarAccount'],
   ] as const)('reports public typed paths for %s invalid inputs: %s', (field, input, path) => {
@@ -137,7 +137,7 @@ describe('GraphQL mutation input normalization', () => {
       const captured = handleCapture(store, {content: 'Entry', description: 'Entry', actions: [{name: 'Task', description: 'Task'}]}, now);
       const id = captured.createdActionIds[0], file = store.getActionFile(id)!;
       const before = readFileSync(file, 'utf8');
-      const mutate = vi.fn((operation, input) => handleUpdateAction(store, input));
+      const mutate = vi.fn((operation, input) => outcome(handleUpdateAction(store, input)));
       const result = await executeGraphQL(store, 'mutation', {document: `mutation {
         first: updateAction(id: "${id}", input: {body: "Authored body_file and content_file"}) { error }
         invalid: updateAction(id: "${id}", input: {bodyFile: null}) { error }
@@ -202,12 +202,12 @@ describe('GraphQL mutation input normalization', () => {
   }));
 
   it('patches settings through the grouped input and preserves explicit default restoration', () => withStore(store => {
-    const normalized = update('updateInstance', {settings: {recurrenceLookaheadDays: 45, scheduledEventTitlePrefix: 'Now: ', doneEventTitlePrefix: null}});
-    expect(normalized).toEqual({recurrenceLookaheadDays: 45, scheduledEventTitlePrefix: 'Now: ', doneEventTitlePrefix: null});
+    const normalized = update('updateInstance', {settings: {scheduledEventTitlePrefix: 'Now: ', doneEventTitlePrefix: null}});
+    expect(normalized).toEqual({scheduledEventTitlePrefix: 'Now: ', doneEventTitlePrefix: null});
     handleUpdateInstance(store, normalized);
-    expect(store.getInstance()!.manifest.config).toMatchObject({recurrenceLookaheadDays: 45, scheduledEventTitlePrefix: 'Now: '});
+    expect(store.getInstance()!.manifest.config).toMatchObject({scheduledEventTitlePrefix: 'Now: '});
     expect(store.getInstance()!.manifest.config).not.toHaveProperty('doneEventTitlePrefix');
-    expect(() => update('updateInstance', {settings: {recurrenceLookaheadDays: null}})).toThrow();
+    expect(() => update('updateInstance', {settings: {recurrenceLookaheadDays: 45}})).toThrow();
   }));
 
   it('rejects conflicting content sources in top-level and newly created records', () => {

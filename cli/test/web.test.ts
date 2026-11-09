@@ -5,11 +5,11 @@ import { execFileSync } from 'node:child_process';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
-import { Store } from '../src/mcp/store.js';
+import { Store } from '../src/source/store.js';
 import { buildShowRoute } from '../src/mcp/tools/show.js';
 import { startWeb as startAuthenticatedWeb } from '../src/web/locate.js';
 import { WebAuth, WEB_AUTH_LEASE_MS, type WebCredential } from '../src/web/auth.js';
-import { availableInstances, registrationPath } from '../src/web/catalogue.js';
+import {availableInstances, registrationPath} from '../src/source/instance-admission.js';
 import { APP_SHELL_CSP, type AsideWebServer, type WebBackend } from '../src/web/server.js';
 
 const APP_DIR = fileURLToPath(new URL('../../webapp', import.meta.url));
@@ -106,11 +106,42 @@ describe('buildShowRoute', () => {
     expect(buildShowRoute(store, { action: '2026-01-20-ship-it', artifact: '2026-10-02-report', filename: '100% done #1.png' })).toBe('action/2026-01-20-ship-it/artifact/2026-10-02-report/100%25%20done%20%231.png');
   });
 
+  it('composes an indexed entry source with every native target and rejects unavailable definitions', () => {
+    const directory = mkdtempSync(join(tmpdir(), 'aside-show-source-'));
+    try {
+      writeFixture(directory);
+      const id = '2026-10-02-report';
+      const source = `#artifact/${id}/decisions.json`;
+      const attachment = join(directory, 'artifacts', '2026', id, 'decisions.json');
+      const record = join(directory, 'artifacts', '2026', `${id}.md`);
+      // Definition contents are inspected by the browser; show validates the
+      // stable record identity and managed attachment before authorizing it.
+      writeFileSync(record, '---\nname: Decisions\ncreated: "2026-10-02T09:00"\nattachments: [decisions.json]\n---\n');
+      writeFileSync(attachment, '{"query":"{ entries { nodes { id } } }"}');
+      const sourceStore = new Store(directory);
+      const targets = [
+        {}, { project: '2026-01-15-alpha' }, { action: '2026-01-20-ship-it' },
+        { project: '2026-01-15-alpha', detail: true }, { entry: '2026-04-28T10:00' },
+        { asset: 'assets/notes.md' }, { artifact: id, filename: '100% done #1.png' },
+      ];
+      for (const target of targets) expect(buildShowRoute(sourceStore, { ...target, source, search: ' C++ [x] ' })).toBe(`${buildShowRoute(sourceStore, target)}?${new URLSearchParams({ source, search: 'C++ [x]' })}`);
+      expect(buildShowRoute(sourceStore, { source, search: '  ' })).toBe(`?${new URLSearchParams({ source })}`);
+      expect(() => buildShowRoute(sourceStore, { source: id })).toThrow(/exact artifact attachment/);
+      expect(() => buildShowRoute(sourceStore, { source: `#artifact/${id}` })).toThrow(/exact artifact attachment/);
+      expect(() => buildShowRoute(sourceStore, { source: '#artifact/2026-10-02-missing/decisions.json' })).toThrow(/query artifacts/);
+      expect(() => buildShowRoute(store, { source })).toThrow(/not indexed/);
+      rmSync(attachment);
+      expect(() => buildShowRoute(sourceStore, { source })).toThrow(/not found or unavailable/);
+      symlinkSync(join(directory, 'assets', 'notes.md'), attachment);
+      expect(() => buildShowRoute(sourceStore, { source })).toThrow(/not found or unavailable/);
+    } finally { rmSync(directory, { recursive: true, force: true }); }
+  });
+
   it('rejects malformed or missing artifact targets and conflicting documents', () => {
     expect(() => buildShowRoute(store, { filename: 'summary.PDF' })).toThrow(/pass artifact/);
     expect(() => buildShowRoute(store, { artifact: '2026-10-02-report', entry: '2026-04-28T10:00' })).toThrow(/mutually exclusive/);
     expect(() => buildShowRoute(store, { artifact: '2026-10-02-report', asset: 'assets/notes.md' })).toThrow(/mutually exclusive/);
-    expect(() => buildShowRoute(store, { artifact: '2026-10-02-missing' })).toThrow(/query_artifacts/);
+    expect(() => buildShowRoute(store, { artifact: '2026-10-02-missing' })).toThrow(/query artifacts/);
     expect(() => buildShowRoute(store, { artifact: 'not-an-id' })).toThrow(/Invalid artifact id/);
     for (const filename of ['../notes.md', 'folder/notes.md', 'missing.md', 'linked.md']) {
       expect(() => buildShowRoute(store, { artifact: '2026-10-02-report', filename })).toThrow();
@@ -124,9 +155,9 @@ describe('buildShowRoute', () => {
   });
 
   it('rejects unknown targets with hints', () => {
-    expect(() => buildShowRoute(store, { project: 'nope' })).toThrow(/query_projects/);
-    expect(() => buildShowRoute(store, { action: 'nope' })).toThrow(/query_actions/);
-    expect(() => buildShowRoute(store, { entry: '2020-01-01T00:00' })).toThrow(/query_entries/);
+    expect(() => buildShowRoute(store, { project: 'nope' })).toThrow(/query projects/);
+    expect(() => buildShowRoute(store, { action: 'nope' })).toThrow(/query actions/);
+    expect(() => buildShowRoute(store, { entry: '2020-01-01T00:00' })).toThrow(/query entries/);
     expect(() => buildShowRoute(store, { asset: 'assets/missing.md' })).toThrow(/not found/);
     expect(() => buildShowRoute(store, { asset: '../outside.md' })).toThrow(/not found/);
   });
@@ -359,11 +390,15 @@ describe('public app assets', () => {
 describe('web server', () => {
   let dir: string;
   let owner: AsideWebServer;
+  let publishedChange: (() => void) | undefined;
 
   beforeAll(async () => {
     dir = join(tmpdir(), `aside-web-serve-${Date.now()}`);
     writeFixture(dir);
-    owner = await startWeb(APP_DIR, { instances: () => availableInstances([dir]), register: async () => null, remove: () => {}, load: () => {}, data: async () => { throw new Error('No data fixture'); } }, 0);
+    owner = await startWeb(APP_DIR, { instances: () => availableInstances([dir]), register: async () => null, remove: () => {}, load: () => {},
+      years: () => {const store = new Store(dir); try {return store.getSourceMetadata().years;} finally {store.close();}},
+      subscribe: (_path, changed) => {publishedChange = changed; return () => {publishedChange = undefined;};},
+      data: async () => { throw new Error('No data fixture'); } }, 0);
   });
 
   afterAll(() => {
@@ -710,6 +745,40 @@ describe('web server', () => {
     expect((await rawGet(owner.port, '/-/api/control', { Origin: 'http://127.0.0.1:9' })).status).toBe(403);
   });
 
+  it('validates cache-clear choices and waits for durable forgetting before returning the catalogue', async () => {
+    const path = realpathSync(dir);
+    let registered = availableInstances([path]), removing = false, released = false, prematureReads = 0;
+    let finish!: () => void, started!: () => void;
+    const persistence = new Promise<void>(resolve => { finish = () => { released = true; resolve(); }; });
+    const invoked = new Promise<void>(resolve => { started = resolve; });
+    const remove = vi.fn(async (_path: string, _clearCache?: boolean) => {
+      removing = true; started(); await persistence; registered = [];
+    });
+    const server = await startWeb(APP_DIR, {
+      instances: () => { if (removing && !released) prematureReads++; return registered; },
+      register: async () => null, remove, load: () => {}, data: async () => { throw new Error('No data fixture'); },
+    }, 0);
+    const post = (clearCache: unknown) => authenticatedFetch(`http://127.0.0.1:${server.port}/-/api/instances/remove`, {
+      method: 'POST', headers: {Origin: `http://127.0.0.1:${server.port}`, 'X-Aside-Control': '1', 'Content-Type': 'application/json'},
+      body: JSON.stringify({path, clearCache}),
+    });
+    try {
+      for (const invalid of ['true', null, 1]) expect((await post(invalid)).status).toBe(400);
+      expect(remove).not.toHaveBeenCalled();
+      let responded = false;
+      const pending = post(true).then(response => { responded = true; return response; });
+      await invoked;
+      expect(remove).toHaveBeenCalledExactlyOnceWith(path, true);
+      expect(prematureReads).toBe(0); expect(responded).toBe(false);
+      finish();
+      const response = await pending;
+      expect(response.status).toBe(200); expect(await response.json()).toEqual({instances: []});
+      registered = availableInstances([path]);
+      remove.mockRejectedValueOnce(new Error('Could not persist cache removal'));
+      expect((await post(true)).status).toBe(500);
+    } finally { finish(); server.close(); }
+  });
+
   it('streams data changes over /-/api/instances/web-test/watch', async () => {
     const stream = await openSse(owner.port, '/-/api/instances/web-test/watch');
     // Give the watcher a beat to attach before touching the file.
@@ -717,6 +786,30 @@ describe('web server', () => {
     writeFileSync(join(dir, 'assets', 'notes.md'), `# Notes v2\n`);
     expect(JSON.parse(await stream.next())).toContain('assets/notes.md');
     stream.close();
+  });
+
+  it('pushes managed attachment paths so offscreen cached bytes can be invalidated', async () => {
+    const stream = await openSse(owner.port, '/-/api/instances/web-test/watch');
+    try {
+      await new Promise(resolve => setTimeout(resolve, 150));
+      const attachments = ['index.HTML', 'summary.PDF'].map(filename => `artifacts/2026/2026-10-02-report/${filename}`);
+      for (const relative of attachments) writeFileSync(join(dir, relative), 'Revised attachment bytes');
+      expect(JSON.parse(await stream.next())).toEqual(expect.arrayContaining(attachments));
+    } finally {stream.close();}
+  });
+
+  it('waits for lifecycle publication before notifying managed source and configuration changes', async () => {
+    const stream = await openSse(owner.port, '/-/api/instances/web-test/watch');
+    try {
+      await new Promise(resolve => setTimeout(resolve, 150));
+      writeFileSync(join(dir, 'aside.md'), '---\nid: web-test\nname: Web Test\n---\nUpdated instructions.\n');
+      writeFileSync(join(dir, '.aside'), 'discovery: false\n');
+      writeFileSync(join(dir, 'notes', '2026', 'index.yaml'), '- id: "2026-04-28T10:00"\n  description: Updated description\n');
+      await new Promise(resolve => setTimeout(resolve, 200));
+      expect(publishedChange).toBeDefined();
+      publishedChange!();
+      expect(JSON.parse(await stream.next())).toEqual([]);
+    } finally {stream.close();}
   });
 });
 

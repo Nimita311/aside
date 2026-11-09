@@ -4,7 +4,7 @@ import { preserveSessionNavigation } from './session-navigation';
 import { deferPreviewFocus } from './preview-focus';
 
 export interface MockConfig { id: string; scenario: Scenario; theme?: 'light' | 'dark' }
-const preferences = ['darkMode', 'timeFormat', 'dateFormat', 'timeStyle', 'expandProjects', 'expandActions', 'searchShortcutEnabled', 'panelCollapsed', 'panelWidth', 'animSpeed'] as const;
+const preferences = ['darkMode', 'timeFormat', 'dateFormat', 'timeStyle', 'expandProjects', 'expandActions', 'searchShortcutEnabled', 'animSpeed'] as const;
 let stagingRevision = 0;
 let activatePreview: () => Promise<void> = async () => {};
 
@@ -34,7 +34,7 @@ function freezeClock(now: string): void {
 }
 
 function visible(element: HTMLElement): boolean {
-  return !element.hidden && !element.closest('[hidden]') && getComputedStyle(element).display !== 'none' && element.getClientRects().length > 0;
+  return !element.hidden && !element.closest('[hidden], [inert]') && getComputedStyle(element).display !== 'none' && element.getClientRects().length > 0;
 }
 
 async function waitFor(selector: string, timeout = 15_000): Promise<HTMLElement> {
@@ -47,7 +47,30 @@ async function waitFor(selector: string, timeout = 15_000): Promise<HTMLElement>
   throw new Error(`Scenario did not reach ${selector}`);
 }
 
+async function prepareControls(selector: string): Promise<void> {
+  if (Array.from(document.querySelectorAll<HTMLElement>(selector)).some(visible)) return;
+  const frame = document.getElementById('workspace-frame');
+  if (!frame) return;
+  // The compact view picker owns instance selection. Reveal that real UI
+  // before staging a nested switcher action; never unhide parked controls.
+  if (selector.includes('instance-switch') && frame.dataset.frame === 'compact') {
+    const trigger = document.getElementById('btn-instance-switch');
+    if (trigger && !visible(trigger)) (await waitFor('#btn-workspace-views')).click();
+  }
+  // Summary scenarios reveal the same right overlay through compact controls
+  // when it did not open automatically. Wait for the loaded frame first so
+  // startup's temporary compact presentation cannot select the wrong UI.
+  if (selector.includes('#side-panel-body')) {
+    await waitFor('#workspace-frame[data-frame="expanded"] #btn-navigation-search:not(:disabled), #workspace-frame[data-frame="compact"] #btn-pill-search:not(:disabled)');
+    if (frame.dataset.frame !== 'compact') return;
+    (await waitFor('#btn-pill-more')).click();
+    const target = await waitFor(`${selector}, #btn-workspace-summary:not([hidden])`);
+    if (target.id === 'btn-workspace-summary') target.click();
+  }
+}
+
 async function perform(action: MockAction): Promise<void> {
+  await prepareControls(action.selector);
   const element = await waitFor(action.selector);
   if (action.kind === 'wait') return;
   if (action.kind === 'click') { element.click(); return; }
@@ -80,9 +103,12 @@ async function stage(session: MockConfig): Promise<void> {
     // App init is a later DOMContentLoaded listener. Waiting one task allows it
     // to attach its handlers; selectors then follow real asynchronous rendering.
     await new Promise<void>(resolve => setTimeout(resolve, 0));
-    if (session.scenario.actions?.length && session.scenario.route !== '/') await settlePreview(await waitFor('#flow .entry-card'));
+    if (session.scenario.actions?.length && session.scenario.route !== '/') await settlePreview(await waitFor('#flow .entry-card, #side-panel-body > *'));
     for (const action of session.scenario.actions ?? []) await perform(action);
-    if (session.scenario.ready) await settlePreview(await waitFor(session.scenario.ready));
+    if (session.scenario.ready) {
+      await prepareControls(session.scenario.ready);
+      await settlePreview(await waitFor(session.scenario.ready));
+    }
     if (revision !== stagingRevision) return;
     document.documentElement.dataset.mockReady = session.scenario.id;
     window.parent.postMessage({ type: 'aside:mock:ready', session: session.id, scenario: session.scenario.id }, location.origin);
@@ -102,7 +128,7 @@ async function recover(session: MockConfig): Promise<void> {
   window.dispatchEvent(new Event('focus'));
   // These are ordinary app retry controls. No application state is exported
   // or rewritten by the gallery, including during recovery demonstrations.
-  const retries = ['#btn-retry-instances', '#flow .notice-action', '#doc-body .notice-action', '.search-index-progress .history-retry', '#connection-status'];
+  const retries = ['#btn-retry-instances', '#flow .notice-action', '#side-panel-body .notice-action', '.search-index-progress .history-retry', '#connection-status'];
   for (const selector of retries) {
     const button = Array.from(document.querySelectorAll<HTMLElement>(selector)).find(visible);
     button?.click();
@@ -142,7 +168,7 @@ export async function bootstrap(config?: MockConfig): Promise<void> {
     };
   }
   for (const key of preferences) localStorage.removeItem(key);
-  const defaults = { darkMode: String(session.theme === 'dark'), panelCollapsed: 'false' };
+  const defaults = { darkMode: String(session.theme === 'dark') };
   for (const [key, value] of Object.entries({ ...defaults, ...session.scenario.preferences })) localStorage.setItem(key, value);
   if (session.scenario.faults?.auth === 'required') localStorage.removeItem('aside.webToken');
   else localStorage.setItem('aside.webToken', `mock:${id}`);

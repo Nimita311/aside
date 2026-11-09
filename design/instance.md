@@ -36,14 +36,14 @@ Instances enter a workspace from several sources:
 - **Launch argument** — a directory named explicitly when the session starts.
 - **Auto-discovery** — the working directory and its immediate children that hold a manifest.
 - **`.aside` config** — its `pointers` and `default` (below).
-- **The session** — any instance `selectInstance` adds by path, or `createInstance` makes new (legacy tools: `select_instance` and `create_instance`).
+- **The session** — any instance `selectInstance` adds by path, or `createInstance` makes new.
 
 `createInstance` saves files before daemon registration and activation. If a
 later step fails, its receipt reports the created path and current selection;
 recover with `selectInstance` after resolving the reported failure. Existing
 files are preserved, so repeating creation is not the recovery step.
 
-The `instances` query (legacy tool: `list_instances`) fetches the daemon's known catalogue each time and merges it with this session's valid candidates, deduplicating by canonical directory path, never by ID. It lists both groups even with no active selection:
+The `instances` query fetches the daemon's known catalogue each time and merges it with this session's valid candidates, deduplicating by canonical directory path, never by ID. It lists both groups even with no active selection:
 
 - **In this workspace** — included by this session's directory discovery, `.aside` pointers/default, or explicit `--dir`. Configured pointers can lie outside the checkout.
 - **Other known instances** — remembered by the daemon or encountered later in this session. Selecting one does not change its membership.
@@ -96,8 +96,8 @@ At startup one instance is activated by the first of these rules that applies:
 3. **The working directory**, when it is itself an instance — part of auto-discovery, so skipped under `discovery: false`.
 4. **A single workspace candidate**, when only one comes from discovery, configuration and launch arguments.
 
-If none applies — e.g. several candidates and no `default` — no instance is active and the agent selects one with the `selectInstance` mutation (legacy tool: `select_instance`).
+If none applies — e.g. several candidates and no `default` — no instance is active and the agent selects one with the `selectInstance` mutation.
 
 ## Identity conflicts
 
-Distinct independent instance groups with the same ID remain separately discoverable and browsable through their suffixed addresses. The daemon blocks calendar sync for every affected instance and reports the ID and paths through MCP issues, mutation receipts, and `calendar_info`. Metadata checks include known unloaded instances and do not load them. An unreadable known manifest retains its registration and last successfully observed identity. On startup, an unreadable registration with no observed identity pauses other instances' calendar work until its identity can be verified, its removal verified, or it is forgotten. Restore the manifest or its permissions without changing its existing ID. A successful identity change, verified removal, or forgetting an unloaded registration clears its previous observation. Resolve a verified conflict by assigning the independent instance a different ID; sync resumes automatically.
+Distinct independent instance groups with the same ID remain separately discoverable and browsable through their suffixed addresses. The daemon blocks calendar sync for every affected instance and reports the ID and paths through MCP issues, mutation results, and `Instance.calendarSync`. Metadata checks include known unloaded instances and do not load them. An unreadable known manifest retains its registration and last successfully observed identity. On startup, an unreadable registration with no observed identity pauses other instances' calendar work until its identity can be verified, its removal verified, or it is forgotten. Restore the manifest or its permissions without changing its existing ID. A successful identity change, verified removal, or forgetting an unloaded registration clears its previous observation. Resolve a verified conflict by assigning the independent instance a different ID; sync resumes automatically.

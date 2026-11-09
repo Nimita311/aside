@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdirSync, writeFileSync, rmSync, existsSync } from 'node:fs';
+import { mkdirSync, readFileSync, writeFileSync, rmSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { validate } from '../src/core/validator.js';
@@ -241,6 +241,96 @@ Nobody references me.
     const check = result.checks.find((c) => c.name === 'All action files referenced by entries');
     expect(check?.passed).toBe(false);
     expect(check?.details).toContain('2026-05-06-orphan-action');
+  });
+
+  describe('saved occurrences', () => {
+    const TEMPLATE = '2026-05-06-weekly-review';
+    const OCCURRENCE = '2026-05-07-weekly-review';
+
+    // A template and its saved occurrence, neither tagged by an entry yet.
+    function writeSavedOccurrence(dir: string, extraIndex = ''): void {
+      writeFileSync(
+        join(dir, 'actions', '2026', `${TEMPLATE}.md`),
+        `---
+name: Weekly review
+created: 2026-05-06T10:00
+recurrence:
+  - dtstart: 2026-05-11T09:00
+    rrule: FREQ=WEEKLY
+---
+
+Review the week.
+`,
+      );
+      writeFileSync(
+        join(dir, 'actions', '2026', `${OCCURRENCE}.md`),
+        `---
+name: Weekly review
+created: 2026-05-07T10:00
+scheduled: 2026-05-11T10:00
+occurrence:
+  template: ${TEMPLATE}
+  original: 2026-05-11T09:00
+---
+
+Review the week, an hour later.
+`,
+      );
+      writeFileSync(
+        join(dir, 'actions', '2026', 'index.yaml'),
+        `- id: 2026-05-05-test-action
+  description: A test action
+- id: ${TEMPLATE}
+  description: Review the week
+- id: ${OCCURRENCE}
+  description: Review the week, an hour later
+${extraIndex}`,
+      );
+    }
+
+    function tagTemplate(dir: string): void {
+      const week = join(dir, 'notes', '2026', '2026-05-04.md');
+      writeFileSync(week, readFileSync(week, 'utf8').replace('actions: [2026-05-05-test-action]', `actions: [2026-05-05-test-action, ${TEMPLATE}]`));
+    }
+
+    it('does not require an entry tag on a saved occurrence', () => {
+      writeValidDataset(tmpDir);
+      writeSavedOccurrence(tmpDir);
+      tagTemplate(tmpDir);
+      const result = validate(tmpDir);
+      expect(result.checks.find((c) => c.name === 'All action files referenced by entries')).toEqual({
+        name: 'All action files referenced by entries', passed: true, details: [],
+      });
+    });
+
+    it('still requires an entry tag on ordinary actions and templates', () => {
+      writeValidDataset(tmpDir);
+      writeFileSync(
+        join(tmpDir, 'actions', '2026', '2026-05-06-orphan-action.md'),
+        `---
+name: Orphan Action
+created: 2026-05-06T10:00
+---
+
+Nobody references me.
+`,
+      );
+      writeSavedOccurrence(tmpDir, `- id: 2026-05-06-orphan-action
+  description: Nobody references me
+`);
+      const check = validate(tmpDir).checks.find((c) => c.name === 'All action files referenced by entries');
+      expect(check?.passed).toBe(false);
+      expect(check?.details).toEqual(['2026-05-06-orphan-action', TEMPLATE]);
+    });
+
+    it('keeps saved occurrences resolvable as entry references', () => {
+      writeValidDataset(tmpDir);
+      writeSavedOccurrence(tmpDir);
+      const week = join(tmpDir, 'notes', '2026', '2026-05-04.md');
+      writeFileSync(week, readFileSync(week, 'utf8').replace('actions: [2026-05-05-test-action]', `actions: [2026-05-05-test-action, ${OCCURRENCE}]`));
+      const check = validate(tmpDir).checks.find((c) => c.name === 'Referenced actions have files');
+      expect(check?.passed).toBe(true);
+    });
   });
 
   it('treats missing index files as an empty index (parity with the parser)', () => {

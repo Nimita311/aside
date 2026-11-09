@@ -1,15 +1,15 @@
-import { readManagedText } from '../../core/managed-path.js';
 import { assertRecurrence, CompiledRecurrence, occurrenceKey, projectedAction, type OccurrenceIdentity } from '../../core/recurrence.js';
 import { isRepeatedSchedule, scheduleInstant, schedulingIssues, wallTimeAt } from '../../core/scheduling.js';
 import { handleUpdateOccurrence } from '../tools/recurrence.js';
 import { nativeSeries, type NativeSeries } from './recurrence-rule.js';
 import { canReplaceEventTime, eventTimingDiagnostic } from './timing.js';
+import { actionLocationIssues, sameCalendarLocation } from './location.js';
 import { RecurrenceMirror, type FamilyMirror } from './recurrence-state.js';
 import { parseMarker, buildMarker } from './markers.js';
 import { desiredFromAction, importFromEvent, type SyncResult } from './sync.js';
 import type { CalClient } from './client.js';
 import type { CalCalendar, CalEvent, NativeRecurrenceRule } from './protocol.js';
-import type { Store } from '../store.js';
+import type { Store } from '../../source/store.js';
 import type { Action } from '../../core/types.js';
 
 function marker(instance: string, template: string, key: string) { return `aside://${instance}/series/${encodeURIComponent(template)}/${key}`; }
@@ -49,7 +49,12 @@ export class RecurrenceCalSync {
   private timeBlocked = new Map<string, string>();
   private checkedOrdinary = new Set<string>();
   reset(): void { this.mirror = undefined; this.mirrorIdentity = undefined; this.timeBlocked.clear(); this.checkedOrdinary.clear(); }
-  constructor(private cal: CalClient) {}
+  constructor(private cal: CalClient, private sourceMutation?: (write: () => void) => void) {}
+  private updateOccurrence(store: Store, args: Parameters<typeof handleUpdateOccurrence>[1]): void {
+    if (!this.sourceMutation) throw new Error('Lifecycle mutation owner is unavailable for Calendar source writes.');
+    const write = () => {handleUpdateOccurrence(store, args);};
+    this.sourceMutation(write);
+  }
   pendingOrdinary(): string[] { return [...this.mirror?.pendingOrdinary ?? []]; }
   ordinaryEvent(id: string): string | undefined { return this.mirror?.ordinaryEvents.get(id); }
   isOrdinaryPending(id: string): boolean { return this.mirror?.pendingOrdinary.has(id) ?? false; }
@@ -183,10 +188,15 @@ export class RecurrenceCalSync {
     }
     for (const [templateId, template] of store.getActions()) if (template.frontMatter.recurrence) {
       try {
-        const schedules = assertRecurrence(template.frontMatter.recurrence), file = store.getActionFile(templateId);
-        const source = file ? readManagedText(store.getDataDir(), file) : undefined;
-        const templateGuard = () => { guard(); if (file && readManagedText(store.getDataDir(), file) !== source || JSON.stringify(store.getAction(templateId)) !== JSON.stringify(template)) throw new Error('Template changed during Calendar reconciliation; retry with its current definition.'); };
-        if (store.getIssues().some(i => i.severity === 'error' && (i.file === file || i.message.startsWith(templateId + ':')) && /recurrence|occurrence/.test(i.code))) throw new Error('Recurrence definition is malformed or rewrites history.');
+        const schedules = assertRecurrence(template.frontMatter.recurrence);
+        const saved = [...store.getActions()].filter(([,a]) => a.frontMatter.occurrence?.template === templateId);
+        for (const action of [template, ...saved.map(([,action]) => action)]) {
+          const invalid = actionLocationIssues(action.frontMatter.location);
+          if (invalid.length) throw new Error(invalid.join(' '));
+        }
+        const sourceGuard = store.captureActionSourceGuard(templateId, template);
+        const templateGuard = () => { guard(); if (!sourceGuard()) throw new Error('Template changed during Calendar reconciliation; retry with its current definition.'); };
+        if (store.getRecordIssues('action', templateId).some(issue => issue.severity === 'error' && /recurrence|occurrence/.test(issue.code))) throw new Error('Recurrence definition is malformed or rewrites history.');
         store.assertRecurrenceChange(templateId, schedules);
         // Only a recorded prior ordinary event or schedule needs a handoff. Fresh
         // templates do not require a date-window discovery sweep.
@@ -201,7 +211,6 @@ export class RecurrenceCalSync {
         const wanted = new Set(families.map(f => marker(instance, templateId, f.key)));
         // Publish removal before the replacement. A persisted mirror retains
         // obsolete anchors/phases even after restart or a failed replacement.
-        const saved = [...store.getActions()].filter(([,a]) => a.frontMatter.occurrence?.template === templateId);
         for (const [id, action] of saved) if (mirror.pendingNative.has(id) && !isNativeOccurrence(store, action)) {
           mirror.pendingNative.delete(id); mirror.pendingOrdinary.add(id); mirror.save();
         }
@@ -220,8 +229,8 @@ export class RecurrenceCalSync {
         // Retire a confirmed ordinary copy before publishing the same saved
         // identity as a native exception. Keep evidence until publication succeeds.
         for (const [id, action] of saved) if (isNativeOccurrence(store, action)) {
-          const path = store.getActionFile(id)!, source = readManagedText(store.getDataDir(), path);
-          const savedGuard = () => { templateGuard(); if (readManagedText(store.getDataDir(), path) !== source || JSON.stringify(store.getAction(id)) !== JSON.stringify(action)) throw new Error('Occurrence changed during Calendar reconciliation; retry with its current state.'); };
+          const sourceGuard = store.captureActionSourceGuard(id, action);
+          const savedGuard = () => { templateGuard(); if (!sourceGuard()) throw new Error('Occurrence changed during Calendar reconciliation; retry with its current state.'); };
           savedGuard(); await this.retireOrdinary(mirror, instance, id, action, savedGuard);
         }
         for (const family of families) await this.syncFamily(store, instance, templateId, template, family, saved, calendars, prefixes, templateGuard, reverse, mirror);
@@ -240,15 +249,16 @@ export class RecurrenceCalSync {
   }
   private async syncFamily(store: Store, instance: string, templateId: string, template: Action, family: NativeSeries, saved: [string, Action][], calendars: CalCalendar[], prefixes: { active: string; done: string }, guard: () => void, reverse: boolean, mirror: RecurrenceMirror): Promise<void> {
     const identityGuard = guard;
-    const file = store.getActionFile(templateId);
-    const source = file ? readManagedText(store.getDataDir(), file) : undefined;
-    const exceptionSources = new Map(saved.map(([id]) => { const path = store.getActionFile(id)!; return [path, readManagedText(store.getDataDir(), path)]; }));
+    const sourceGuard = store.captureActionSourceGuard(templateId, template);
+    // A previous family can have imported an occurrence during this pass. Pin
+    // this family's guards to the owner's current state after those writes.
+    const exceptionSources = new Map(saved.map(([id]) => [id, store.captureActionSourceGuard(id)]));
     guard = () => {
       identityGuard();
-      if (file && readManagedText(store.getDataDir(), file) !== source || JSON.stringify(store.getAction(templateId)) !== JSON.stringify(template)) throw new Error('Template changed during Calendar reconciliation; retry with its current definition.');
-      for (const [path, content] of exceptionSources) if (readManagedText(store.getDataDir(), path) !== content) throw new Error('Occurrence changed during Calendar reconciliation; retry with its current state.');
+      if (!sourceGuard()) throw new Error('Template changed during Calendar reconciliation; retry with its current definition.');
+      for (const current of exceptionSources.values()) if (!current()) throw new Error('Occurrence changed during Calendar reconciliation; retry with its current state.');
     };
-    const refreshExceptionSources = () => { for (const [id, action] of store.getActions()) if (action.frontMatter.occurrence?.template === templateId) { const path = store.getActionFile(id)!; exceptionSources.set(path, readManagedText(store.getDataDir(), path)); } };
+    const refreshExceptionSources = () => { for (const [id, action] of store.getActions()) if (action.frontMatter.occurrence?.template === templateId) exceptionSources.set(id, store.captureActionSourceGuard(id, action)); };
     const base = marker(instance, templateId, family.key), rule = new CompiledRecurrence(family.schedule);
     const version = JSON.stringify(template), previous = mirror.families.get(base), stable = previous?.definition === version;
     const snapshot: FamilyMirror = previous ? structuredClone(previous) : { template: templateId, family, observed: [] };
@@ -266,7 +276,7 @@ export class RecurrenceCalSync {
         end: wall, timezone: identity.timezone ?? null, startInstant: scheduleInstant(wall, identity.timezone)!, endInstant: scheduleInstant(wall, identity.timezone)! } });
     }
     // Include the current and next native occurrence, independent of projection
-    // lookahead. Stored detached items are fetched by the provider family ID.
+    // ranges. Stored detached items are fetched by the provider family ID.
     const next = rule.occurrences(templateId, wallTimeAt(Date.now(), family.schedule.timezone)).next().value;
     if (next && !snapshot.observed.some(o => occurrenceKey(o.identity) === occurrenceKey(next.identity))) snapshot.observed.push({ identity: next.identity,
       event: { id: '', url: base, title: '', calendar: '', start: next.scheduled, end: next.scheduled, timezone: next.identity.timezone ?? null,
@@ -287,7 +297,9 @@ export class RecurrenceCalSync {
       if (!occurrence) continue;
       const original = occurrence.identity.original;
       const key = occurrenceKey(occurrence.identity);
-      current.set(key, { event, identity: occurrence.identity });
+      // The physical head and its detached first occurrence can share a slot.
+      // Provider return order must not hide the effective detached event.
+      if (!current.get(key)?.event.detached || event.detached) current.set(key, { event, identity: occurrence.identity });
       const existing = saved.find(([,a]) => occurrenceKey(a.frontMatter.occurrence!) === key);
       const action = existing?.[1] ?? projectedAction(template, occurrence.identity, occurrence.scheduled);
       const timing = eventTimingDiagnostic(event);
@@ -305,7 +317,7 @@ export class RecurrenceCalSync {
       if (existing && witnessed.get(key)?.source !== JSON.stringify(existing[1])) continue;
       const imported = importFromEvent({ id: existing?.[0] ?? templateId, frontMatter: action.frontMatter, body: action.body }, { ...event, url: buildMarker(instance, existing?.[0] ?? templateId, state(event.url)) }, calendars);
       if (imported.summaries.length) {
-        guard(); handleUpdateOccurrence(store, { template: templateId, original, scheduled: imported.fm.scheduled ?? null, timezone: imported.fm.timezone ?? null, duration: imported.fm.duration ?? null, resolution: imported.fm.resolution ?? null, calendar: imported.fm.calendar ?? null, calendar_account: imported.fm.calendar_account ?? null }); refreshExceptionSources();
+        guard(); this.updateOccurrence(store, { template: templateId, original, scheduled: imported.fm.scheduled ?? null, timezone: imported.fm.timezone ?? null, duration: imported.fm.duration ?? null, resolution: imported.fm.resolution ?? null, calendar: imported.fm.calendar ?? null, calendar_account: imported.fm.calendar_account ?? null }); refreshExceptionSources();
       }
     }
     if (reverse && stable && nativeMatches && anchored) {
@@ -315,10 +327,10 @@ export class RecurrenceCalSync {
         // native exception. Never feed that acknowledged removal back as an edit.
         if (existing && !desiredFromAction({ id: existing[0], ...existing[1] }, instance, prefixes).have) continue;
         if (existing && value.source !== JSON.stringify(existing[1])) continue;
-        guard(); handleUpdateOccurrence(store, { template: templateId, original: value.identity.original, scheduled: null }); refreshExceptionSources();
+        guard(); this.updateOccurrence(store, { template: templateId, original: value.identity.original, scheduled: null }); refreshExceptionSources();
       }
     }
-    if (!master || !stable || !nativeMatches || !anchored || master.title !== desired.up.title || master.calendar !== desired.up.calendar || master.calendar_account !== (desired.up.calendar_account ?? master.calendar_account) || !master.allDay && master.durationMinutes !== desired.up.durationMinutes || master.timezone !== (desired.up.timezone ?? null)) {
+    if (!master || !stable || !nativeMatches || !anchored || master.title !== desired.up.title || master.calendar !== desired.up.calendar || master.calendar_account !== (desired.up.calendar_account ?? master.calendar_account) || !master.allDay && master.durationMinutes !== desired.up.durationMinutes || master.timezone !== (desired.up.timezone ?? null) || !sameCalendarLocation(desired.up.location, master.location)) {
       // Calendar's "this and future" edit can create another physical master
       // with the same marker. It is a source-of-truth mismatch, never an Aside
       // occurrence gesture. Remove the extra pieces before restoring the rule.
@@ -349,12 +361,12 @@ export class RecurrenceCalSync {
       const observed = current.get(occurrenceKey(provenance))?.event;
       if (!actual.have && !observed) { current.delete(occurrenceKey(provenance)); continue; }
       const url = base + (actual.have && action.frontMatter.resolution === 'done' ? '/done' : '');
-      if (actual.have && observed && observed.url === url && observed.title === target.title && observed.calendar === target.calendar && (!target.calendar_account || observed.calendar_account === target.calendar_account) && observed.start === target.start && !!observed.allDay === !!target.allDay && observed.timezone === (target.timezone ?? null) && (target.allDay || observed.durationMinutes === target.durationMinutes)) continue;
+      if (actual.have && observed && observed.url === url && observed.title === target.title && observed.calendar === target.calendar && (!target.calendar_account || observed.calendar_account === target.calendar_account) && observed.start === target.start && !!observed.allDay === !!target.allDay && observed.timezone === (target.timezone ?? null) && (target.allDay || observed.durationMinutes === target.durationMinutes) && sameCalendarLocation(target.location, observed.location)) continue;
       guard(); const exported = await this.cal.upsertOccurrence({ ...target, marker: base + (actual.have && action.frontMatter.resolution === 'done' ? '/done' : ''), original: provenance.original, originalTimezone: provenance.timezone, originalAllDay: provenance.original.length === 10, anchor: family.schedule.dtstart, eventId: observed?.id, remove: !actual.have, ...(replaceTime.has(occurrenceKey(provenance)) && { allowTimeReplacement: true }), notes: `Aside occurrence: ${provenance.original}\n${target.notes ?? ''}` }); guard();
       if (!actual.have) current.delete(occurrenceKey(provenance));
       else {
         const startInstant = scheduleInstant(target.start, target.timezone)!;
-        let effective: CalEvent = { id: exported.eventId, url, title: target.title, calendar: target.calendar, calendar_account: target.calendar_account, start: target.start, end: target.end, allDay: target.allDay, timezone: target.timezone ?? null, startInstant, endInstant: startInstant + (target.durationMinutes ?? 0) * 60000, durationMinutes: target.durationMinutes, original: provenance.original, detached: true, recurring: true, seriesRule: family.rule };
+        let effective: CalEvent = { id: exported.eventId, url, title: target.title, calendar: target.calendar, calendar_account: target.calendar_account, start: target.start, end: target.end, allDay: target.allDay, timezone: target.timezone ?? null, startInstant, endInstant: startInstant + (target.durationMinutes ?? 0) * 60000, durationMinutes: target.durationMinutes, location: target.location ?? null, original: provenance.original, detached: true, recurring: true, seriesRule: family.rule };
         if (!target.timezone && !target.allDay) {
           // Retain the returned native identifier before confirmation so a
           // failed read still locates an exception moved far from its origin.
@@ -366,13 +378,36 @@ export class RecurrenceCalSync {
           if (!actual) throw new Error('Calendar occurrence was saved but readback did not confirm its identity; retry its current definition.');
           const timing = eventTimingDiagnostic(actual);
           if (timing) throw new Error(timing.reason);
-          if (actual.title !== target.title || actual.calendar !== target.calendar || target.calendar_account && actual.calendar_account !== target.calendar_account || actual.allDay || actual.timezone !== null || actual.durationMinutes !== target.durationMinutes) throw new Error('Calendar occurrence was saved but readback differs from its saved definition; retry confirmation.');
-          if (actual.start !== target.start) { handleUpdateOccurrence(store, { template: templateId, original: provenance.original, scheduled: actual.start }); refreshExceptionSources(); }
+          if (actual.title !== target.title || actual.calendar !== target.calendar || target.calendar_account && actual.calendar_account !== target.calendar_account || actual.allDay || actual.timezone !== null || actual.durationMinutes !== target.durationMinutes || !sameCalendarLocation(target.location, actual.location)) throw new Error('Calendar occurrence was saved but readback differs from its saved definition; retry confirmation.');
+          if (actual.start !== target.start) { this.updateOccurrence(store, { template: templateId, original: provenance.original, scheduled: actual.start }); refreshExceptionSources(); }
           effective = actual;
         }
         current.set(occurrenceKey(provenance), { identity: provenance, event: effective });
         this.timeBlocked.delete(occurrenceKey(provenance));
       }
+    }
+    // A Calendar-only venue edit can detach an occurrence without any timing
+    // gesture to materialize locally. Restore its projected venue directly,
+    // retaining the observed event clock until ordinary reverse sync imports it.
+    const storedKeys = new Set([...store.getActions().values()].filter(action => action.frontMatter.occurrence?.template === templateId)
+      .map(action => occurrenceKey(action.frontMatter.occurrence!)));
+    for (const [key, value] of current) {
+      const event = value.event;
+      if (!event.id || !event.detached || storedKeys.has(key)) continue;
+      const wall = rule.wallFor(value.identity.original);
+      if (!wall) continue;
+      const projected = desiredFromAction({id: templateId, ...projectedAction(template, value.identity, wall)}, instance, prefixes);
+      if (!projected.have || sameCalendarLocation(projected.up.location, event.location)) continue;
+      guard();
+      const exported = await this.cal.upsertOccurrence({...projected.up,
+        marker: event.url, title: event.title, calendar: event.calendar, calendar_account: event.calendar_account,
+        start: event.start, end: event.end, timezone: event.timezone ?? undefined, allDay: event.allDay,
+        durationMinutes: event.allDay ? undefined : event.durationMinutes ?? (event.endInstant - event.startInstant) / 60000,
+        original: value.identity.original, originalTimezone: value.identity.timezone, originalAllDay: value.identity.original.length === 10,
+        anchor: family.schedule.dtstart, eventId: event.id,
+        notes: 'Aside occurrence: ' + value.identity.original + '\n' + (projected.up.notes ?? '')});
+      guard();
+      current.set(key, {...value, event: {...event, id: exported.eventId, location: projected.up.location ?? null}});
     }
     const sources = new Map([...store.getActions().values()].filter(action => action.frontMatter.occurrence?.template === templateId).map(action => [occurrenceKey(action.frontMatter.occurrence!), JSON.stringify(action)]));
     snapshot.observed = [...current.values()].map(value => ({ ...value, source: sources.get(occurrenceKey(value.identity)) })); snapshot.definition = version;
@@ -384,10 +419,9 @@ export function isNativeOccurrence(store: Store | undefined, action: { frontMatt
   const identity = action.frontMatter.occurrence;
   if (!identity || !store) return false;
   const template = store.getAction(identity.template);
-  const file = store.getActionFile(identity.template);
   // Malformed references and history edits must not fall through to ordinary
   // export, which would duplicate or replace a preserved native exception.
-  if (!template?.frontMatter.recurrence || store.getIssues().some(issue => issue.severity === 'error' && /recurrence|occurrence/.test(issue.code) && (file && issue.file === file || issue.message.startsWith(identity.template + ':')))) return true;
+  if (!template?.frontMatter.recurrence || store.getRecordIssues('action', identity.template).some(issue => issue.severity === 'error' && /recurrence|occurrence/.test(issue.code))) return true;
   try { assertRecurrence(template.frontMatter.recurrence); } catch { return true; }
   if (!template.frontMatter.calendar) return false;
   try { return store.getAction(identity.template)?.frontMatter.recurrence?.some(schedule => new CompiledRecurrence(schedule).contains(identity.template, identity.original) && nativeSeries(schedule).length > 0) ?? false; } catch { return false; }

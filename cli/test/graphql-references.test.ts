@@ -1,3 +1,4 @@
+import {sourceFileAccessGuard as access} from './support/source-file-access-guard.js';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -5,6 +6,7 @@ import { dirname, join } from 'node:path';
 import { buildReferenceGraph, buildProjectRelations, type ReferenceRecords } from '../src/graphql/references.js';
 import type { Kind, RecordNode } from '../src/graphql/query.js';
 import { validate } from '../src/core/validator.js';
+import {readAttachmentFiles, readReferenceRoots} from '../src/core/attachment-metadata.js';
 
 const plan = '2026-10-02-plan';
 const guide = '2026-10-02-guide';
@@ -30,18 +32,23 @@ describe('direct GraphQL content reference graph', () => {
     (records[kind] as Map<string, RecordNode>).set(id, result);
     return result;
   }
+  function publish() {
+    return {roots: readReferenceRoots(root), attachments: new Map([...records.artifact].map(([id, node]) =>
+      [id, readAttachmentFiles(root, id, node.record.frontMatter.attachments ?? [])]))};
+  }
+  function graphFixture(signal?: AbortSignal) {return buildReferenceGraph(root, records, {...publish(), signal});}
   beforeEach(() => {
     root = mkdtempSync(join(tmpdir(), 'aside-graphql-references-'));
     records = { entry: new Map(), project: new Map(), action: new Map(), artifact: new Map() };
   });
-  afterEach(() => { rmSync(root, { recursive: true, force: true }); });
+  afterEach(() => { access.reset(); rmSync(root, { recursive: true, force: true }); });
 
   it('resolves each concrete type and exact attachment targets, before pagination', () => {
     const source = node('entry', entry, `#project/${project} #action/${action} #artifact/${plan}\n[File](#artifact/${guide}/notes%20v2.md) #project/${project}\n#action/2026-10-02-missing`);
     node('project', project); node('action', action); node('artifact', plan);
     node('artifact', guide, '', { attachments: ['notes v2.md'] });
     write(`artifacts/2026/${guide}/notes v2.md`, `#entry/${entry}`);
-    const graph = buildReferenceGraph(root, records);
+    const graph = graphFixture();
     expect(graph.page(source, 'links', 1, 2)).toMatchObject({ offset: 1, count: 2, totalCount: 3 });
     expect(handles(graph.links(source))).toEqual([`#action/${action}`, `#artifact/${plan}`, `#project/${project}`]);
     expect(graph.attachmentLinks(source)[0]).toMatchObject({ __typename: 'Attachment', filename: 'notes v2.md', filePath: realpathSync(join(root, `artifacts/2026/${guide}/notes v2.md`)) });
@@ -63,7 +70,7 @@ describe('direct GraphQL content reference graph', () => {
       `#entry/${entry}`,
     ].join('\n\n'), { actions: [action], projects: [project] });
     node('project', project); node('action', action);
-    const graph = buildReferenceGraph(root, records);
+    const graph = graphFixture();
     expect(handles(graph.links(source))).toEqual([`#project/${project}`]);
     expect(graph.issues).toEqual([]);
   });
@@ -73,7 +80,7 @@ describe('direct GraphQL content reference graph', () => {
     node('artifact', plan, '', { attachments: ['unreferenced.MARKDOWN', 'binary.pdf'] });
     write(`artifacts/2026/${plan}/unreferenced.MARKDOWN`, `---\ntarget: '#action/missing'\n---\n\n#project/${project}`);
     write(`artifacts/2026/${plan}/binary.pdf`, new Uint8Array([255, 0, 128]));
-    const graph = buildReferenceGraph(root, records);
+    const graph = graphFixture();
     expect(graph.backlinks(`#project/${project}`)).toEqual([]);
     expect(graph.issues).toEqual([]);
   });
@@ -82,7 +89,7 @@ describe('direct GraphQL content reference graph', () => {
     const source = node('entry', entry, `#artifact/${plan}/note:copy.md https://example.com/?target=#action/missing`);
     node('artifact', plan, '', {attachments: ['note:copy.md']});
     write(`artifacts/2026/${plan}/note:copy.md`, 'Notes');
-    const graph = buildReferenceGraph(root, records);
+    const graph = graphFixture();
     expect(graph.links(source)).toEqual([]);
     expect(handles(graph.attachmentLinks(source))).toEqual([`#artifact/${plan}/note%3Acopy.md`]);
     expect(graph.issues).toEqual([]);
@@ -99,7 +106,7 @@ describe('direct GraphQL content reference graph', () => {
     write('artifacts/2026/2026-10-02-multi/one.md', `#project/${project}`);
     write('artifacts/2026/2026-10-02-multi/two.md', `#action/${action}`);
     const empty = node('artifact', '2026-10-02-empty');
-    const graph = buildReferenceGraph(root, records);
+    const graph = graphFixture();
     expect(graph.links(implicit)).toEqual([]);
     expect(graph.links(implicit)).toEqual(graph.links(`#artifact/${plan}/content.md`));
     expect(handles(graph.links(body))).toEqual([`#action/${action}`]);
@@ -112,7 +119,7 @@ describe('direct GraphQL content reference graph', () => {
     const owner = node('artifact', plan, `[Own](#artifact/${plan}/self.md)`, { attachments: ['self.md'] });
     const other = node('artifact', guide, `[Other](#artifact/${plan}/self.md)`);
     write(`artifacts/2026/${plan}/self.md`, `#artifact/${plan}\n[Self](#artifact/${plan}/self.md)`);
-    const graph = buildReferenceGraph(root, records);
+    const graph = graphFixture();
     expect(graph.links(owner)).toEqual([]);
     expect(handles(graph.attachmentLinks(owner))).toEqual([`#artifact/${plan}/self.md`]);
     expect(graph.links(`#artifact/${plan}/self.md`)).toEqual([]);
@@ -123,7 +130,7 @@ describe('direct GraphQL content reference graph', () => {
   it('resolves internal record file links and entry fragments using their actual file paths', () => {
     const source = node('artifact', plan, `[Project](../../projects/2026/${project}.md)\n[Entry](../../notes/2026/2026-09-28.md#entry/${entry})\n[Wrong year](../../projects/2025/${project}.md)\n[Weekly container](../../notes/2026/2026-09-28.md)`);
     node('project', project); node('entry', entry);
-    const graph = buildReferenceGraph(root, records);
+    const graph = graphFixture();
     expect(handles(graph.links(source))).toEqual([`#entry/${entry}`, `#project/${project}`]);
     expect(graph.issues).toEqual([expect.objectContaining({ message: expect.stringContaining(`Missing project reference: #project/${project} (projects/2025/${project}.md)`) })]);
   });
@@ -133,7 +140,7 @@ describe('direct GraphQL content reference graph', () => {
     Object.assign(source, { filePath: join(root, `artifacts/2025/${plan}.md`) });
     const target = node('project', project);
     Object.assign(target, { filePath: join(root, `projects/2026/${project}.md`) });
-    expect(handles(buildReferenceGraph(root, records).links(source))).toEqual([target.handle]);
+    expect(handles(graphFixture().links(source))).toEqual([target.handle]);
   });
 
   it('resolves absolute internal file destinations and reports internal missing targets while ignoring outside paths and URLs', () => {
@@ -150,7 +157,7 @@ describe('direct GraphQL content reference graph', () => {
     node('project', project);
     node('artifact', plan, '', { attachments: ['notes v2.md'] });
     write(`artifacts/2026/${plan}/notes v2.md`, `#entry/${entry}`);
-    const graph = buildReferenceGraph(root, records);
+    const graph = graphFixture();
     expect(handles(graph.links(source))).toEqual([`#project/${project}`]);
     expect(handles(graph.attachmentLinks(source))).toEqual([`#artifact/${plan}/notes%20v2.md`]);
     expect(graph.issues).toEqual([expect.objectContaining({ file: join(root, 'notes/2026/2026-09-28.md'), message: 'Missing action reference: #action/2026-10-02-missing (actions/2026/2026-10-02-missing.md)' })]);
@@ -161,7 +168,7 @@ describe('direct GraphQL content reference graph', () => {
     const projection = node('action', '~projection', template.record.body, { occurrence: { template: action } });
     projection.projected = true;
     node('artifact', plan);
-    const graph = buildReferenceGraph(root, records);
+    const graph = graphFixture();
     expect(handles(graph.links(projection))).toEqual([`#artifact/${plan}`]);
     expect(handles(graph.backlinks(`#artifact/${plan}`))).toEqual([template.handle]);
   });
@@ -172,10 +179,10 @@ describe('direct GraphQL content reference graph', () => {
     write('outside.md', `#project/${project}`);
     mkdirSync(join(root, `artifacts/2026/${plan}`), { recursive: true });
     symlinkSync(join(root, 'outside.md'), join(root, `artifacts/2026/${plan}/linked.md`));
-    const graph = buildReferenceGraph(root, records);
+    const graph = graphFixture();
     expect(graph.page(source, 'attachmentLinks')).toMatchObject({ nodes: [], count: 0, totalCount: 0 });
     expect(graph.issues.some(issue => issue.file === join(root, 'notes/2026/2026-09-28.md') && issue.message.includes('missing.md'))).toBe(true);
-    expect(graph.issues.some(issue => issue.message.includes('linked.md') && issue.message.includes('Symlinks are not allowed'))).toBe(true);
+    expect(graph.issues.some(issue => issue.message.includes('linked.md') && issue.message.includes('ordinary regular file'))).toBe(true);
     expect(graph.backlinks(`#project/${project}`)).toEqual([]);
   });
 
@@ -184,16 +191,31 @@ describe('direct GraphQL content reference graph', () => {
     node('artifact', plan, '', { attachments: ['invalid.md', 'huge.md'] });
     write(`artifacts/2026/${plan}/invalid.md`, new Uint8Array([255]));
     write(`artifacts/2026/${plan}/huge.md`, new Uint8Array(8 * 1024 * 1024 + 1));
-    const graph = buildReferenceGraph(root, records);
+    const graph = graphFixture();
     expect(graph.attachmentLinks(source)).toHaveLength(2);
     expect(graph.issues).toEqual([]);
+  });
+
+  it('uses the published attachment generation without inspecting changed files', () => {
+    const source = node('entry', entry, `#artifact/${plan}/notes.md`);
+    node('artifact', plan, '', {attachments: ['notes.md']});
+    write(`artifacts/2026/${plan}/notes.md`, 'Published bytes');
+    const published = publish();
+    rmSync(join(root, `artifacts/2026/${plan}/notes.md`));
+    access.protect([root]);
+    const graph = buildReferenceGraph(root, records, published);
+    expect(handles(graph.attachmentLinks(source))).toEqual([`#artifact/${plan}/notes.md`]);
+    expect(graph.issues).toEqual([]); expect(access.violations).toEqual([]);
+    expect(() => buildReferenceGraph(root, records, {...published, attachments: new Map()}))
+      .toThrow('Lifecycle-provided attachment metadata is unavailable');
+    expect(access.violations).toEqual([]);
   });
 
   it('respects cancellation and collection page bounds', () => {
     node('entry', entry);
     const controller = new AbortController(); controller.abort();
-    expect(() => buildReferenceGraph(root, records, controller.signal)).toThrow('cancelled');
-    const graph = buildReferenceGraph(root, records);
+    expect(() => graphFixture(controller.signal)).toThrow('cancelled');
+    const graph = graphFixture();
     expect(() => graph.page(`#entry/${entry}`, 'links', -1, 20)).toThrow('offset');
     expect(() => graph.page(`#entry/${entry}`, 'links', 0, 101)).toThrow('limit');
   });

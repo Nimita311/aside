@@ -5,7 +5,7 @@ An action is a deliberate work item created through the system.
 ## Properties
 
 - **Named.** Each action has a human-readable display name and a derived unique ID: `YYYY-MM-DD-{slug-of-name}`. The date is the creation date. The ID is also the filename (without `.md`).
-- **Entry-bound.** Actions are created linked to an entry that captures the context they emerged from — why it exists, what prompted it. The entry is the action's origin record.
+- **Entry-bound.** Actions are created linked to an entry that captures the context they emerged from — why it exists, what prompted it. The entry is the action's origin record. A saved occurrence takes this context from its template; see `recurrence.md`.
 - **Derived relationships.** Project association and origin context are not stored on the action — they are derived from entries where the action appears.
 - **Calendar-synced.** A scheduled action syncs 1:1 to a calendar event when a target `calendar` is set, and syncs back a limited set of edits. See `calendar.md`.
 
@@ -35,6 +35,7 @@ created: 2026-05-02T14:30
 scheduled: 2026-05-15T10:00
 duration: PT1H
 calendar: Work
+location: "#location/?geo=51.5034,-0.1276&postal=10%20Downing%20Street/London/"
 deadline: 2026-05-20T17:00
 ---
 
@@ -52,6 +53,7 @@ Front matter fields:
 - `resolution`: `done` or `cancelled` — how the action was resolved. Omit while active.
 - `calendar`: nonblank readable name of the calendar to sync the event to. Omit on creation to leave the action unsynced; use `null` on update to clear routing and remove its event.
 - `calendar_account`: optional readable account name qualifying `calendar`; omit for uniquely named calendars. See [calendar selection](calendar.md#calendar-selection).
+- `location`: optional primary [location handle](location-reference.md#action-location), independent of body mentions. Use one bare handle and quote it in YAML; omit on creation or use `null` on update to clear. It synchronizes to Calendar in one direction only.
 - `duration`: positive fixed ISO duration in whole minutes (e.g. `PT1H`, `P1D` = 24 elapsed hours even across clock changes) — the timed event's length. Omit for the default.
 - `timezone`: IANA time zone (e.g. `Asia/Tokyo`) for `scheduled`. Omit for a floating time.
 
@@ -99,11 +101,11 @@ Each action is created with two human-readable fields: a `description` — the o
 
 The action ID is derived: `{YYYY-MM-DD from created}-{slug of name}`. The ID is used in all references (entry metadata, inline mentions, filename).
 
-`update_action` can change the nonblank display name; omission preserves it. The ID, filename, creation timestamp, and references remain unchanged. A linked calendar event receives the updated title through forward sync.
+`updateAction` can change the nonblank display name; omission preserves it. The ID, filename, creation timestamp, and references remain unchanged. A linked calendar event receives the updated title through forward sync.
 
 ## Lifecycle
 
-The agent creates actions through `capture` or `update_entry`, linked to their context entry, and changes lifecycle fields through `update_action`.
+The agent creates actions through `capture` or `updateEntry`, linked to their context entry, and changes lifecycle fields through `updateAction`.
 
 - **Creating**: the action file uses the `created` date prefix. If a committed date or time was given, set `scheduled`; otherwise the action starts in backlog.
 - **Scheduling / rescheduling**: set or update `scheduled` — no file rename.

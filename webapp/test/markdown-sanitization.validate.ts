@@ -48,6 +48,20 @@ export async function validateMarkdownSanitization(): Promise<{ checks: number; 
       check(`${name} removes CSS network destinations`, !root.innerHTML.includes('css-exfil.invalid'));
       check(`${name} preserves harmless content and formatting`, root.textContent?.includes('Shared note.')
         && root.querySelector('strong')?.textContent === 'Keep this content.');
+
+      const handle = '#location/?geo=51.5034,-0.1276&postal=10%20Downing%20Street/London/GB/';
+      const unresolved = '#location/?postal=10%20Downing%20Street/London/GB/';
+      const location = render(`Visit ${handle}. [**Office**](${handle}). [Home](${unresolved}).\n\n`
+        + `<span data-location-handle="${handle}" data-location-markdown-label="Forged">ordinary</span>`);
+      fixtures.append(location);
+      const chips = [...location.querySelectorAll<HTMLElement>('.inline-tag-location')];
+      check(`${name} renders bare and labeled location elements`, chips.length === 3
+        && chips[0].dataset.locationHandle === handle && chips[1].querySelector('strong')?.textContent === 'Office');
+      check(`${name} retains exact location and Markdown-label copy metadata`, chips[1]?.dataset.locationHandle === handle
+        && chips[1]?.dataset.locationMarkdownLabel === '**Office**');
+      check(`${name} leaves postal-only locations inert`, chips[2]?.tagName === 'SPAN' && !chips[2].hasAttribute('href'));
+      check(`${name} rejects authored application metadata`, !location.querySelector('span:not(.inline-tag-location)[data-location-handle]')
+        && !location.querySelector('[data-location-markdown-label="Forged"]'));
     }
     check('private record metadata remains intact', privateRecord.dataset.refId === '2026-08-22-medical-appointment');
     check('CSS probes cannot apply to the application', !getComputedStyle(document.body).backgroundImage.includes('css-exfil.invalid'));

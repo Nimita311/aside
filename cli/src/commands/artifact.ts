@@ -15,7 +15,7 @@ export type ArtifactExecutor = (instance: string, name: string, args: unknown) =
 const viaDaemon: ArtifactExecutor = async (instance, name, args) => {
   const client = new DaemonClient();
   try {
-    return await client.request<ToolResult>('tool', { instance, name, args, issues: true }, { read: READ_TOOLS.has(name) });
+    return await client.request<ToolResult>('tool', { instance, name, args }, { read: READ_TOOLS.has(name) });
   } finally {
     client.close();
   }
@@ -35,7 +35,7 @@ function importFile(value: string, cwd: string, fail: (message: string) => never
 }
 
 // No discovery: a standalone command acts on one instance and shares the same
-// handlers, storage rules, and output as MCP.
+// handlers and storage rules as GraphQL.
 export async function runArtifact(args: CommandInput, cwd = process.cwd(), execute: ArtifactExecutor = viaDaemon): Promise<string> {
   const options = parseCommand('artifact', args);
   if (options.helpText) return options.helpText;
@@ -63,7 +63,7 @@ export async function runArtifact(args: CommandInput, cwd = process.cwd(), execu
       offset: get('--offset') === undefined ? undefined : Number(get('--offset')),
       limit: get('--limit') === undefined ? undefined : Number(get('--limit')),
     };
-    const { text: output, issues = [] } = await execute(dataDir, 'query_artifacts', query);
+    const { text: output, issues } = await execute(dataDir, 'query_artifacts', query);
     if (options.has('--json')) return jsonResult('artifact query', { content: [{ type: 'text', text: output }], issues });
     const summary = formatIssueSummary(issues);
     return summary && output.endsWith(summary)
@@ -80,7 +80,7 @@ export async function runArtifact(args: CommandInput, cwd = process.cwd(), execu
     files: options.all('--file')?.map((file) => importFile(file, cwd, fail)),
   };
   try {
-    const { text: output, issues = [] } = operation === 'create'
+    const { text: output, issues } = operation === 'create'
       ? await execute(dataDir, 'create_artifact', { ...fields, name: fields.name!, description: fields.description! } satisfies CreateArtifactArgs)
       : await execute(dataDir, 'update_artifact', { ...fields, id: id!, remove_files: options.all('--remove-file') } satisfies UpdateArtifactArgs);
     if (options.has('--json')) return jsonResult(`artifact ${operation}`, { content: [{ type: 'text', text: output }], issues });
@@ -88,7 +88,7 @@ export async function runArtifact(args: CommandInput, cwd = process.cwd(), execu
     return summary ? `${output}\n\n${summary}` : output;
   } catch (error) {
     if (!(error instanceof Error)) throw error;
-    throw new Error(error.message.replace(/use (update_artifact|query_artifacts)\b/g, (_, tool: string) =>
-      `use aside artifact ${tool === 'update_artifact' ? 'update' : 'query'}`));
+    throw new Error(error.message.replace('use updateArtifact through mutate', 'use aside artifact update')
+      .replace('Hint: query artifacts', 'Hint: use aside artifact query'));
   }
 }

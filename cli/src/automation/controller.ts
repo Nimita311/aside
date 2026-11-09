@@ -1,8 +1,7 @@
 import { AUTOMATION_WORKER_TIMEOUT_MS } from '../core/system-config.js';
 import { existsSync } from 'node:fs';
 import { Worker } from 'node:worker_threads';
-import { fileURLToPath } from 'node:url';
-import { dirname, join } from 'node:path';
+import { nativeBinPath } from '../native/helper.js';
 import type { AutomationSource, AutomationStatus } from './scheduler.js';
 import { RunStorage, type RunRecord } from './storage.js';
 import type { ModelWarmupWarning } from './model-warmup.js';
@@ -55,7 +54,7 @@ export class AutomationController {
   private start(): void {
     const source = import.meta.url.endsWith('/src/automation/controller.ts');
     const url = new URL(source ? '../../dist/automation-worker.js' : './automation-worker.js', import.meta.url);
-    this.worker = new Worker(url, { workerData: { storage: this.storage, wakeBinary: join(dirname(fileURLToPath(url)), 'aside-wake') } });
+    this.worker = new Worker(url, { workerData: { storage: this.storage, nativeBinary: nativeBinPath() } });
     this.worker.on('message', message => {
       if (message.type === 'delegation-request') {
         try {

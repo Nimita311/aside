@@ -34,6 +34,7 @@ describe('actionStatus / projectStatus', () => {
     expect(actionMarks(action('a', { scheduled: '2026-07-13T10:00' }).action.frontMatter, NOW)).toEqual([]);
     expect(actionMarks(action('a', {}).action.frontMatter, NOW)).toEqual(['backlog']);
     expect(actionMarks(action('a', { resolution: 'done', deadline: '2026-08-01' }).action.frontMatter, NOW)).toEqual(['done']);
+    expect(actionMarks({ ...action('a', { deadline: '2026-08-01' }).action.frontMatter, recurrence: [{ dtstart: '2026-07-13T09:00', rrule: 'FREQ=DAILY' }] }, NOW)).toEqual(['recurring']);
     expect(projectMarks({ name: 'p', created: '2026-01-01' })).toEqual([]);
     expect(projectMarks({ name: 'p', created: '2026-01-01', ended: '2026-06-01' })).toEqual(['ended']);
   });
@@ -76,7 +77,7 @@ describe('actionPills / projectPills', () => {
     ]);
   });
 
-  it('a lapsed schedule is its own pill — Slipped, wearing the slipped clock', () => {
+  it('a lapsed schedule is its own pill — Slipped, carrying the slipped mark', () => {
     // Unscheduled: the Backlog pill stands beside the due pill, never merged;
     // no stamp behind Backlog, so no hover.
     const bare = action('a', { deadline: '2026-07-15' }).action.frontMatter;

@@ -47,6 +47,15 @@ Use `query` and `mutate` for operations. Inspect needed types through targeted
 `query` introspection or read the [full schema](aside://graphql/schema).
 Either route suffices; guides and introspection need no instance selection.
 
+Use `Query.search` to search saved entities together. Its `where` groups reuse
+the existing entity filters, including explicit `regex` patterns. Top-level
+`rankBy.semantic` takes natural language and orders eligible records by meaning;
+it requires the local embedding model and never falls back to regex. Ranking
+does not change filter membership or counts. Read the Records guide for examples.
+Use `Query.systemInfo` for system status without selecting an instance.
+Its `search.semantic` field checks semantic-search prerequisites. If semantic ranking is unavailable, explain its reason and recovery;
+the check does not install software, start Ollama, or download models.
+
 Use `Mutation.show` to open a view in the default browser, or `Mutation.showUrl`
 to get a fresh private `file://` handoff URL for a chosen local browser. Opening
 the file automatically authorizes that browser and redirects to the requested

@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { loadApp } from './app-harness';
 import type { DateTimePreferences } from '../src/preferences';
+import { refreshDateTimeSettings } from '../src/date-time-settings';
 
 beforeEach(() => {
   localStorage.clear();
@@ -17,6 +18,19 @@ function select(id: string, value: string): void {
 }
 
 describe('date and time settings', () => {
+  it('shows all week-start choices and reflects the saved day without changing the date/time preview', () => {
+    expect([...document.querySelectorAll('#setting-week-start option')].map(option => option.textContent)).toEqual([
+      'Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday',
+    ]);
+    for (let day = 0; day < 7; day++) {
+      refreshDateTimeSettings({ timeFormat: 'locale', weekStartsOn: day });
+      expect((document.getElementById('setting-week-start') as HTMLSelectElement).value).toBe(String(day));
+      expect(document.getElementById('setting-date-time-preview')?.textContent).toBe('15 Oct 2026, 14:30');
+    }
+    refreshDateTimeSettings({ timeFormat: 'locale' });
+    expect((document.getElementById('setting-week-start') as HTMLSelectElement).value).toBe('1');
+    expect(localStorage.getItem('weekStartsOn')).toBeNull();
+  });
   it('uses a localized preview with plain option labels and persists independent choices', async () => {
     const app = await loadApp<App>('state, setupDateTimeSettings');
     app.setupDateTimeSettings();

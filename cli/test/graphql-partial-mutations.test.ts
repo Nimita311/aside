@@ -1,20 +1,23 @@
 import {afterEach, beforeEach, describe, expect, it, vi} from 'vitest';
+import {lifecycleOperationsFixture} from './lifecycle-operations-fixture.js';
 import {existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, unlinkSync, writeFileSync} from 'node:fs';
 import {dirname, join} from 'node:path';
-import {Store} from '../src/mcp/store.js';
+import {Store} from '../src/source/store.js';
 import {handleCapture} from '../src/mcp/tools/capture.js';
 import {handleUpdateAction, handleUpdateEntry, handleUpdateProject} from '../src/mcp/tools/update.js';
 import {createArtifact, handleUpdateArtifact} from '../src/mcp/tools/artifact.js';
 import {handleUpdateOccurrence} from '../src/mcp/tools/recurrence.js';
 import {handleUpdateInstance} from '../src/mcp/tools/instance.js';
-import {executeGraphQL, type MutationRunner} from '../src/graphql/schema.js';
-import {MutationWriteError, trackMutation} from '../src/mcp/tools/mutation-result.js';
-import * as history from '../src/mcp/recurrence-history.js';
+import {executeGraphQLWithOwner as executeGraphQL, type MutationRunner, outcome} from './graphql-owner-fixture.js';
+import {MutationWriteError, trackMutation} from '../src/source/mutation-result.js';
+import * as history from '../src/source/recurrence-history.js';
 import {InstanceSession} from '../src/mcp/instance-session.js';
 import {InstanceRegistry} from '../src/mcp/instance-registry.js';
 import {InstanceHost} from '../src/daemon/host.js';
 import {CalClient} from '../src/mcp/calendar/client.js';
 import {CalSync} from '../src/mcp/calendar/sync.js';
+import {lifecycleMetadataFixture} from './lifecycle-metadata-fixture.js';
+import {hostGraphQL} from './support/graphql-host.js';
 
 vi.mock('node:fs', async importOriginal => {
   const actual = await importOriginal<typeof import('node:fs')>();
@@ -30,16 +33,18 @@ describe('confirmed results when a mutation only partly persists', () => {
     switch (operation) {
       case 'capture': return handleCapture(store, args, NOW);
       case 'update_entry': return {...handleUpdateEntry(store, args, NOW), entryId: args.id};
-      case 'update_action': return {id: args.id, text: handleUpdateAction(store, args, NOW)};
-      case 'update_project': return {id: args.id, text: handleUpdateProject(store, args)};
-      case 'update_instance': return {text: handleUpdateInstance(store, args)};
+      case 'update_action': return outcome(handleUpdateAction(store, args, NOW), args.id);
+      case 'update_project': return outcome(handleUpdateProject(store, args), args.id);
+      case 'update_instance': handleUpdateInstance(store, args); return {};
       case 'create_artifact': return createArtifact(store, args, NOW);
       case 'update_artifact': return {id: args.id, text: handleUpdateArtifact(store, args)};
       case 'update_occurrence': return handleUpdateOccurrence(store, args, NOW);
       default: throw new Error(`Unexpected ${operation}`);
     }
   };
-  const graph = (document: string, variables?: Record<string, unknown>) => executeGraphQL(store, 'mutation', {document, variables}, {mutate});
+  const graph = (document: string, variables?: Record<string, unknown>) => executeGraphQL(store, 'mutation', {document, variables}, {
+    mutate, ownerRefresh: selected => selected.rebuild(),
+  });
   const partial = (result: any, operation: string) => {
     expect(result.errors).toBeUndefined();
     expect(result.extensions.mutations).toHaveLength(1);
@@ -165,8 +170,7 @@ describe('confirmed results when a mutation only partly persists', () => {
       document: 'mutation($id: ID!) { updateAction(id: $id, input: {name: "Saved rename"}) { error action { id name } } }', variables: {id},
     }, {mutate: (_operation, args: any) => {
       const earlier = trackMutation(store, () => handleUpdateAction(store, {id, description: 'Unsaved description'}, NOW));
-      const text = handleUpdateAction(store, args, NOW);
-      return {id, text, mutationResult: earlier.result};
+      return {...outcome(handleUpdateAction(store, args, NOW), id), mutationResult: earlier.result};
     }});
     const marker = partial(result, 'updateAction');
     expect(result.data.updateAction.action).toEqual({id, name: 'Saved rename'});
@@ -214,8 +218,8 @@ describe('confirmed results when a mutation only partly persists', () => {
     expect(store.getArtifact('2026-10-02-saved-artifact')!.body).toBe('Saved content');
   });
 
-  it('reports an instance setting write even if the subsequent Store reload fails', async () => {
-    vi.spyOn(store, 'rebuild').mockImplementationOnce(() => {throw new Error('Reload failed');});
+  it('reports an instance setting write even if publishing its loaded state fails', async () => {
+    vi.spyOn((store as any).core, 'upsertInstance').mockImplementationOnce(() => {throw new Error('Readback failed');});
     const marker = partial(await graph('mutation { updateInstance(input: {body: "Saved instructions"}) { error } }'), 'updateInstance');
     expect(marker.changes).toEqual([expect.objectContaining({kind: 'instance', id: 'partial-fixture', effect: 'UPDATED', fields: ['body']})]);
     expect(readFileSync(join(dir, 'aside.md'), 'utf8')).toContain('Saved instructions');
@@ -223,6 +227,7 @@ describe('confirmed results when a mutation only partly persists', () => {
   });
 
   it('retains saved file facts without returning stale instance content when readback keeps failing', async () => {
+    vi.spyOn((store as any).core, 'upsertInstance').mockImplementationOnce(() => {throw new Error('Initial publication failure');});
     vi.spyOn(store, 'rebuild').mockImplementation(() => {throw new Error('Repeated readback failure');});
     const result: any = await graph('mutation { updateInstance(input: {body: "Saved despite unavailable readback"}) { error instance { body } } }');
     const marker = partial(result, 'updateInstance');
@@ -230,6 +235,75 @@ describe('confirmed results when a mutation only partly persists', () => {
     expect(marker.error).toContain('Repeated readback failure');
     expect(marker.changes).toEqual([expect.objectContaining({kind: 'instance', id: 'partial-fixture', path: join(dir, 'aside.md')})]);
     expect(readFileSync(join(dir, 'aside.md'), 'utf8')).toContain('Saved despite unavailable readback');
+  });
+
+  it('uses loaded state after successful writes without asking the lifecycle to refresh', async () => {
+    const ownerRefresh = vi.fn(), rebuild = vi.spyOn(store, 'rebuild');
+    const result: any = await executeGraphQL(store, 'mutation', {
+      document: 'mutation{capture(input:{content:"Loaded immediately",description:"Loaded"}){error entry{content}}}',
+    }, {mutate, ownerRefresh});
+    expect(result.errors).toBeUndefined();
+    expect(result.data.capture).toEqual({error: null, entry: {content: 'Loaded immediately'}});
+    expect(ownerRefresh).not.toHaveBeenCalled();
+    expect(rebuild).not.toHaveBeenCalled();
+  });
+
+  it('delegates readback repair after a partial write to the injected lifecycle owner', async () => {
+    const ownerRefresh = vi.fn((selected: Store) => selected.rebuild());
+    const rebuild = vi.spyOn(store, 'rebuild'), onMutation = vi.fn();
+    const result: any = await executeGraphQL(store, 'mutation', {
+      document: 'mutation{capture(input:{content:"Saved before failure",description:"Saved"}){error entry{content}}}',
+    }, {onMutation, ownerRefresh, mutate: (_operation, args: any) => {
+      handleCapture(store, args, NOW);
+      throw new Error('Failure after saved entry');
+    }});
+    expect(result.errors).toBeUndefined();
+    expect(result.data.capture.entry).toEqual({content: 'Saved before failure'});
+    expect(result.data.capture.error).toContain('Failure after saved entry');
+    expect(ownerRefresh).toHaveBeenCalledExactlyOnceWith(store);
+    expect(rebuild).toHaveBeenCalledOnce();
+    expect(onMutation).toHaveBeenCalledExactlyOnceWith([dir]);
+  });
+
+  it('preserves saved effects and nulls readback when owner repair is unavailable', async () => {
+    const rebuild = vi.spyOn(store, 'rebuild'), onMutation = vi.fn();
+    const result: any = await executeGraphQL(store, 'mutation', {
+      document: 'mutation{capture(input:{content:"Durable entry",description:"Saved"}){error entry{content}}}',
+    }, {onMutation, ownerRefresh: () => {throw new Error('Owner readback unavailable');}, mutate: (_operation, args: any) => {
+      handleCapture(store, args, NOW);
+      throw new Error('Failure after persistence');
+    }});
+    const marker = partial(result, 'capture');
+    expect(result.data.capture.entry).toBeNull();
+    expect(marker.error).toContain('Owner readback unavailable');
+    expect(marker.changes).toContainEqual(expect.objectContaining({kind: 'entry', effect: 'CREATED'}));
+    expect(store.getEntries()[0].content).toBe('Durable entry');
+    expect(rebuild).not.toHaveBeenCalled();
+    expect(onMutation).toHaveBeenCalledExactlyOnceWith([dir]);
+  });
+
+  it('lets later mutation fields recover through the lifecycle after an earlier readback failure', async () => {
+    const rebuild = vi.spyOn(store, 'rebuild'), onMutation = vi.fn();
+    const ownerRefresh = vi.fn((_selected: Store) => {}).mockImplementationOnce(() => {
+      throw new Error('Lifecycle refresh temporarily unavailable');
+    }).mockImplementation((selected: Store) => selected.rebuild());
+    let first = true;
+    const result: any = await executeGraphQL(store, 'mutation', {document: `mutation {
+      first:capture(input:{content:"First saved entry",description:"First"}){error entry{content}}
+      second:capture(input:{content:"Second saved entry",description:"Second"}){error entry{content}}
+    }`}, {onMutation, ownerRefresh, mutate: (_operation, args: any) => {
+      const saved = handleCapture(store, args, NOW);
+      if (first) {first = false; throw new Error('First write failed after saving');}
+      return saved;
+    }});
+    expect(result.errors).toBeUndefined();
+    expect(result.data.first.entry).toBeNull();
+    expect(result.data.first.error).toContain('Lifecycle refresh temporarily unavailable');
+    expect(result.data.second).toEqual({error: null, entry: {content: 'Second saved entry'}});
+    expect(ownerRefresh).toHaveBeenCalledTimes(2);
+    expect(rebuild).toHaveBeenCalledOnce();
+    expect(onMutation).toHaveBeenCalledExactlyOnceWith([dir]);
+    expect(result.extensions.mutations).toHaveLength(2);
   });
 
   it('reports a materialized occurrence ID when its index cannot save', async () => {
@@ -290,12 +364,14 @@ describe('confirmed results when a mutation only partly persists', () => {
   it('lists only the confirmed instance and tutorial files when initialization stops partway', async () => {
     const path = join(dir, 'created'), year = String(new Date().getFullYear());
     failWrite(join(path, 'projects', year, 'index.yaml'));
-    const backend = {knownInstances: async () => [dir], issues: vi.fn(async () => [])};
+    const metadata = lifecycleMetadataFixture(dir);
+    const backend = {knownInstances: async () => [dir], issues: vi.fn(async () => []),
+      instanceRecord: metadata.instanceRecord, created: vi.fn(async () => [])};
     const registry = new InstanceRegistry([dir]); registry.activate(dir);
-    const session = new InstanceSession(registry, backend, [], false, true);
+    const session = new InstanceSession(registry, lifecycleOperationsFixture(backend), [], false);
     const result: any = await executeGraphQL(store, 'mutation', {
       document: 'mutation($path: String!) { createInstance(input: {path: $path, name: "Created", description: "Created", tutorial: true}) { error } }', variables: {path},
-    }, {instances: session});
+    }, {instances: session, loadedInstance: metadata.loadedInstance});
     expect(result.errors).toBeUndefined();
     const marker = result.extensions.mutations[0];
     expect(marker).toMatchObject({operation: 'createInstance', error: expect.stringContaining('Partial failure')});
@@ -307,22 +383,31 @@ describe('confirmed results when a mutation only partly persists', () => {
     expect(marker.changes.every((change: any) => existsSync(change.path))).toBe(true);
     expect(existsSync(join(path, 'projects', year, 'index.yaml'))).toBe(false);
     expect(backend.issues).not.toHaveBeenCalled();
+    expect(backend.created).toHaveBeenCalledExactlyOnceWith(path, {partial: true});
     expect(registry.activeInstance).toBe(dir);
   });
 
-  it('keeps a saved create marker when Calendar scheduling fails after record persistence', async () => {
+  it('keeps confirmed create facts independent of a later lifecycle Calendar failure', async () => {
     vi.spyOn(Store.prototype, 'watch').mockImplementation(() => {});
-    vi.spyOn(CalSync.prototype, 'syncActions').mockImplementation(actions => {
+    const sync = vi.spyOn(CalSync.prototype, 'syncActions').mockImplementation(actions => {
       if (actions.length) throw new Error('Calendar scheduling failed');
       return Promise.resolve([]);
     });
     const host = new InstanceHost(new CalClient(null));
+    host.configureSources({debounceMs: 0, reconciliationIntervalMs: 0, retryMinMs: 20, retryMaxMs: 40});
     try {
-      const result: any = JSON.parse((await host.tool(dir, 'mutate', {document: 'mutation { saved: capture(input: {content: "Context", description: "Context", actions: [{create: {name: "Saved work", description: "Work", scheduled: "2099-01-01", calendar: "Work"}}]}) { error } }'})).text);
-      const marker = partial(result, 'capture');
-      expect(result.data.saved.error).toContain('Calendar scheduling failed');
+      const result: any = JSON.parse((await hostGraphQL(host, dir, 'mutate', {document: 'mutation { saved: capture(input: {content: "Context", description: "Context", actions: [{create: {name: "Saved work", description: "Work", scheduled: "2099-01-01", calendar: "Work"}}]}) { error } }'})).text);
+      expect(result.errors).toBeUndefined();
+      const [marker] = result.extensions.mutations;
+      expect(marker.operation).toBe('capture');
+      expect(marker.error ?? '').not.toContain('Partial failure');
       expect(marker.changes.map((change: any) => change.kind)).toEqual(['action', 'index', 'entry', 'index']);
       expect(marker.changes.find((change: any) => change.kind === 'action').effect).toBe('CREATED');
+      await vi.waitFor(() => expect(host.issues(dir)).toContainEqual(expect.objectContaining({
+        code: 'instance_feature_failed', field: 'calendar', message: expect.stringContaining('Calendar scheduling failed'),
+      })));
+      sync.mockResolvedValue([]);
+      await vi.waitFor(() => expect(host.issues(dir).some(issue => issue.code === 'instance_feature_failed' && issue.field === 'calendar')).toBe(false));
     } finally {await host.close();}
   });
 
@@ -332,12 +417,12 @@ describe('confirmed results when a mutation only partly persists', () => {
     vi.spyOn(CalSync.prototype, 'status').mockImplementation(id => ({id, status, ...(status === 'failed' ? {reason: 'Calendar authorization failed'} : {})}));
     const host = new InstanceHost(new CalClient(null));
     try {
-      const result: any = JSON.parse((await host.tool(dir, 'mutate', {document: 'mutation { capture(input: {content: "warning: this is authored content", description: "Context", actions: [{create: {name: "Calendar warning text", description: "Work", scheduled: "2099-01-01", calendar: "Work", body: "warning: this is authored content"}}]}) { error entry { content } } }'})).text);
+      const result: any = JSON.parse((await hostGraphQL(host, dir, 'mutate', {document: 'mutation { capture(input: {content: "warning: this is authored content", description: "Context", actions: [{create: {name: "Calendar warning text", description: "Work", scheduled: "2099-01-01", calendar: "Work", body: "warning: this is authored content"}}]}) { error entry { content } } }'})).text);
       expect(result.errors).toBeUndefined();
       expect(result.data.capture.entry.content).toBe('warning: this is authored content');
       if (status === 'failed') {
         expect(result.data.capture.error).toContain('Calendar authorization failed');
-        expect(result.data.capture.error).toContain('calendarInfo');
+        expect(result.data.capture.error).toContain('activeInstance.calendarSync');
       } else expect(result.data.capture.error).toBeNull();
     } finally {await host.close();}
   });

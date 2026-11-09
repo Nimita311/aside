@@ -1,6 +1,6 @@
 import { mkdtempSync, rmSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import { Store } from '../src/mcp/store.js';
+import { Store } from '../src/source/store.js';
 import { RegexWorkerPool } from '../src/mcp/search.js';
 import { writeFixture } from '../bench/fixture.js';
 import { backendCaller } from '../bench/backend.js';
@@ -10,7 +10,7 @@ describe('canonical query benchmark correctness', () => {
   it.each([
     { size: 40, fanout: 1, bodyBytes: 0 }, { size: 100, fanout: 1, bodyBytes: 0 }, { size: 301, fanout: 1, bodyBytes: 0 },
     { size: 40, fanout: 8, bodyBytes: 0 }, { size: 301, fanout: 8, bodyBytes: 0 }, { size: 100, fanout: 1, bodyBytes: 4096 },
-  ])('returns complete equivalent answers at $size entries, fanout $fanout, body bytes $bodyBytes', async ({ size, fanout, bodyBytes }) => {
+  ])('returns complete expected answers at $size entries, fanout $fanout, body bytes $bodyBytes', async ({ size, fanout, bodyBytes }) => {
     const dir = mkdtempSync('/tmp/aside-query-bench-test-');
     const fixture = writeFixture(dir, size, { fanout, bodyBytes });
     const store = new Store(dir);
@@ -21,17 +21,17 @@ describe('canonical query benchmark correctness', () => {
       const call = backendCaller(store, pool);
       for (const task of CASES) {
         // Exercise the first query after a record rewrite and graph rebuild.
-        await call('update_project', { id: fixture.focus, name: fixture.projects.find(p => p.id === fixture.focus)!.name });
+        const rewrite = await call('mutate', { document: 'mutation($id: ID!, $input: UpdateProjectInput!) { updateProject(id: $id, input: $input) { error } }',
+          variables: { id: fixture.focus, input: { name: fixture.projects.find(p => p.id === fixture.focus)!.name } } });
+        expect(rewrite.structuredContent?.data).toEqual({ updateProject: { error: null } });
         const expected = task.expected(fixture);
-        const graph = new Context(call, 5), legacy = new Context(call, 5);
+        const graph = new Context(call, 5);
         expect(await task.graphql(graph, fixture), `${task.id}: GraphQL answer`).toEqual(expected);
-        expect(await task.legacy(legacy, fixture), `${task.id}: legacy answer`).toEqual(expected);
         expect(graph.metrics.requestBytes).toBeGreaterThan(0);
         expect(graph.metrics.responseBytes).toBeGreaterThan(graph.metrics.responseTextBytes);
-        expect(legacy.metrics.calls).toBeGreaterThanOrEqual(legacy.metrics.rounds);
+        expect(graph.metrics.calls).toBeGreaterThanOrEqual(graph.metrics.rounds);
         if (task.id === 'project-catch-up') {
           expect(graph.metrics.calls).toBe(1);
-          expect(legacy.metrics.calls).toBeGreaterThan(1);
           const answer = expected as { entries: { content: string }[]; related: unknown[] };
           if (fanout === 1) expect(answer.entries[0].content).toContain('Mention #project/');
           expect(answer.related).toHaveLength(2);
@@ -44,16 +44,17 @@ describe('canonical query benchmark correctness', () => {
     } finally { store.close(); await pool.close(); rmSync(dir, { recursive: true, force: true }); }
   });
 
-  it('never interprets an empty join input as the legacy unassociated filter', async () => {
+  it('answers an empty artifact join in one GraphQL call', async () => {
     const fixture = writeFixtureShape();
-    const ctx = new Context(async () => ({ content: [{ type: 'text', text: '0 of 0\noffset: 0\nlimit: 100\nnext_offset: null\n\n' }] }), 100);
-    expect(await CASES.find(c => c.id === 'artifacts-for-unfinished-actions')!.legacy(ctx, fixture)).toEqual([]);
+    const empty = { data: { artifacts: { nodes: [], offset: 0, count: 0, totalCount: 0 } }, extensions: { complete: true } };
+    const ctx = new Context(async () => ({ content: [{ type: 'text', text: JSON.stringify(empty) }] }), 100);
+    expect(await CASES.find(c => c.id === 'artifacts-for-unfinished-actions')!.graphql(ctx, fixture)).toEqual([]);
     expect(ctx.metrics.calls).toBe(1);
   });
 
   it('distinguishes known query limits from errors that must abort a benchmark', async () => {
     const raw = new Context(async () => { throw new Error('Regex search snapshot is too large. Narrow the query.'); }, 100);
-    await expect(raw.call('query_entries', {}, 1)).rejects.toBeInstanceOf(QueryLimitError);
+    await expect(raw.call('query', {}, 1)).rejects.toBeInstanceOf(QueryLimitError);
     const graph = new Context(async () => ({ isError: true, content: [{ type: 'text', text: JSON.stringify({ errors: [{ message: 'GraphQL query work limit exceeded.' }] }) }] }), 100);
     await expect(graph.graph('{ entries { nodes { id } } }', {})).rejects.toBeInstanceOf(QueryLimitError);
     const mixed = new Context(async () => ({ isError: true, content: [{ type: 'text', text: JSON.stringify({ errors: [
@@ -69,7 +70,7 @@ describe('canonical query benchmark correctness', () => {
     }) }] }), 100);
     await expect(tokens.graph('{ entries { totalCount } }', {})).rejects.toBeInstanceOf(QueryLimitError);
     const unexpected = new Context(async () => { throw new Error('Wrong relationship answer'); }, 100);
-    await expect(unexpected.call('query_entries', {}, 1)).rejects.not.toBeInstanceOf(QueryLimitError);
+    await expect(unexpected.call('query', {}, 1)).rejects.not.toBeInstanceOf(QueryLimitError);
     const partial = new Context(async () => ({ content: [{ type: 'text', text: '{"data":{},"extensions":{"complete":false}}' }] }), 100);
     await expect(partial.graph('{ entries { totalCount } }', {})).rejects.not.toBeInstanceOf(QueryLimitError);
   });

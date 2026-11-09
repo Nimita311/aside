@@ -5,6 +5,7 @@ import { catalogueRows, instanceIdentity, instanceGroup, calendarTooltip, duplic
 import { formatDate, formatClock } from './date-display';
 import { renderFactsLine, formatStamp, type RenderOptions } from './render';
 import { localDateStamp } from './date-reference';
+import { createModal, type ModalController } from './modal';
 
 const hasDuplicateId = (instance: AvailableInstance): boolean => !!instance.duplicatePaths?.length;
 
@@ -19,6 +20,9 @@ export class InstanceChooser {
   private readonly addError: HTMLElement;
   private readonly browse: HTMLButtonElement;
   private readonly cancel: HTMLButtonElement;
+  private readonly forgetDialog: HTMLDialogElement;
+  private readonly forgetModal: ModalController;
+  private forgetSelection: AvailableInstance | undefined;
   private generation = 0;
   private mutating = false;
   private refreshing = false;
@@ -40,6 +44,39 @@ export class InstanceChooser {
     this.addError = root.querySelector('#instance-add-error')!;
     this.browse = root.querySelector('#btn-browse-instance')!;
     this.cancel = root.querySelector('#btn-cancel-add-instance')!;
+    this.forgetDialog = document.createElement('dialog');
+    this.forgetDialog.className = 'modal-backdrop';
+    this.forgetDialog.hidden = true;
+    this.forgetDialog.tabIndex = -1;
+    this.forgetDialog.setAttribute('aria-labelledby', 'instance-forget-title');
+    this.forgetDialog.innerHTML = `<form class="modal" id="instance-forget-form">
+      <header class="modal-header"><h2 class="modal-title" id="instance-forget-title">Forget instance</h2></header>
+      <div class="modal-body">
+        <p id="instance-forget-description"></p>
+        <p id="instance-forget-path"></p>
+        <label class="form-checkbox"><input type="checkbox" id="instance-forget-cache" aria-describedby="instance-forget-cache-help"> Clear semantic search cache</label>
+        <p id="instance-forget-cache-help">Otherwise, the cache is kept for 30 days and removed on the next cache check. Instance files are kept.</p>
+        <div class="instance-add-actions"><button class="btn" type="button" id="instance-forget-cancel">Cancel</button><button class="btn btn-primary" type="submit" id="instance-forget-confirm">Forget instance</button></div>
+      </div>
+    </form>`;
+    root.append(this.forgetDialog);
+    this.forgetModal = createModal(this.forgetDialog, {
+      dismiss: () => this.closeForget(), beforeOpen: () => {}, fallback: () => this.add, duration: () => 0,
+    });
+    this.forgetDialog.querySelector('#instance-forget-cancel')!.addEventListener('click', () => this.closeForget());
+    this.forgetDialog.querySelector('form')!.addEventListener('submit', event => {
+      event.preventDefault();
+      const instance = this.forgetSelection;
+      if (!instance) return;
+      const clearCache = this.forgetDialog.querySelector<HTMLInputElement>('#instance-forget-cache')!.checked;
+      this.closeForget();
+      void this.mutate(async () => {
+        const { instances } = await this.request<{ instances: AvailableInstance[] }>('instances/remove', {
+          path: instance.path, ...(clearCache ? {clearCache: true} : {}),
+        });
+        return instances;
+      }, 'Could not forget this instance. Try again.');
+    });
     this.add.addEventListener('click', this.onAdd);
     this.form.addEventListener('submit', this.onSubmit);
     this.form.addEventListener('keydown', this.onFormKey);
@@ -111,6 +148,8 @@ export class InstanceChooser {
   }
 
   dispose(): void {
+    this.closeForget();
+    this.forgetDialog.remove();
     this.resetOpening();
     ++this.generation;
     this.add.removeEventListener('click', this.onAdd);
@@ -125,7 +164,7 @@ export class InstanceChooser {
   }
 
   setCatalogue(instances: AvailableInstance[]): void {
-    if (this.mutating || this.opening) return;
+    if (this.mutating || this.opening || this.forgetDialog.open) return;
     // Switcher discovery supersedes any older chooser request still in flight.
     ++this.generation;
     this.refreshing = false;
@@ -134,7 +173,7 @@ export class InstanceChooser {
   }
 
   async refresh(userInitiated = false): Promise<void> {
-    if (this.root.hidden || this.mutating || this.opening) return;
+    if (this.root.hidden || this.mutating || this.opening || this.forgetDialog.open) return;
     const generation = ++this.generation;
     this.refreshing = true;
     this.list.setAttribute('aria-busy', 'true');
@@ -160,6 +199,7 @@ export class InstanceChooser {
   }
 
   resetOpening(): void {
+    if (this.forgetDialog.open) this.closeForget();
     this.cancelOpening?.();
     this.cancelOpening = undefined;
     this.opening = false;
@@ -243,6 +283,27 @@ export class InstanceChooser {
     else this.list.removeAttribute('aria-busy');
   }
 
+  private closeForget(): void {
+    this.forgetModal.close(0);
+    this.forgetSelection = undefined;
+    if (this.redrawPending && !this.mutating) this.redraw();
+  }
+
+  private showForget(instance: AvailableInstance, children: number, launcher: HTMLButtonElement): void {
+    if (this.mutating || this.opening || this.root.hidden || this.forgetDialog.open) return;
+    ++this.generation;
+    this.refreshing = false;
+    this.list.removeAttribute('aria-busy');
+    this.forgetSelection = instance;
+    this.forgetDialog.querySelector('#instance-forget-description')!.textContent = children
+      ? `Forget ${instance.name || instance.id} and its ${children} registered worktree${children > 1 ? 's' : ''}?`
+      : `Forget ${instance.name || instance.id || 'this instance'}?`;
+    this.forgetDialog.querySelector('#instance-forget-path')!.textContent = instance.path;
+    this.forgetDialog.querySelector<HTMLInputElement>('#instance-forget-cache')!.checked = false;
+    launcher.focus();
+    this.forgetModal.open();
+  }
+
   private focusTarget() {
     const active = document.activeElement;
     if (!(active instanceof HTMLElement) || !this.list.contains(active)) return null;
@@ -258,7 +319,7 @@ export class InstanceChooser {
   }
 
   redraw(): void {
-    if (this.mutating || this.opening) { this.redrawPending = true; return; }
+    if (this.mutating || this.opening || this.forgetDialog.open) { this.redrawPending = true; return; }
     this.redrawPending = false;
     this.render(this.instances);
   }
@@ -334,12 +395,7 @@ export class InstanceChooser {
       remove.setAttribute('aria-label', `Forget ${label} at ${instance.path}`);
       const children = !instance.worktree?.linked ? instances.filter(other => other.worktree?.linked && instanceGroup(other) === instanceGroup(instance)).length : 0;
       setInstanceTooltip(remove, children ? `Forget instance and ${children} registered worktree${children > 1 ? 's' : ''}. Files stay on your Mac.` : 'Forget instance. Forgetting an instance keeps its files on your Mac.');
-      remove.addEventListener('click', () => {
-        void this.mutate(async () => {
-          const { instances } = await this.request<{ instances: AvailableInstance[] }>('instances/remove', { path: instance.path });
-          return instances;
-        }, 'Could not forget this instance. Try again.');
-      });
+      remove.addEventListener('click', () => this.showForget(instance, children, remove));
       actions.append(remove); body.append(actions); row.append(date, body);
       return row;
     });

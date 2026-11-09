@@ -1,14 +1,10 @@
 import type { StoreView as Store } from '../../cli/src/core/data-snapshot';
 import type { EntityRef } from '../lib/types';
-import { activeModal } from './modal';
-import { applyRefStatus, entityIcon, type RenderOptions } from './render';
-import { bindDisplay, setDisplayText } from './display';
-import { applyStoredPanelWidth } from './panel-resize';
+import { activeModal, usable } from './modal';
 
-// The side panel's chrome: showing and hiding the panel element, retracting
-// it to the docked filter pill and back, the state back/forward restores (its
-// scroll offset and expanded sections), and the focus bookkeeping a re-render
-// needs. What the panel shows is app.ts's showSidePanel.
+// The summary's availability and retained reading state. The responsive frame
+// owns its placement: the same body lives in the docked Context panel or the
+// pill's own Summary surface. What the summary shows is app.ts's showSidePanel.
 
 // The side panel's last-seen state: its body scroll offset and the related
 // sections the user expanded past their fold, so back/forward restores the
@@ -19,155 +15,50 @@ import { applyStoredPanelWidth } from './panel-resize';
 export interface PanelView {
   scrollTop: number;
   expanded: string[];
+  contextView?: 'content' | 'overview';
 }
 
-// The app state the chrome reads — and, for the collapsed preference, writes.
+// The current summary scope; availability never changes the browsing state.
 export interface SidePanelState {
-  panelCollapsed: boolean;
   filter: EntityRef | null;
   store: Store | null;
 }
 
 export interface SidePanelDeps {
   state: SidePanelState;
-  transitionMs(): number;
-  renderOpts(): RenderOptions;
-  // Render the current scope into the panel body; expanding the panel runs it.
-  showSidePanel(): Promise<void>;
-  clearFilter(): void;
+  setAvailable(available: boolean): void;
+  focusFallback(): HTMLElement | null;
 }
 
-export function createSidePanel({ state, transitionMs, renderOpts, showSidePanel, clearFilter }: SidePanelDeps) {
+export function createSidePanel({ state, setAvailable, focusFallback }: SidePanelDeps) {
   const $ = <T extends HTMLElement = HTMLElement>(selector: string): T | null => document.querySelector<T>(selector);
 
-  // The pending display:none that follows the panel's slide-out; a re-show
-  // cancels it (the is-open re-add lags a frame behind, so it can't be the guard).
-  let panelHideTimer: ReturnType<typeof setTimeout> | undefined;
-  // The docked pill's own pending hide, likewise cancelled by a re-show.
-  let pillHideTimer: ReturnType<typeof setTimeout> | undefined;
   // True while restorePanelView replays a panel state, through to the frame
   // after — the synthetic expand clicks (synchronous) and the scroll it sets
   // (whose event is async) would otherwise stamp over the state being restored.
   let panelRestoring = false;
 
-  function movePanelFocus(outgoing: HTMLElement, target: HTMLElement | null): void {
-    if (!outgoing.contains(document.activeElement) || activeModal()) return;
-    const destination = target && !target.closest('[hidden], [inert]') ? target : $('.app-title a');
-    destination?.focus({ preventScroll: true });
-  }
-
   function hidePanelElement(): void {
-    const sidePanel = $('#side-panel');
-    if (sidePanel) {
-      movePanelFocus(sidePanel, $('#filter-pill .filter-pill-label'));
-      sidePanel.inert = true;
-      sidePanel.classList.remove('is-open');
-      clearTimeout(panelHideTimer);
-      panelHideTimer = setTimeout(() => { sidePanel.hidden = true; }, transitionMs());
-    }
+    setAvailable(false);
   }
 
   function showPanelElement(): void {
-    const panel = $('#side-panel');
-    if (!panel) return;
-    clearTimeout(panelHideTimer);
-    panel.hidden = false;
-    panel.inert = false;
-    panel.classList.toggle('is-instance', !state.filter);
-    requestAnimationFrame(() => { if (!panel.hidden && !panel.inert) panel.classList.add('is-open'); });
+    $('#side-panel')?.classList.toggle('is-instance', !state.filter);
+    setAvailable(true);
   }
 
   function closeSidePanel(): void {
     hidePanelElement();
-    updateFilterPill();
   }
 
-  // Retract the panel to the docked pill / bring it back. The pill keeps the
-  // active filter visible while the flow gets the full width.
-  function collapsePanel(): void {
-    state.panelCollapsed = true;
-    localStorage.setItem('panelCollapsed', 'true');
-    updateFilterPill();
-    hidePanelElement();
-  }
-
-  function expandPanel(): void {
-    state.panelCollapsed = false;
-    localStorage.setItem('panelCollapsed', 'false');
-    applyStoredPanelWidth();
-    void showSidePanel();
-  }
-
-  // The docked pill shown while the panel is retracted: the filtered entity as
-  // a colored tag (click to expand) plus a clear button.
-  function updateFilterPill(): void {
-    $('#btn-side-panel-collapse')?.setAttribute('aria-expanded', String(!state.panelCollapsed));
-    const pill = $('#filter-pill');
-    if (!pill) return;
-    clearTimeout(pillHideTimer);
-    const instance = state.store?.getInstance();
-    const show = state.panelCollapsed && (state.filter !== null || instance != null);
-    if (!show) {
-      movePanelFocus(pill, $('#btn-side-panel-collapse'));
-      pill.inert = true;
-      pill.classList.remove('is-visible');
-      // Keep it displayed until the slide-out finishes; a re-show cancels this.
-      pillHideTimer = setTimeout(() => { pill.hidden = true; }, transitionMs());
-      return;
-    }
-    pill.hidden = false;
-    pill.inert = false;
-    requestAnimationFrame(() => { if (!pill.hidden && !pill.inert) pill.classList.add('is-visible'); });
-
-    const ref = state.filter;
-    const focusedClear = document.activeElement?.matches('.filter-pill-clear') && pill.contains(document.activeElement);
-    const restoreFocus = pill.contains(document.activeElement) && !activeModal();
-    pill.innerHTML = '';
-
-    const opts = renderOpts();
-    const label = document.createElement('button');
-    label.className = `filter-pill-label tag tag-${ref?.type ?? 'instance'}`;
-    if (ref) {
-      label.dataset.refType = ref.type;
-      label.dataset.refId = ref.id;
-    }
-    label.title = 'Expand panel';
-    label.setAttribute('aria-expanded', 'false');
-    label.setAttribute('aria-controls', 'side-panel-body');
-    label.innerHTML = entityIcon(ref?.type ?? 'instance'); // hardcoded SVG only — never user data
-    const text = document.createElement('span');
-    text.className = 'tag-text';
-    text.textContent = ref ? opts.resolveName(ref.type, ref.id) : instance!.manifest.name ?? instance!.manifest.id;
-    label.setAttribute('aria-label', `Expand panel: ${text.textContent}`);
-    if (ref?.type === 'entry') {
-      bindDisplay(text, opts, (node, current) => {
-        const name = current.resolveName(ref.type, ref.id);
-        setDisplayText(node, name);
-        node.parentElement?.setAttribute('aria-label', `Expand panel: ${name}`);
-      });
-    }
-    label.appendChild(text);
-    if (ref) applyRefStatus(label, ref.type, ref.id, opts);
-    label.addEventListener('click', () => expandPanel());
-    pill.append(label);
-
-    // The instance is not a filter — its pill has nothing to clear.
-    if (ref) {
-      const clear = document.createElement('button');
-      clear.className = 'filter-pill-clear';
-      clear.textContent = '×';
-      clear.setAttribute('aria-label', 'Clear filter');
-      clear.addEventListener('click', (e) => { e.stopPropagation(); clearFilter(); });
-      pill.append(clear);
-    }
-    if (restoreFocus) (focusedClear ? pill.querySelector<HTMLElement>('.filter-pill-clear') ?? label : label).focus({ preventScroll: true });
-  }
-
-  // The side panel's current state, or null when nothing is on display
-  // (retracted to the pill). Read from the live DOM at stamp time.
+  // Read the mounted body regardless of whether the frame currently docks it
+  // or exposes it through the pill. Responsive retraction is not navigation.
   function panelSnapshot(): PanelView | null {
     const body = $('#side-panel-body');
-    if (!body || state.panelCollapsed) return null;
+    if (!body) return null;
+    const rememberedScroll = body.dataset.panelScroll === undefined ? NaN : Number(body.dataset.panelScroll);
+    const scrollTop = usable(body) || !Number.isFinite(rememberedScroll) ? body.scrollTop : rememberedScroll;
+    body.dataset.panelScroll = String(scrollTop);
     const expanded = Array.from(body.querySelectorAll<HTMLElement>('.related-heading[data-section]'))
       .flatMap((h) => {
         const reveals = h.dataset.expanded;
@@ -176,7 +67,8 @@ export function createSidePanel({ state, transitionMs, renderOpts, showSidePanel
         if (/^\d+$/.test(reveals)) return Array<string>(Number(reveals)).fill(title);
         return reveals.split(' ').map((dir) => `${title}::${dir}`);
       });
-    return { scrollTop: body.scrollTop, expanded };
+    const contextView = $('#side-panel')?.dataset.view;
+    return { scrollTop, expanded, ...(contextView === 'content' || contextView === 'overview' ? { contextView } : {}) };
   }
 
   // Refresh the current history entry's panel state, so leaving the view (even
@@ -204,6 +96,9 @@ export function createSidePanel({ state, transitionMs, renderOpts, showSidePanel
       } else {
         body.scrollTop = 0;
       }
+      // A retracted body can report zero until it is mounted in a visible
+      // Summary surface. Keep the requested logical position for that move.
+      body.dataset.panelScroll = String(view?.scrollTop ?? 0);
     } finally {
       // Hold the guard past this frame's scroll dispatch: the scrollTop set above
       // fires its scroll event before the next rAF, so clearing here (not
@@ -235,15 +130,15 @@ export function createSidePanel({ state, transitionMs, renderOpts, showSidePanel
       equivalent = Array.from(body.querySelectorAll<HTMLElement>('button[aria-label]')).find(node =>
         node.getAttribute('aria-label') === previous.getAttribute('aria-label'));
     }
-    const target = equivalent && !equivalent.closest('[hidden], [inert]') ? equivalent : body.querySelector<HTMLElement>('.entity-title, .notice-action');
-    if (target) {
-      if (target !== equivalent) target.tabIndex = -1;
+    const target = equivalent && usable(equivalent) ? equivalent : body.querySelector<HTMLElement>('.entity-title, .notice-action') ?? focusFallback();
+    if (target && usable(target)) {
+      if (target !== equivalent && body.contains(target)) target.tabIndex = -1;
       target.focus({ preventScroll: true });
     }
   }
 
   return {
-    hidePanelElement, showPanelElement, closeSidePanel, collapsePanel, expandPanel, updateFilterPill,
+    hidePanelElement, showPanelElement, closeSidePanel,
     panelSnapshot, stampPanel, restorePanelView, holdPanelFocus, restorePanelFocus,
     isPanelRestoring: () => panelRestoring,
   };

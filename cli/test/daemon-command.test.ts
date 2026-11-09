@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { runDaemon } from '../src/commands/daemon.js';
 import { runInstance } from '../src/commands/instance.js';
-import { init } from '../src/commands/init.js';
+import { init } from '../src/source/bootstrap.js';
 import { Daemon, writeKnown } from '../src/daemon/daemon.js';
 import { FileLock, isLocked } from '../src/daemon/filelock.js';
 import { InstanceHost } from '../src/daemon/host.js';

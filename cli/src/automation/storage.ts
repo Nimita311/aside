@@ -2,7 +2,7 @@ import { AUTOMATION_HISTORY_LIMIT, DIAGNOSTIC_RETENTION_DAYS } from '../core/sys
 import { lstatSync, mkdirSync, readdirSync, readFileSync, rmdirSync, unlinkSync } from 'node:fs';
 import { basename, join, resolve } from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
-import { writeFileCrashSafe } from '../mcp/tools/index-file.js';
+import { writeFileCrashSafe } from '../storage/atomic-file.js';
 import { readManagedText } from '../core/managed-path.js';
 import type { ResolvedModel, AutomationDefinition } from '../core/automation.js';
 

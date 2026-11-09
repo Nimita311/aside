@@ -38,7 +38,8 @@ Agents prefer smart elements whenever possible in authored record content;
 MCP's write guides include syntax examples.
 Scheduling metadata keeps its existing schema and is not inferred from prose.
 
-Bare handles render as neutral inline chips.
+Bare handles render as neutral inline chips, their calendar icon showing a day,
+a range of days, or a clock time.
 Malformed handles, code, and escaped hashes stay literal. Chips show absolute
 dates in the browser locale and respect the date, time-style, and clock
 preferences (see [web display preferences](../webapp/spec.md#date-and-time-display-preferences));

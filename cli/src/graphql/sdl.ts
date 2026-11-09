@@ -1,6 +1,7 @@
 
 // The executable schema is the reference for field shapes and value contracts.
 // Workflow guidance belongs in MCP resources, not another field catalog.
+import { systemInfoSDL } from './system-info-sdl.js';
 const pageArgs = (type: string) => `
   "Maximum records on this page, from 1 to 100."
   limit: Int = 20
@@ -10,7 +11,7 @@ const pageArgs = (type: string) => `
   orderBy: ${type === 'Action' ? 'ActionOrder' : 'RecordOrder'} = CREATED_DESC
 `;
 const relation = (type: string) => `
-  "Filter the full collection before pagination."
+  "Filter the full collection before pagination.${type === 'Action' ? ' Projection bounds follow Query.actions.' : ''}"
   where: ${type}Where
   ${pageArgs(type)}
 `;
@@ -25,7 +26,9 @@ const commonWhere = (type: string) => `
   ids: [ID!]
   ${dates('created')}
   "Case-insensitive ECMAScript regex without delimiters or flags. Matches ${type === 'Entry' ? 'content and index description' : 'name, index description, and Markdown body'}${type === 'Artifact' ? ', not attachment contents' : ''}."
-  search: String
+  regex: String
+  "Legacy alias for regex: case-insensitive ECMAScript regex without delimiters or flags. Matches ${type === 'Entry' ? 'content and index description' : 'name, index description, and Markdown body'}${type === 'Artifact' ? ', not attachment contents' : ''}. Do not combine with regex in the same filter."
+  search: String @deprecated(reason: "Use regex for explicit pattern matching, or Query.search with rankBy.semantic for natural-language ranking.")
 `;
 const booleanWhere = (type: string) => `
   "Require every predicate; [] is true. Sibling fields are also ANDed."
@@ -75,6 +78,8 @@ const scheduling = (mode: 'stored' | 'create' | 'update') => {
     duration: String
     "IANA zone qualifying a timed scheduled value, such as America/Los_Angeles; absent means floating time. All-day dates ignore it.${provided('Only set when the user specified a zone.')}${clear('Null restores floating time.')}"
     timezone: String
+    "Complete bare #location/? handle with geo, postal, or both; Markdown labels are not accepted. ${mode === 'update' ? 'Omit to preserve; null removes the value, including an inherited location when materializing an occurrence.' : mode === 'create' ? 'Omit when absent; null is not accepted. Templates supply their location to unsaved occurrences.' : 'Unsaved occurrences inherit the template location; saved occurrences retain their own value.'}"
+    location: String
   `;
 };
 const automationsInput = (updating = false) => `
@@ -82,7 +87,7 @@ const automationsInput = (updating = false) => `
   automations: ${updating ? 'AutomationEditsInput' : '[CreateAutomationInput!]'}
 `;
 const recordIdentity = (action = false) => `
-  "Record ID without a handle prefix. Entry IDs are created timestamps; other saved IDs are date-prefixed slugs.${action ? ' Projected occurrence IDs also work with action and updateAction while present in the lookahead window.' : ''}"
+  "Record ID without a handle prefix. Entry IDs are created timestamps; other saved IDs are date-prefixed slugs.${action ? ' Exact projected occurrence IDs also work with action and updateAction independently of list projection bounds.' : ''}"
   id: ID!
   "${action ? 'Saved actions have a canonical #action/id reference for Markdown. A projected occurrence has a transient reference; edit it before linking durably and use the returned saved action handle.' : 'Canonical #kind/id reference for use in Markdown.'}"
   handle: String!
@@ -434,12 +439,33 @@ export function graphQLSDL(): string {
 
     "Effective instance settings, with application defaults for absent values."
     type InstanceSettings {
-      "Future projection window in days; defaults to seven."
-      recurrenceLookaheadDays: Int!
+      "Webapp settings shared by every browser viewing this instance."
+      webapp: WebappSettings!
       "Prefix for scheduled Calendar event titles; defaults to ▢ followed by a space. Set with UpdateInstanceInput.settings.scheduledEventTitlePrefix."
       scheduledEventTitlePrefix: String!
       "Prefix for completed Calendar event titles; defaults to ✓ followed by a space. Set with UpdateInstanceInput.settings.doneEventTitlePrefix."
       doneEventTitlePrefix: String!
+    }
+    "Instance-owned webapp navigation. An absent declaration reads as an empty sidebar."
+    type WebappSettings {
+      "Ordered sidebar sections."
+      sidebar: [WebappSidebarSection!]!
+    }
+    "A sidebar group with an optional heading."
+    type WebappSidebarSection {
+      "Optional authored section heading."
+      title: String
+      "Shortcuts in their authored order."
+      items: [WebappSidebarItem!]!
+    }
+    "One shortcut with exactly one timeline or entity target. Targets remain authored strings."
+    type WebappSidebarItem {
+      "Optional display label; the browser derives a target label when omitted."
+      label: String
+      "Entry timeline target, such as a smart element, explicit query attachment, or canonical Aside URL. Exclusive with entity."
+      timeline: String
+      "Content target to open as a page. Exclusive with timeline."
+      entity: String
     }
     "Derived task lifecycle. Completed or cancelled state takes precedence over scheduled time. Recurrence templates have null status."
     enum ActionStatus {
@@ -466,11 +492,11 @@ export function graphQLSDL(): string {
       "Oldest first."
       CREATED_ASC
     }
-    "Ordering of saved actions and projected occurrences before pagination. Scheduled clocks resolve in their action timezone, or the server's local zone when floating; all-day dates use local midnight. Deadlines always use the server's local zone, independent of action timezone. Repeated named-zone times use the first instant. Missing or unresolvable values are last in either direction. Scheduled/deadline ties use created ascending then ID ascending."
+    "Ordering of saved actions and projected occurrences before pagination. Scheduled clocks resolve in their action timezone, or the server's local zone when floating; all-day dates use local midnight. Deadlines always use the server's local zone, independent of action timezone. Repeated named-zone times use the first instant. Missing or unresolvable values are last in either direction. Creation orders put unsaved occurrences last; ties use ID. Scheduled/deadline ties use created ascending, with missing creation last, then ID ascending."
     enum ActionOrder {
-      "Newest creation first, with ID descending for ties."
+      "Newest saved creation first, with ID descending for saved ties, then unsaved occurrences by ID ascending."
       CREATED_DESC
-      "Oldest creation first, with ID ascending for ties."
+      "Oldest saved creation first, with ID ascending for ties, then unsaved occurrences by ID ascending."
       CREATED_ASC
       "Earliest resolved scheduled time first; missing schedules last."
       SCHEDULED_ASC
@@ -494,7 +520,7 @@ export function graphQLSDL(): string {
       "Original IANA zone for zoned recurrence, otherwise null."
       timezone: String
       """
-      True for an unsaved occurrence computed from its template's recurrence within the instance recurrenceLookaheadDays window. Its values and context derive from the current template; reading it never creates a saved action.
+      True for an unsaved occurrence computed from its template's recurrence. Lists use the projection bounds described on Query.actions; exact IDs resolve independently. Its values and context derive from the current template; created is null and reading it never creates a saved action.
       False for a saved occurrence, regardless of its scheduled time or whether it is unresolved, completed, or cancelled. Use Action.status for lifecycle state.
       A successful edit through updateAction or updateOccurrence saves the occurrence and returns projected: false with a saved ID and handle, preserving its template/original identity. Projected IDs and handles are transient; use the returned saved handle for durable links. Copy template.id/original for identity-based edits rather than deriving them from scheduled.
       This field is computed, never stored or accepted as an edit input. Ordinary actions and templates have Action.occurrence: null.
@@ -558,8 +584,8 @@ export function graphQLSDL(): string {
       id: ID!
       "Canonical record handle; projected actions have transient handles."
       handle: String!
-      "Creation timestamp."
-      created: String!
+      "Creation timestamp; null for an unsaved action occurrence."
+      created: String
       "One-line index summary; null when unavailable."
       description: String
       "Absolute saved record path; null for unsaved action projections."
@@ -631,7 +657,7 @@ export function graphQLSDL(): string {
       "Distinct related projects with direction and both authored descriptions."
       relatedProjects("Match these authored directions before pagination; omit for any, [] for none." direction: [ProjectRelationDirection!], ${relation('Project')}): ProjectRelationPage!
     }
-    "A unit of work, a recurrence template, or an occurrence. Unedited occurrences are projected within the instance lookahead window."
+    "A unit of work, a recurrence template, or an occurrence. Unsaved occurrences are computed within the Query.actions projection bounds."
     type Action implements LinkTarget {
       "Retained delegation runs, including after the declaration is cleared; templates include all occurrence runs."
       delegationLog("Filters applied before pagination." where: AutomationRunWhere, "Nonnegative matching runs to skip." offset: Int = 0, "Maximum runs, 1 through 100." limit: Int = 20): AutomationRunPage!
@@ -645,8 +671,8 @@ export function graphQLSDL(): string {
       occurrence: Occurrence
       "Display name and Calendar event title."
       name: String!
-      "Creation wall timestamp."
-      created: String!
+      "Creation wall timestamp; null for an unsaved occurrence."
+      created: String
       ${scheduling('stored')}
       "Complete action Markdown."
       body: String!
@@ -679,7 +705,7 @@ export function graphQLSDL(): string {
       entries(${relation('Entry')}): EntryPage!
     }
     ${['Entry', 'Project', 'Action', 'Artifact'].map(type => `
-      "One page of ${type.toLowerCase()} records.${type === 'Action' ? ' Includes projected occurrences within the instance lookahead.' : ''} Nested collections paginate independently."
+      "One page of ${type.toLowerCase()} records.${type === 'Action' ? ' Includes eligible unsaved occurrences within the Query.actions projection bounds.' : ''} Nested collections paginate independently."
       type ${type}Page {
         "Matching records on this page."
         nodes: [${type}!]!
@@ -698,6 +724,19 @@ export function graphQLSDL(): string {
         none: ${type}Where
       }
     `).join('\n')}
+    "Native entry browsing conditions, applied before pagination. Project and action are mutually exclusive."
+    input EntryBrowseWhere {
+      "Inclusive native entry timestamp lower bound. A calendar date starts at the beginning of that day."
+      createdFrom: String
+      "Inclusive native entry timestamp upper bound. A calendar date includes its entire day."
+      createdTo: String
+      "Exact project ID referenced by entry metadata or bounded Markdown links and mentions."
+      project: ID
+      "Exact action ID referenced by entry metadata or bounded Markdown links and mentions."
+      action: ID
+      "One case-insensitive literal phrase matched against entry ID, index description, and Markdown. Whitespace around the phrase is ignored; this is not a regular expression."
+      search: String
+    }
     "Entry filters. Siblings are ANDed; null optional filters are omitted."
     input EntryWhere {
       ${commonWhere('Entry')}
@@ -709,6 +748,8 @@ export function graphQLSDL(): string {
       actions: ActionRelationFilter
       "Filter through directly referenced artifacts."
       artifacts: ArtifactRelationFilter
+      "Native project/action focus and literal quick search, including inline references and entry IDs."
+      browse: EntryBrowseWhere
       ${booleanWhere('Entry')}
     }
     "Project filters. Siblings are ANDed; null optional filters are omitted."
@@ -772,8 +813,177 @@ export function graphQLSDL(): string {
       ${booleanWhere('Artifact')}
     }
 
-    "Read-only access. Introspection, instances, and activeInstance work without a selection; record queries use the selected instance."
+    "Outcome of a native address or place lookup. SUCCESS means candidates were returned, not that any candidate was verified or saved."
+    enum GeocodeStatus {
+      "Apple returned one or more candidates; inspect them before choosing."
+      SUCCESS
+      "Location not found. Refine the query or region hint and try again."
+      NO_RESULTS
+      "This platform or native helper cannot perform the lookup; inspect error for recovery."
+      UNAVAILABLE
+      "The native request failed, timed out or was cancelled; inspect error before retrying."
+      FAILED
+    }
+    "Geographic hint for address or place lookup, not a guaranteed result filter."
+    input GeocodeRegionInput {
+      "Center latitude in decimal degrees, -90 through 90."
+      latitude: Float!
+      "Center longitude in decimal degrees, -180 through 180."
+      longitude: Float!
+      "Positive hint radius in meters, at most 20000000."
+      radiusMeters: Float!
+    }
+    "Search Apple Maps for addresses and businesses together. Refine the query or region to investigate ambiguous results."
+    input GeocodeAddressInput {
+      "Address, business/venue name or category for MKLocalSearch. Include city/address context or a region hint when possible. Plain text, not URI-encoded or a Markdown label; nonblank, at most 4096 characters."
+      query: String!
+      "Optional region hint; its absence does not request the device's current location."
+      region: GeocodeRegionInput
+    }
+    "One self-contained candidate in provider order. No candidate is automatically selected; Apple supplies no match-confidence score here."
+    type GeocodeCandidate {
+      "RFC 5870 geo URI, using latitude then longitude. This is a candidate value, not a saved record or mention."
+      geo: String!
+      "Candidate latitude in WGS-84 decimal degrees."
+      latitude: Float!
+      "Candidate longitude in WGS-84 decimal degrees."
+      longitude: Float!
+      "The provider's returned address, when available; compare the name, address and geographic context before choosing."
+      formattedAddress: String
+      "Provider name, when available."
+      name: String
+      "Provider country code, when available."
+      countryCode: String
+      "Apple Maps URL for inspecting this candidate."
+      mapUrl: String!
+    }
+    "Read-only native lookup results. Never modifies Markdown, postal values, labels or supplied coordinates; saving a choice uses the ordinary record mutations."
+    type GeocodeAddressResult {
+      "Lookup outcome, independent of whether any result is the intended location."
+      status: GeocodeStatus!
+      "Geocoding backend, currently APPLE."
+      provider: String!
+      "All returned candidates, preserving provider order. Ordering is not proof of correctness."
+      candidates: [GeocodeCandidate!]!
+      "Failure and recovery details for FAILED or UNAVAILABLE, otherwise null."
+      error: String
+    }
+
+    "Readiness of the configured semantic search prerequisites, checked without running inference or creating an index. This is a point-in-time check, not a guarantee that a later query succeeds."
+    type SemanticSearchAvailability {
+      "Whether native index support, Ollama connectivity, and the configured model's metadata are available."
+      available: Boolean!
+      "Machine-readable readiness result."
+      reason: SemanticAvailabilityReason!
+      "Human-readable explanation of the readiness result."
+      message: String!
+      "Required user action when unavailable, or null when ready. Informational only; no installation or service startup is performed."
+      recovery: String
+      "Configured embedding model name."
+      model: String!
+    }
+    "Result of checking semantic search prerequisites."
+    enum SemanticAvailabilityReason {
+      "The configured prerequisites are available; no inference was run."
+      AVAILABLE
+      "The native search engine is unsupported on this platform."
+      UNSUPPORTED_PLATFORM
+      "The packaged native search engine could not be loaded."
+      INDEX_UNAVAILABLE
+      "The configured Ollama service could not be reached within the probe timeout."
+      OLLAMA_UNREACHABLE
+      "Ollama is reachable but the configured embedding model is not installed."
+      MODEL_MISSING
+      "The configured model name or endpoint is invalid."
+      CONFIGURATION_ERROR
+      "Ollama returned an error or invalid metadata."
+      OLLAMA_ERROR
+    }
+    "Saved record kinds available to unified search. Unsaved recurring projections and attachment bytes are excluded."
+    enum SearchRecordKind {
+      "A captured entry, indexed individually within its weekly file."
+      ENTRY
+      "A saved project."
+      PROJECT
+      "A saved action or recurrence template."
+      ACTION
+      "An artifact's Markdown body and metadata, excluding attachment bytes."
+      ARTIFACT
+    }
+    "Per-entity eligibility filters for unified search. Omit or use {} for all saved kinds. When any non-null group is supplied, only those groups participate; groups are combined by union, and each group uses its existing entity filter contract. Null groups are omitted."
+    input SearchWhere {
+      "Eligible saved entries, using the same filters as Query.entries."
+      entries: EntryWhere
+      "Eligible saved projects, using the same filters as Query.projects."
+      projects: ProjectWhere
+      "Eligible saved actions and templates, using the same filters as Query.actions; unsaved projections are excluded from search results."
+      actions: ActionWhere
+      "Eligible saved artifacts, using the same filters as Query.artifacts."
+      artifacts: ArtifactWhere
+    }
+    "One explicit ordering strategy across eligible records. Semantic ranking changes order, not filter membership or totalCount; it never falls back to regex."
+    input SearchRanking @oneOf {
+      "Natural-language information need, 1 through 4000 characters. Requires the local embedding model and ranks by each record's best passage similarity."
+      semantic: String
+      "Deterministic field ordering without embedding inference."
+      order: SearchOrder
+    }
+    "Ordering across saved records. Creation ties use ID then kind. Scheduled/deadline orders use ActionOrder clock rules, put non-actions or missing values last in either direction, and break ties by creation ascending, ID, then kind."
+    enum SearchOrder {
+      "Newest creation first."
+      CREATED_DESC
+      "Oldest creation first."
+      CREATED_ASC
+      "Earliest resolved action schedule first; missing values last."
+      SCHEDULED_ASC
+      "Latest resolved action schedule first; missing values last."
+      SCHEDULED_DESC
+      "Earliest local action deadline first; missing values last."
+      DEADLINE_ASC
+      "Latest local action deadline first; missing values last."
+      DEADLINE_DESC
+    }
+    "One globally ordered page across eligible saved entity types. Counts describe filter membership before semantic ranking, rather than a similarity threshold."
+    type SearchPage {
+      "Embedding model used for semantic ranking, or null when no inference was needed."
+      model: String
+      "Number of source chunks considered by semantic indexing; zero when no inference was needed."
+      indexedChunks: Int!
+      "All saved records satisfying the per-entity filters, before ranking and pagination. Semantic ranking does not impose a match threshold."
+      totalCount: Int!
+      "Number of records returned on this page."
+      count: Int!
+      "Number of globally ordered records skipped."
+      offset: Int!
+      "Unique records in the selected global order, after pagination."
+      hits: [SearchHit!]!
+    }
+    "One saved record in the unified search page."
+    type SearchHit {
+      "Saved record kind."
+      kind: SearchRecordKind!
+      "Exact record ID, without its handle prefix."
+      id: ID!
+      "Canonical Aside record handle."
+      handle: String!
+      "Display name or entry label."
+      name: String!
+      "Index description."
+      description: String!
+      "Best matching source passage for semantic ranking, or a short source excerpt for field ordering."
+      snippet: String!
+      "Cosine similarity of the best matching passage for semantic ranking, or null for field ordering. Not a confidence probability or calibrated threshold across queries."
+      score: Float
+      "Saved source record from this request's snapshot, or null if unavailable. Follow this to read full content and relationships."
+      record: LinkTarget
+    }
+    ${systemInfoSDL}
+    "Read-only access. System information, introspection, instances, activeInstance and geocodeAddress work without a selection; record queries use the selected instance."
     type Query {
+      "Inspect system operation and integrations without selecting or loading an instance. Only selected sections are probed."
+      systemInfo: SystemInfo!
+      "Look up an address, business or venue through native Apple Maps services on macOS 14+. Makes network requests without a user API key or current-location authorization. Returns candidates for agent inspection and repeated refinement, never writes records. At most five lookups per operation. Unavailable to embedded webpage queries."
+      geocodeAddress("Search text and an optional region hint for this attempt." input: GeocodeAddressInput!): GeocodeAddressResult!
       "Workspace candidates together with daemon-known instances. Does not require or change the active selection."
       instances: [Instance!]!
       "This MCP session's selected instance, including its identity, settings, and instructions, or null when none. Metadata-only reads do not load records, start scheduling, or change selection."
@@ -782,18 +992,33 @@ export function graphQLSDL(): string {
       entry("Exact ID, without #entry/." id: ID!): Entry
       "One saved project by exact ID, or null if absent."
       project("Exact ID, without #project/." id: ID!): Project
-      "One saved action or exact projected occurrence, independent of the instance lookahead, or null if absent."
-      action("Exact saved or projected action ID, without #action/. Projections resolve independently of query lookahead; a saved occurrence resolves by its projected identity too." id: ID!): Action
+      "One saved action or exact projected occurrence, independent of list projection bounds, or null if absent."
+      action("Exact saved or projected action ID, without #action/. A saved occurrence resolves by its projected identity too." id: ID!): Action
       "One saved artifact by exact ID, or null if absent."
       artifact("Exact ID, without #artifact/." id: ID!): Artifact
       "Saved entries in the active instance."
       entries(${relation('Entry')}): EntryPage!
       "Saved projects in the active instance."
       projects(${relation('Project')}): ProjectPage!
-      "Actions, including templates, saved occurrences, and unsaved occurrences within the instance recurrenceLookaheadDays window. Reading never saves projections. Filters and counts include eligible projections."
+      """
+      Actions, including templates, saved occurrences, and eligible unsaved occurrences. Reading never saves projections. Explicit filters apply to every row before the ordinary page limit and counts.
+      Unsaved occurrences are expanded from recurrence history through the latest scheduledTo in where outside not. Without that end, expansion stops one calendar year after the later of today and any scheduledFrom outside not. This implicit end limits only unsaved occurrences; saved actions retain their full matching history and future.
+      extensions.defaultProjectionRanges always reports any applied default, its alias-aware path, affected template IDs, and guidance to set explicit schedule dates. Empty means no default constrained eligible templates. Exact ids resolve independently of list bounds; created filters exclude unsaved occurrences. ActionRelationFilter uses the same projection bounds for its own predicates and reports defaults at paths such as projects.where.actions.some. Use explicit schedule dates for past or far-future occurrences. Ranges exceeding the query work limit fail with guidance to narrow the dates.
+      """
       actions(${relation('Action')}): ActionPage!
       "Saved artifacts in the active instance."
       artifacts(${relation('Artifact')}): ArtifactPage!
+      "Unified search across saved entities. Apply existing per-entity filters, including regex, before one global ordering and page. Choose rankBy.semantic explicitly for natural-language ranking; field ordering requires no model. Semantic ranking never changes filter membership or falls back to regex. Attachment bytes and unsaved recurrence projections are excluded."
+      search(
+        "Per-entity eligibility filters. Omit or use {} for all saved kinds; specifying groups selects only those kinds."
+        where: SearchWhere
+        "One explicit ranking strategy; omission or null uses newest creation first."
+        rankBy: SearchRanking = {order: CREATED_DESC}
+        "Maximum records on this global page, from 1 to 100."
+        limit: Int = 20
+        "Nonnegative number of globally ordered records to skip."
+        offset: Int = 0
+      ): SearchPage!
     }
     "One Aside data directory. Identity and workspace membership do not imply active selection."
     type Instance {
@@ -821,6 +1046,8 @@ export function graphQLSDL(): string {
       workspace: Boolean!
       "Run file format, consistency, and relationship checks without changing selection. Results are reused within the request."
       validation: InstanceValidation!
+      "This instance's observed Calendar sync states and issues. Does not request authorization; global integration status is systemInfo.calendar."
+      calendarSync: CalendarSyncInfo
     }
     "Result of validating one instance's files."
     type InstanceValidation {
@@ -848,8 +1075,12 @@ export function graphQLSDL(): string {
       "The default browser could not be opened. Use showUrl to open in another local browser."
       UNAVAILABLE
     }
-    "Target shared by show and showUrl: an optional timeline filter plus at most one entry, asset, artifact, or detail view. Empty input selects the active instance timeline. Both automatically authorize the chosen browser and redirect to this target."
+    "Target shared by show and showUrl: an optional entry source and timeline filter plus at most one entry, asset, artifact, or detail view. Empty input selects the active instance timeline. Both automatically authorize the chosen browser and redirect to this target."
     input ShowInput {
+      "Exact indexed artifact attachment handle defining the timeline, including filename; for example #artifact/2026-10-12-review/decisions.json. Composes with project/action and content targets, which retain it as return context."
+      source: String
+      "Case-insensitive literal phrase within the entry timeline, composed with its source and project/action focus."
+      search: String
       "Project timeline filter; exclusive with action."
       project: ID
       "Action timeline filter; exclusive with project."
@@ -977,8 +1208,8 @@ export function graphQLSDL(): string {
       "Observed change summary."
       summary: String!
     }
-    "Machine Calendar authorization and destinations, plus sync state when an instance is active. Does not read or write events."
-    type CalendarInfoPayload {
+    "Machine Calendar authorization and destinations. Does not read or write events or inspect instance content."
+    type SystemCalendarInfo {
       "Current Calendar authorization."
       authorization: CalendarAuthorization!
       "Resolved native-helper path, when available."
@@ -987,15 +1218,21 @@ export function graphQLSDL(): string {
       calendars: [Calendar!]
       "Authorization or helper diagnostics."
       diagnostics: [CalendarDiagnostic!]!
-      "Active instance action sync states."
+      "Consolidated integration diagnostics, or null when none. The requestCalendarAccess mutation also records this in extensions.mutations."
+      error: String
+    }
+    "Observed Calendar synchronization state for one instance."
+    type CalendarSyncInfo {
+      "Instance action sync states."
       syncStates: [CalendarActionState!]!
       "Outstanding sync failures."
       failures: [CalendarFailure!]!
       "Outstanding consistency issues."
       issues: [CalendarIssue!]!
-      "Changes observed since the active instance loaded."
+      "Changes observed since the instance loaded."
       changes: [CalendarChange!]!
-      ${mutationError}
+      "Consolidated instance sync failures or warnings, or null when none. Reading this field has no mutation effects."
+      error: String
     }
 
     "Create a new Aside data directory and select it for this session."
@@ -1123,12 +1360,33 @@ export function graphQLSDL(): string {
     }
     "Edit instance settings. Omitted fields preserve values; null title prefixes restore their defaults."
     input InstanceSettingsInput {
-      "Nonnegative future recurrence projection window in days. Omit to preserve; null is not accepted."
-      recurrenceLookaheadDays: Int
+      "Edit webapp settings; omit to preserve."
+      webapp: WebappSettingsInput
       "Scheduled Calendar title prefix. Empty removes decoration; null restores ▢ followed by a space."
       scheduledEventTitlePrefix: String
       "Completed Calendar title prefix. Empty removes decoration; null restores ✓ followed by a space."
       doneEventTitlePrefix: String
+    }
+    "Replace supplied webapp declarations while preserving omitted settings."
+    input WebappSettingsInput {
+      "Replace the complete ordered sidebar; [] clears, omission preserves, and null is not accepted."
+      sidebar: [SidebarSectionInput!]
+    }
+    "One ordered sidebar group with an optional heading."
+    input SidebarSectionInput {
+      "Optional nonblank section heading."
+      title: String
+      "Complete ordered list of shortcuts in this section."
+      items: [SidebarItemInput!]!
+    }
+    "Supply exactly one nonblank timeline or entity target, with an optional nonblank label."
+    input SidebarItemInput {
+      "Optional nonblank display label."
+      label: String
+      "Nonblank entry timeline target. Exclusive with entity."
+      timeline: String
+      "Nonblank content target. Exclusive with timeline."
+      entity: String
     }
     "Update selected instance instructions, settings, and automations while preserving its identity."
     input UpdateInstanceInput {
@@ -1254,15 +1512,15 @@ export function graphQLSDL(): string {
       show("Timeline filter and optional content view; defaults to the timeline." input: ShowInput! = {}): ShowPayload
       "Get a URL to open the requested view in a local browser chosen by the agent, without opening or navigating any browser. Each call creates a fresh private temporary HTML file and returns its file:// URL. In Codex, use open_in_codex with target type browser and url set to the returned file:// URL. Open it immediately as returned: it submits a one-use code to the local daemon, automatically installs valid authorization in that browser profile, and redirects to the target, including after expiry. The file is owner-only, single-use, and expires after two minutes; request a new URL for each opening. The browser must be able to read this machine's local file and reach its daemon. No token handling or separate authentication call is needed. Use show for the default browser."
       showUrl("Same target selection as show; defaults to the active instance timeline." input: ShowInput! = {}): String
-      "Report Calendar authorization, calendars, and active-instance sync state. May request macOS permission when undecided or write-only. No active instance is required; never reads or writes events."
-      calendarInfo: CalendarInfoPayload
+      "Explicitly request Calendar permission when undecided or write-only, then return global integration status. No instance is required; never reads or writes events. Use systemInfo.calendar for passive inspection."
+      requestCalendarAccess: SystemCalendarInfo
       "Select an existing instance for this MCP session; does not change the saved startup default. Failure stops later mutation fields, preventing writes to the previous selection."
       selectInstance("Existing data directory; relative paths resolve against the MCP session working directory." path: String!): SelectInstancePayload
       "Create and activate an instance. Failure stops later fields. Saved files survive registration failure: inspect error and recover with selectInstance instead of recreating."
       createInstance("New instance location, identity, and optional instructions." input: CreateInstanceInput!): CreateInstancePayload
       "Edit or materialize one recurrence occurrence by immutable identity; creates no entry and leaves the template unchanged. A new saved ID uses the creation date and resulting name, not the original occurrence date."
       updateOccurrence("Exact occurrence and desired edits." input: UpdateOccurrenceInput!): ActionPayload
-      "Edit instance instructions, named automations, recurrence lookahead, or Calendar title prefixes; omitted fields are preserved."
+      "Edit instance instructions, named automations, webapp settings, or Calendar title prefixes; omitted fields are preserved."
       updateInstance("Supported settings; omitted fields are preserved." input: UpdateInstanceInput!): InstancePayload
       "Save a timestamped entry and link or create projects/actions in that context."
       capture("Entry content, summary, and optional project/action links." input: CaptureInput!): CapturePayload

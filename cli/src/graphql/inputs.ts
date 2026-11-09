@@ -1,8 +1,8 @@
 import { GraphQLError } from 'graphql';
 import { assertDelegation } from '../core/delegation.js';
 import { assertAutomationDeclarations } from '../automation/declaration.js';
-import { assertAutomationEdits } from '../mcp/tools/automation-edits.js';
-import { assertLinkEdits, assertRelatedProjectEdits } from '../mcp/tools/link-edits.js';
+import { assertAutomationEdits } from '../core/automation-edits.js';
+import { assertLinkEdits, assertRelatedProjectEdits } from '../core/link-edits.js';
 import type { NewAction, NewProject } from '../mcp/tools/capture.js';
 import { TOOL_SCHEMAS } from '../mcp/schemas.js';
 import { assertScheduling } from '../core/scheduling.js';
@@ -65,7 +65,7 @@ function validateInput(field: string, operation: keyof typeof TOOL_SCHEMAS, valu
   const reasonsFor = (issues: any[], prefix: PropertyKey[] = []): string[] => issues.flatMap(issue => {
     const path = [...prefix, ...issue.path];
     // Native GraphQL alternatives are already selected. Report the matching
-    // legacy union branch rather than complaints about its unused alternatives.
+    // schema union branch rather than complaints about its unused alternatives.
     const branches = issue.errors ?? issue.unionErrors?.map((error: any) => error.issues);
     if (branches) return reasonsFor(relevantBranches(branches, path).flat(), path);
     return [`${publicInputPath(field, input, path)}: ${issue.message}`];

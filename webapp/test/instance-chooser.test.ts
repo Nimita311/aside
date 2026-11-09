@@ -22,6 +22,11 @@ function setup(instances: AvailableInstance[] = [work], open?: (instance: Availa
   return { root, fetch, add: root.querySelector<HTMLButtonElement>('#btn-add-instance')!, notice: root.querySelector('#instance-notice')! };
 }
 
+function confirmForget(root: HTMLElement, clearCache = false): void {
+  root.querySelector<HTMLInputElement>('#instance-forget-cache')!.checked = clearCache;
+  root.querySelector<HTMLFormElement>('#instance-forget-form')!.requestSubmit();
+}
+
 afterEach(() => { dismissActionToast(); chooser?.dispose(); vi.useRealTimers(); vi.unstubAllGlobals(); document.body.replaceChildren(); });
 
 describe('instance chooser', () => {
@@ -67,7 +72,7 @@ describe('instance chooser', () => {
     expect(first.dataset.path).toBe(a.path); expect(first.classList.contains('instance-row-worktree')).toBe(false);
     expect(first.querySelector('.instance-description')?.textContent).toBe('Daily log');
     expect(first.querySelector('.instance-calendar-icon')?.getAttribute('aria-description')).toContain('disabled for Git worktrees');
-    fetch.mockResolvedValueOnce(Response.json({ instances: [b] })); first.querySelector<HTMLButtonElement>('.instance-remove')!.click();
+    fetch.mockResolvedValueOnce(Response.json({ instances: [b] })); first.querySelector<HTMLButtonElement>('.instance-remove')!.click(); confirmForget(root);
     await vi.waitFor(() => expect(root.querySelectorAll('.instance-row')).toHaveLength(1));
     expect(root.querySelector('.instance-description')?.textContent).toBe('Daily log');
     expect(root.querySelector('.instance-row-worktree')).toBeNull();
@@ -177,12 +182,58 @@ describe('instance chooser', () => {
     remove.focus();
     fetch.mockResolvedValueOnce(Response.json({ instances: [copy] }));
     remove.click();
+    confirmForget(root);
     await vi.waitFor(() => expect(root.querySelectorAll('.instance-row')).toHaveLength(1));
     expect(fetch.mock.calls.at(-1)?.[0]).toBe('/-/api/instances/remove');
     expect(JSON.parse(fetch.mock.calls.at(-1)?.[1].body)).toEqual({ path: work.path });
     expect(root.querySelector('a')?.getAttribute('href')).toBe('/work/');
     expect(root.querySelector('.instance-error')).toBeNull();
     expect(document.activeElement).toBe(root.querySelector('.instance-remove'));
+  });
+
+  it('offers cache removal while keeping it unchecked and cancellation restores focus', async () => {
+    const {root, fetch} = setup(); await chooser.refresh();
+    const remove = root.querySelector<HTMLButtonElement>('.instance-remove')!;
+    remove.click();
+    const dialog = root.querySelector<HTMLDialogElement>('dialog')!;
+    const checkbox = root.querySelector<HTMLInputElement>('#instance-forget-cache')!;
+    expect(dialog.open).toBe(true); expect(checkbox.checked).toBe(false);
+    expect(dialog.textContent).toContain('30 days'); expect(dialog.textContent).toContain('Instance files are kept');
+    expect(dialog.querySelector('#instance-forget-path')?.textContent).toBe(work.path);
+    expect(document.activeElement).toBe(checkbox);
+    window.dispatchEvent(new Event('focus'));
+    expect(fetch).toHaveBeenCalledTimes(1);
+    root.querySelector<HTMLButtonElement>('#instance-forget-cancel')!.click();
+    expect(dialog.open).toBe(false); expect(document.activeElement).toBe(remove);
+    expect(fetch).toHaveBeenCalledTimes(1);
+    remove.click(); checkbox.checked = true;
+    dialog.dispatchEvent(new Event('cancel', {cancelable: true}));
+    expect(dialog.open).toBe(false); expect(document.activeElement).toBe(remove);
+    remove.click(); expect(checkbox.checked).toBe(false);
+    chooser.resetOpening(); expect(dialog.open).toBe(false);
+    expect(fetch).toHaveBeenCalledTimes(1);
+  });
+
+  it('requests cache clearing only when the user selects it', async () => {
+    const {root, fetch} = setup(); await chooser.refresh();
+    root.querySelector<HTMLButtonElement>('.instance-remove')!.click();
+    fetch.mockResolvedValueOnce(Response.json({instances: []}));
+    confirmForget(root, true);
+    await vi.waitFor(() => expect(root.querySelectorAll('.instance-row')).toHaveLength(0));
+    expect(JSON.parse(fetch.mock.calls.at(-1)![1].body)).toEqual({path: work.path, clearCache: true});
+    expect(root.querySelector<HTMLDialogElement>('dialog')!.open).toBe(false);
+  });
+
+  it('explains that forgetting a primary also includes its registered worktrees', async () => {
+    const checkout = {root: '/repo', commonDir: '/repo/.git', primaryPath: work.path, linked: false, label: 'main'};
+    const primary = {...work, worktree: checkout};
+    const linked = {...copy, address: 'work~1111111111111111', worktree: {...checkout, linked: true, label: 'feature'}};
+    const {root, fetch} = setup([primary, linked]); await chooser.refresh();
+    root.querySelector<HTMLButtonElement>(`[data-path="${work.path}"] .instance-remove`)!.click();
+    expect(root.querySelector('#instance-forget-description')?.textContent).toBe('Forget Work and its 1 registered worktree?');
+    chooser.dispose();
+    expect(root.querySelector('dialog')).toBeNull();
+    expect(fetch).toHaveBeenCalledTimes(1);
   });
 
   it('returns focus to Add instance after the last row is removed', async () => {
@@ -192,6 +243,7 @@ describe('instance chooser', () => {
     remove.focus();
     fetch.mockResolvedValueOnce(Response.json({ instances: [] }));
     remove.click();
+    confirmForget(root);
     await vi.waitFor(() => expect(root.querySelectorAll('.instance-row')).toHaveLength(0));
     expect(document.activeElement).toBe(add);
     expect(notice.textContent).toContain('No instances yet.');
@@ -308,7 +360,7 @@ describe('instance chooser', () => {
     const outside = document.createElement('button');
     document.body.append(outside);
     const remove = root.querySelector<HTMLButtonElement>('.instance-remove')!;
-    remove.focus(); remove.click(); outside.focus();
+    remove.focus(); remove.click(); confirmForget(root); outside.focus();
     finish(Response.json({ instances: [] }));
     await vi.waitFor(() => expect(root.querySelectorAll('.instance-row')).toHaveLength(0));
     expect(document.activeElement).toBe(outside);
@@ -321,7 +373,7 @@ describe('instance chooser', () => {
     let finish!: (value: Response) => void;
     fetch.mockReturnValueOnce(new Promise<Response>(resolve => { finish = resolve; }));
     const remove = root.querySelector<HTMLButtonElement>('.instance-remove')!;
-    remove.focus(); remove.click();
+    remove.focus(); remove.click(); confirmForget(root);
     root.querySelector<HTMLAnchorElement>('a[href="/personal/"]')!.focus();
     finish(Response.json({ instances: [personal] }));
     await vi.waitFor(() => expect(root.querySelectorAll('.instance-row')).toHaveLength(1));
@@ -334,12 +386,14 @@ describe('instance chooser', () => {
     const remove = root.querySelector<HTMLButtonElement>('.instance-remove')!;
     fetch.mockResolvedValueOnce(Response.json({ error: 'Disk is unavailable' }, { status: 500 }));
     remove.click();
+    confirmForget(root);
     await vi.waitFor(() => expect(document.querySelector('#action-toast')?.textContent).toContain('Could not forget'));
     expect(notice.textContent).toBe('');
     expect(root.querySelectorAll('.instance-row')).toHaveLength(1);
     expect(remove.disabled).toBe(false);
     fetch.mockResolvedValueOnce(Response.json({ instances: [] }));
     remove.click();
+    confirmForget(root);
     await vi.waitFor(() => expect(root.querySelectorAll('.instance-row')).toHaveLength(0));
   });
 
@@ -366,6 +420,7 @@ describe('instance chooser', () => {
     const refreshing = chooser.refresh();
     fetch.mockResolvedValueOnce(Response.json({ instances: [] }));
     root.querySelector<HTMLButtonElement>('.instance-remove')!.click();
+    confirmForget(root);
     await vi.waitFor(() => expect(root.querySelectorAll('.instance-row')).toHaveLength(0));
     finish(Response.json([work]));
     await refreshing;

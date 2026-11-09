@@ -2,7 +2,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { existsSync, linkSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { Store } from '../src/mcp/store.js';
+import { Store } from '../src/source/store.js';
+import {sourceLifecycleFixture} from './source-lifecycle-fixture.js';
 import { handleCreateArtifact, handleUpdateArtifact } from '../src/mcp/tools/artifact.js';
 import { handleQueryArtifacts } from '../src/mcp/tools/query.js';
 import { handleCapture } from '../src/mcp/tools/capture.js';
@@ -43,6 +44,7 @@ describe('artifact writes', () => {
   let root: string;
   let data: string;
   let store: Store;
+  let owner: ReturnType<typeof sourceLifecycleFixture> | undefined;
   const create = (extra = {}) => handleCreateArtifact(store, { name: 'Design review', description: 'Current design', ...extra }, NOW);
   const source = (name: string, bytes: string | Buffer) => {
     const path = join(root, name);
@@ -59,6 +61,7 @@ describe('artifact writes', () => {
   });
 
   afterEach(() => {
+    owner?.close(); owner = undefined;
     store.close();
     vi.useRealTimers();
     rmSync(root, { recursive: true, force: true });
@@ -75,6 +78,12 @@ describe('artifact writes', () => {
     expect(ids.map(id => store.getArtifact(id))).toEqual(artifacts);
     expect(JSON.stringify(store.getArtifactIndex())).toBe(index);
   }
+
+  it('keeps attachment bytes unchanged until the source owner validates the proposed record', () => {
+    const plan = store.prepareArtifactSource(ID, {creating: true, file: join(data, 'artifacts', '2026', `${ID}.md`),
+      imports: [{source: source('brief.pdf', 'Imported bytes')}]});
+    unchanged(() => plan.commitFiles(), /must be validated/);
+  });
 
   it('creates a durable record from a Markdown payload and maintains the index only description', () => {
     const draft = source('draft.md', '---\nname: Payload\n---\n\n# Plan\nCafé ☕\n');
@@ -466,7 +475,7 @@ describe('artifact writes', () => {
   it('detects external attachment additions and removals without walking nested files', async () => {
     create({ body: '# Review' });
     vi.useFakeTimers();
-    store.watch();
+    owner = sourceLifecycleFixture(store);
     const folder = join(data, 'artifacts', '2026', ID);
     mkdirSync(folder);
     writeFileSync(join(folder, 'added.pdf'), 'bytes');

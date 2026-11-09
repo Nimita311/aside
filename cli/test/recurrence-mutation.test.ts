@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { applyRecurrenceMutation, assertRecurrence, assertRecurrenceUpdate, CompiledRecurrence, planningActions, type RecurrenceMutation } from '../src/core/recurrence.js';
 import { parseActionFile } from '../src/core/parser.js';
-import { serializeAction } from '../src/mcp/tools/serialize.js';
+import { serializeAction } from '../src/source/serialize.js';
 
 const now = new Date('2026-10-09T12:30:00Z');
 const daily = { dtstart: '2026-01-01', rrule: 'FREQ=DAILY' };

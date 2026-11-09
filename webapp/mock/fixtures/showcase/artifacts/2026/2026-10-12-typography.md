@@ -98,6 +98,8 @@ Artifacts work the same way: #artifact/2026-10-12-diagrams, [the local media kit
 
 Dates have their own references: #date/2026-10-19, #date/2026-10-19T14:00[America/Los_Angeles], and #date/2026-10-20T09:00[Asia/Tokyo].
 
+Locations keep coordinates and postal addresses together: #location/?geo=51.5034,-0.1276&postal=10%20Downing%20Street/London/ and [**the meeting place**](#location/?geo=51.5034,-0.1276&postal=10%20Downing%20Street/London/). A coordinate-only location is #location/?geo=35.6812,139.7671; a postal-only location is #location/?postal=%E6%9D%B1%E4%BA%AC/%E5%8D%83%E4%BB%A3%E7%94%B0%E5%8C%BA/.
+
 Lifecycle treatments compose in the same line: backlog #action/2026-10-12-backlog; slipped #action/2026-10-12-slipped; due #action/2026-10-12-due; overdue #action/2026-10-12-overdue; done #action/2026-10-12-done; cancelled #action/2026-10-12-cancelled; ended project #project/2026-10-05-discovery.
 
 ## Language, punctuation, and long strings

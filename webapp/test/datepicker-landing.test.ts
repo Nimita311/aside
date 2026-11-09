@@ -13,7 +13,6 @@ interface App {
   renderFlow(): Promise<void>;
   jumpToDate(date: string): Promise<void>;
   updateLatchNow(): void;
-  resetReadoutPad(): void;
   jumpNearDate(target: string, baseDate: string, dir: number): Promise<boolean>;
 }
 
@@ -37,7 +36,7 @@ async function setup(ids: string[]) {
     assetUrl: () => null,
   };
   const store = new Store(source); await store.init();
-  const app = await loadApp<App>('state, renderFlow, jumpNearDate, jumpToDate, updateLatchNow, resetReadoutPad, applyView, handleLocationChange');
+  const app = await loadApp<App>('state, renderFlow, jumpNearDate, jumpToDate, updateLatchNow, applyView, handleLocationChange');
   app.state.store = store; app.state.animSpeed = 0;
   app.state.instanceId = 'work';
   await app.renderFlow();
@@ -68,24 +67,28 @@ describe('date picker landing in the application', () => {
       if (previousZone === undefined) delete process.env.TZ; else process.env.TZ = previousZone;
     }
   });
-  it('navigates to calendar targets without requiring an exact entry ID, closes the reader, and restores date routes', async () => {
+  it('filters intervals, closes the reader, and restores single-date jumps', async () => {
     history.replaceState({}, '', '/work/');
     const app = await setup(['2026-10-04T10:00', '2026-10-03T17:00', '2026-10-03T09:00']);
     app.state.doc = { kind: 'asset', path: 'assets/plan.md' };
     await app.applyView({ filter: null, doc: null, date: { start: '2026-10-03T12:00', end: '2026-10-04T12:00' } });
     expect(app.state.doc).toBeNull();
-    expect(location.pathname).toBe('/work/date/2026-10-03T12:00/2026-10-04T12:00');
-    expect(document.querySelector('.is-target')?.getAttribute('data-entry-id')).toBe('2026-10-03T09:00');
+    expect(location.pathname).toBe('/work/');
+    expect(new URLSearchParams(location.search).get('range')).toBe('#date/2026-10-03T12:00/2026-10-04T12:00');
+    expect(Array.from(document.querySelectorAll<HTMLElement>('#flow [data-entry-id]')).map(node => node.dataset.entryId)).toEqual(['2026-10-04T10:00', '2026-10-03T17:00']);
     document.querySelectorAll('.is-target').forEach(node => node.classList.remove('is-target'));
     history.replaceState({}, '', '/work/date/2026-10-03');
     await app.handleLocationChange(new PopStateEvent('popstate'));
     expect(document.querySelector('.is-target')?.getAttribute('data-entry-id')).toBe('2026-10-03T17:00');
   });
-  it.each([13.5, 13.75])('aligns a calendar date with the readout when its margin offset is %s px', async marginOffset => {
+  // Content can begin with pills, prose, headings, code, or tables. Its first
+  // baseline never changes the metadata line or the entry-border landing.
+  it.each([12, 12.5, 13.5, 13.75, 16, 23, 28.5, 30])('lands on the entry border regardless of its %s px content offset', async contentOffset => {
     const app = await setup(['2026-10-04T10:00', '2026-10-03T09:00']);
     const scroller = document.getElementById('flow-scroll')!;
     const flow = document.getElementById('flow')!;
     const row = document.querySelector<HTMLElement>('.latch-date-row')!;
+    row.style.paddingTop = '12.5px';
     const cards = Array.from(flow.querySelectorAll<HTMLElement>('.entry-card'));
     const rect = (top: number) => ({ top, bottom: top + 20 } as DOMRect);
     Object.defineProperties(scroller, { clientHeight: { value: 500 }, scrollHeight: { value: 1500 } });
@@ -96,13 +99,14 @@ describe('date picker landing in the application', () => {
       const top = () => 80 + index * 250 - scroller.scrollTop;
       vi.spyOn(card, 'getBoundingClientRect').mockImplementation(() => rect(top()));
       for (const line of card.querySelectorAll<HTMLElement>('.entry-margin, .date-marker')) {
-        vi.spyOn(line, 'getBoundingClientRect').mockImplementation(() => rect(top() + (index ? marginOffset : 12.5)));
+        vi.spyOn(line, 'getBoundingClientRect').mockImplementation(() => rect(top() + 12.5));
       }
+      vi.spyOn(card.querySelector<HTMLElement>('.entry-content')!, 'getBoundingClientRect').mockImplementation(() => rect(top() + contentOffset));
     });
-    app.resetReadoutPad(); app.updateLatchNow();
+    app.updateLatchNow();
     expect(document.getElementById('date-latch')!.dataset.date).toBe('2026-10-04');
     await app.jumpToDate('2026-10-03');
-    expect(scroller.scrollTop).toBe(Math.ceil(250 + marginOffset - 12.5));
+    expect(scroller.scrollTop).toBe(250);
     expect(document.getElementById('date-latch')!.dataset.date).toBe('2026-10-03');
     expect(cards[1].classList.contains('is-target')).toBe(true);
   });

@@ -1,0 +1,1001 @@
+<title>Aside Entity Icons</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<style>
+/* Layout: a specimen sheet. One left-aligned column of sections; app
+   surfaces appear as fixed light and dark panels so both themes are judged
+   side by side. */
+:root {
+  --paper: #f3f5f8;
+  --surface: #ffffff;
+  --ink: #1c2128;
+  --ink-2: #57606a;
+  --ink-3: #8a939d;
+  --rule: #d5dbe2;
+  --rule-2: #e6eaef;
+  --key: #0969da;
+  --key-soft: rgba(9, 105, 218, 0.12);
+  --gridline: rgba(9, 105, 218, 0.09);
+  --chip: #eaeef3;
+
+  /* Aside webapp tokens (light) — copied from webapp/style.css */
+  --app-bg: #ffffff;
+  --app-bg-2: #f6f8fa;
+  --app-text: #1f2328;
+  --app-text-2: #656d76;
+  --app-border: #d1d9e0;
+  --blue-fg: #0550ae;  --blue-bg: #ddf4ff;
+  --green-fg: #116329; --green-bg: #dafbe1;
+  --grey-fg: #656d76;  --grey-bg: #eef1f5;
+  --violet-fg: #6e40c9; --violet-bg: #f3ecff;
+  --mono-fg: #3d444d;
+  --strong-fg: #1f2328;
+  --gold: #9a6700;
+  --red: #b51d28;
+
+  --font-sans: "IBM Plex Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace;
+  --font-app: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans", Helvetica, Arial, sans-serif;
+
+  --t: 340ms;
+  --ease: cubic-bezier(0.3, 0.7, 0.2, 1);
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --paper: #0b0f14; --surface: #121821; --ink: #e6edf3; --ink-2: #9aa5b1; --ink-3: #6b7581;
+    --rule: #29313b; --rule-2: #1b222b; --key: #58a6ff; --key-soft: rgba(88, 166, 255, 0.14);
+    --gridline: rgba(88, 166, 255, 0.10); --chip: #1c232c;
+    --app-bg: #0d1117; --app-bg-2: #161b22; --app-text: #e6edf3; --app-text-2: #919ba7; --app-border: #30363d;
+    --blue-fg: #79c0ff; --blue-bg: rgba(56, 139, 253, 0.15);
+    --green-fg: #7ee787; --green-bg: rgba(63, 185, 80, 0.15);
+    --grey-fg: #919ba7; --grey-bg: rgba(110, 118, 129, 0.15);
+    --violet-fg: #c8a5ff; --violet-bg: rgba(163, 113, 247, 0.16);
+    --mono-fg: #c3cbd4; --strong-fg: #e6edf3;
+    --gold: #d29922; --red: #f85149;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --paper: #0b0f14; --surface: #121821; --ink: #e6edf3; --ink-2: #9aa5b1; --ink-3: #6b7581;
+  --rule: #29313b; --rule-2: #1b222b; --key: #58a6ff; --key-soft: rgba(88, 166, 255, 0.14);
+  --gridline: rgba(88, 166, 255, 0.10); --chip: #1c232c;
+  --app-bg: #0d1117; --app-bg-2: #161b22; --app-text: #e6edf3; --app-text-2: #919ba7; --app-border: #30363d;
+  --blue-fg: #79c0ff; --blue-bg: rgba(56, 139, 253, 0.15);
+  --green-fg: #7ee787; --green-bg: rgba(63, 185, 80, 0.15);
+  --grey-fg: #919ba7; --grey-bg: rgba(110, 118, 129, 0.15);
+  --violet-fg: #c8a5ff; --violet-bg: rgba(163, 113, 247, 0.16);
+  --mono-fg: #c3cbd4; --strong-fg: #e6edf3;
+  --gold: #d29922; --red: #f85149;
+  color-scheme: dark;
+}
+/* Fixed app surfaces, independent of the page theme */
+.app-light {
+  --app-bg: #ffffff; --app-bg-2: #f6f8fa; --app-text: #1f2328; --app-text-2: #656d76; --app-border: #d1d9e0;
+  --blue-fg: #0550ae; --blue-bg: #ddf4ff; --green-fg: #116329; --green-bg: #dafbe1;
+  --grey-fg: #656d76; --grey-bg: #eef1f5; --violet-fg: #6e40c9; --violet-bg: #f3ecff;
+  --mono-fg: #3d444d; --strong-fg: #1f2328; --gold: #9a6700; --red: #b51d28;
+  color-scheme: light;
+}
+.app-dark {
+  --app-bg: #0d1117; --app-bg-2: #161b22; --app-text: #e6edf3; --app-text-2: #919ba7; --app-border: #30363d;
+  --blue-fg: #79c0ff; --blue-bg: rgba(56, 139, 253, 0.15); --green-fg: #7ee787; --green-bg: rgba(63, 185, 80, 0.15);
+  --grey-fg: #919ba7; --grey-bg: rgba(110, 118, 129, 0.15); --violet-fg: #c8a5ff; --violet-bg: rgba(163, 113, 247, 0.16);
+  --mono-fg: #c3cbd4; --strong-fg: #e6edf3; --gold: #d29922; --red: #f85149;
+  color-scheme: dark;
+}
+
+/* Color palettes: entity → ink and pill field. Declared on every themed scope
+   so the references resolve against that scope's own tokens. */
+:is(.col-today, .col-today .app-light, .col-today .app-dark) {
+  --c-instance: var(--grey-fg);  --b-instance: var(--grey-bg);
+  --c-entry: var(--grey-fg);     --b-entry: var(--grey-bg);
+  --c-project: var(--blue-fg);   --b-project: var(--blue-bg);
+  --c-action: var(--green-fg);   --b-action: var(--green-bg);
+  --c-artifact: var(--grey-fg);  --b-artifact: var(--grey-bg);
+  --c-attachment: var(--grey-fg); --b-attachment: var(--grey-bg);
+  --c-date: var(--grey-fg);      --c-location: var(--grey-fg);
+}
+.e-instance { color: var(--c-instance); }
+.e-entry { color: var(--c-entry); }
+.e-project { color: var(--c-project); }
+.e-action { color: var(--c-action); }
+.e-artifact { color: var(--c-artifact); }
+.e-attachment, .e-content { color: var(--c-attachment); }
+.e-date { color: var(--c-date); }
+.e-location { color: var(--c-location); }
+
+/* ───────────── Icon engine: webapp/style.css, verbatim ───────────── */
+/* Entity icons (src/entity-icon-drawings.ts) — Lucide's geometry at its
+   2-unit stroke, drawn as layers whose state lives in class and style
+   attributes, so a state change morphs: marks draw on (`--icon-on` runs
+   their dash), bodies fill or empty, layers swing, stack and fade. Inside a
+   layer's mask, black occluders hide what the layers in front cover, keeping
+   Lucide's gap between overlapping outlines; an `over` mark cuts open the
+   outline it crosses; and a filled body has its marks knocked out of it. */
+@property --icon-on { syntax: "<number>"; inherits: true; initial-value: 0; }
+.entity-icon { overflow: visible; --icon-stroke: 2; --icon-motion: 340ms cubic-bezier(0.3, 0.7, 0.2, 1); }
+.entity-icon .body {
+  fill: currentColor; fill-opacity: 0;
+  stroke: currentColor; stroke-width: var(--icon-stroke); stroke-linecap: round; stroke-linejoin: round;
+  transform-box: view-box;
+  transition: fill-opacity var(--icon-motion), stroke-dasharray var(--icon-motion),
+    stroke-dashoffset var(--icon-motion), transform var(--icon-motion), opacity var(--icon-motion);
+}
+.entity-icon.filled .body { fill-opacity: 1; }
+.entity-icon .m {
+  fill: none; stroke: currentColor; stroke-width: var(--icon-stroke); stroke-linecap: round; stroke-linejoin: round;
+  opacity: var(--icon-on); stroke-dasharray: 1 1; stroke-dashoffset: calc(1 - var(--icon-on));
+  transform-box: view-box;
+  transition: --icon-on var(--icon-motion), transform var(--icon-motion);
+}
+.entity-icon .m.bold { stroke-width: calc(var(--icon-stroke) * 1.5); }
+.entity-icon .m.fill { fill: currentColor; stroke-dasharray: none; }
+/* Letters fade rather than draw on: a dash would end at the D's closing
+   corner and leave it notched. */
+.entity-icon .m.letters { stroke-linecap: butt; stroke-linejoin: miter; stroke-dasharray: none; }
+.entity-icon.filled .lay .m.in { opacity: 0; }
+.entity-icon .knock .m { stroke: #000; opacity: 0; }
+.entity-icon .knock .m.fill { fill: #000; }
+.entity-icon.filled .knock .m { opacity: var(--icon-on); }
+.entity-icon .gap .m { stroke: #000; stroke-width: calc(var(--icon-stroke) * 2.5); }
+.entity-icon .gap .m.fill { fill: #000; }
+.entity-icon .occ .o {
+  fill: #000; stroke: #000; stroke-width: calc(var(--icon-stroke) * 2); transform-box: view-box;
+  transition: transform var(--icon-motion), opacity var(--icon-motion);
+}
+@media (prefers-reduced-motion: reduce) { .entity-icon { --icon-motion: 0ms; } }
+.entity-icon { display: block; flex-shrink: 0; }
+/* Contour silhouettes: every outline filled, its marks left out */
+.entity-icon.silhouette .body { fill-opacity: 1; }
+.entity-icon.silhouette .lay .m, .entity-icon.silhouette .marks .m:not(.free), .entity-icon.silhouette .knock, .entity-icon.silhouette .gap { display: none; }
+
+/* ───────────── Page ───────────── */
+* { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; }
+body {
+  margin: 0;
+  background: var(--paper);
+  color: var(--ink);
+  font-family: var(--font-sans);
+  font-size: 15px;
+  line-height: 1.55;
+}
+.wrap {
+  max-width: 1120px;
+  margin: 0 auto;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+}
+h1, h2, h3 { text-wrap: balance; margin: 0; font-weight: 600; letter-spacing: -0.01em; }
+h1 { font-size: clamp(34px, 6vw, 56px); line-height: 1.02; letter-spacing: -0.025em; }
+h2 { font-size: 26px; line-height: 1.2; }
+h3 { font-size: 17px; line-height: 1.35; }
+p { margin: 0; }
+code, .mono { font-family: var(--font-mono); font-size: 0.88em; }
+code { background: var(--chip); padding: 1px 5px; border-radius: 4px; white-space: nowrap; }
+.eyebrow {
+  font-family: var(--font-mono); font-size: 12px; letter-spacing: 0.06em; text-transform: uppercase;
+  color: var(--ink-3);
+}
+.cap { color: var(--ink-3); font-size: 14px; }
+
+header.intro { padding-block: 56px 28px; display: grid; gap: 18px; }
+header.intro .lede { font-size: 18px; line-height: 1.55; max-width: 62ch; color: var(--ink-2); }
+header.intro .lede strong { color: var(--ink); font-weight: 500; }
+
+.chip:focus-visible, .toggle:focus-visible { outline: 2px solid var(--key); outline-offset: 2px; }
+
+section.block { padding-block: 64px 8px; display: grid; gap: 28px; }
+section.block > .head { display: grid; gap: 10px; }
+
+/* Family */
+.family { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 14px; }
+.card {
+  background: var(--surface); border: 1px solid var(--rule); border-radius: 14px;
+  padding: 20px; display: grid; gap: 14px; min-width: 0; grid-template-rows: auto 1fr auto;
+}
+.card-top { display: flex; gap: 18px; align-items: center; }
+.stage {
+  width: 104px; height: 104px; border-radius: 12px; flex-shrink: 0;
+  display: grid; place-items: center;
+  background-color: var(--paper);
+  background-image: linear-gradient(var(--gridline) 1px, transparent 1px), linear-gradient(90deg, var(--gridline) 1px, transparent 1px);
+  background-size: 13px 13px; background-position: 0 0;
+}
+.card-name { display: grid; gap: 2px; min-width: 0; }
+.card-name .what { font-size: 13px; color: var(--ink-3); }
+.card-name h3 { font-size: 19px; }
+.card-state { font-size: 14px; color: var(--ink-2); min-height: 44px; }
+.card-state b { color: var(--ink); font-weight: 600; }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.chip {
+  display: inline-flex; align-items: center; gap: 6px;
+  font: 500 12.5px/1 var(--font-sans); color: var(--ink-2);
+  background: transparent; border: 1px solid var(--rule); border-radius: 999px;
+  padding: 5px 9px 5px 6px; cursor: pointer;
+}
+.chip[aria-pressed="true"] { background: var(--key-soft); border-color: color-mix(in srgb, var(--key) 45%, transparent); color: var(--ink); }
+.toggle {
+  display: inline-flex; align-items: center; gap: 8px; cursor: pointer;
+  font: 500 13px/1 var(--font-sans); color: var(--ink-2);
+  border: 1px solid var(--rule); background: var(--surface); border-radius: 999px; padding: 7px 12px;
+}
+.toggle .dotx { width: 8px; height: 8px; border-radius: 50%; background: var(--ink-3); }
+.toggle[aria-pressed="true"] .dotx { background: var(--key); box-shadow: 0 0 0 3px var(--key-soft); }
+.family-bar { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; justify-content: space-between; }
+
+/* Design thoughts: one idea per card, its picture first */
+.thoughts { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 320px), 1fr)); gap: 14px; }
+.thought {
+  background: var(--surface); border: 1px solid var(--rule); border-radius: 14px;
+  padding: 18px 20px; display: grid; gap: 10px; align-content: start; min-width: 0;
+}
+.thought h3 { font-size: 16px; }
+.thought p { font-size: 14px; color: var(--ink-2); }
+.vis { display: flex; flex-wrap: wrap; gap: 14px 18px; align-items: flex-end; min-height: 64px; padding-bottom: 4px; }
+.vis figure { margin: 0; display: grid; gap: 6px; justify-items: center; }
+.vis figcaption { font: 11px/1 var(--font-mono); color: var(--ink-3); white-space: nowrap; }
+.vis .to { color: var(--ink-3); align-self: center; font-size: 14px; }
+.vis .pair { display: flex; gap: 8px; align-items: center; }
+.rules { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px 14px; width: 100%; }
+.rules li { display: flex; align-items: center; gap: 10px; font-size: 12.5px; line-height: 1.3; color: var(--ink-3); min-width: 0; }
+.rules li > span:last-child { display: grid; min-width: 0; }
+.rules b { color: var(--ink); font-size: 13.5px; font-weight: 600; }
+
+/* Tables */
+.scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+table.spec { border-collapse: collapse; width: 100%; font-size: 14px; }
+table.spec th { text-align: left; font: 500 12px/1.3 var(--font-mono); letter-spacing: 0.04em; text-transform: uppercase; color: var(--ink-3); padding: 0 14px 10px 0; border-bottom: 1px solid var(--rule); }
+table.spec td { padding: 12px 14px 12px 0; border-bottom: 1px solid var(--rule-2); vertical-align: middle; color: var(--ink-2); }
+table.spec td:first-child { color: var(--ink); font-weight: 500; white-space: nowrap; }
+
+/* Every size */
+table.sizes { width: auto; }
+table.sizes th { text-align: center; padding: 0 18px 10px; }
+table.sizes th:first-child { text-align: left; padding-left: 0; }
+table.sizes th.grp-pill, table.sizes .pillcol { background: color-mix(in srgb, var(--key) 6%, transparent); }
+table.sizes td { padding: 9px 18px; text-align: center; min-width: 76px; }
+table.sizes td .entity-icon { display: inline-block; vertical-align: middle; }
+table.sizes td:first-child { text-align: left; white-space: nowrap; padding-left: 0; padding-right: 32px; }
+table.sizes td:first-child b { display: inline-block; min-width: 150px; font-weight: 600; color: var(--ink); }
+table.sizes td:first-child span { color: var(--ink-2); font-weight: 400; }
+table.sizes tr.first td { border-top: 1px solid var(--rule); }
+table.sizes th.luccol, table.sizes td.luccol { border-left: 1px solid var(--rule); }
+table.sizes td.luccol { color: var(--ink-3); }
+table.sizes td.luccol svg { display: inline-block; vertical-align: middle; margin: 0 2px; }
+
+
+/* App panels */
+.panels { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 460px), 1fr)); gap: 14px; }
+.app {
+  background: var(--app-bg); color: var(--app-text);
+  border: 1px solid var(--app-border); border-radius: 12px;
+  font-family: var(--font-app); font-size: 14px; line-height: 20px;
+  display: grid; gap: 0; overflow: hidden; min-width: 0;
+}
+.app-cap { font: 500 11px/1 var(--font-mono); letter-spacing: 0.06em; text-transform: uppercase; color: var(--app-text-2); padding: 12px 16px; border-bottom: 1px solid var(--app-border); background: var(--app-bg-2); }
+.app-sec { padding: 14px 16px; border-bottom: 1px solid var(--app-border); display: grid; gap: 10px; min-width: 0; }
+.app-sec:last-child { border-bottom: 0; }
+.app-sec .lbl { font-size: 11px; line-height: 16px; color: var(--app-text-2); font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; }
+.flow { display: grid; grid-template-columns: 52px 1fr; gap: 12px; min-width: 0; }
+.flow .time { font-size: 12px; color: var(--app-text-2); font-variant-numeric: tabular-nums; padding-top: 1px; }
+.flow .fb { display: grid; gap: 8px; min-width: 0; }
+.flow .ttl { font-weight: 600; }
+.flow p { color: var(--app-text); }
+.tags { display: flex; flex-wrap: wrap; gap: 4px; min-width: 0; }
+.pill {
+  display: inline-flex; align-items: center; gap: 3px; padding: 2px 6px;
+  font-size: 10px; font-weight: 500; line-height: 1.4; border-radius: 100px; white-space: nowrap;
+  max-width: 100%; overflow: hidden;
+}
+.pill .pt { overflow: hidden; text-overflow: ellipsis; }
+.pill.long { max-width: 200px; }
+.p-project { background: var(--b-project); color: var(--c-project); }
+.p-action { background: var(--b-action); color: var(--c-action); }
+.p-entry { background: var(--b-entry); color: var(--c-entry); }
+.p-artifact { background: var(--b-artifact); color: var(--c-artifact); }
+.p-attachment, .p-content { background: var(--b-attachment); color: var(--c-attachment); }
+.p-instance { background: var(--b-instance); color: var(--c-instance); }
+.pill.closed { background: var(--grey-bg); }
+.pill.closed .pt { color: var(--app-text-2); }
+.pill.cancelled .pt { text-decoration: line-through; }
+.pill.due { box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--gold) 45%, transparent); }
+.pill.overdue { box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--red) 60%, transparent); background: color-mix(in srgb, var(--red) 14%, var(--app-bg)); }
+.pill.overdue .pt { color: var(--red); }
+.inline { font-weight: 500; }
+.inline .entity-icon { display: inline-block; vertical-align: -1px; margin-right: 2px; }
+/* Smart element chips: neutral, on the secondary field */
+.smart { color: var(--grey-fg); background: var(--app-bg-2); border-radius: 3px; padding: 1px 4px; box-decoration-break: clone; -webkit-box-decoration-break: clone; }
+.smart .entity-icon { display: inline-block; vertical-align: -1px; margin-right: 2px; }
+.rows { display: grid; gap: 2px; }
+.row { display: flex; align-items: center; gap: 8px; padding: 5px 8px; border-radius: 6px; min-width: 0; }
+.row:nth-child(odd) { background: var(--app-bg-2); }
+.row .nm { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; min-width: 0; }
+.row .ty { font-size: 12px; color: var(--app-text-2); }
+.row.muted .nm { color: var(--app-text-2); }
+.asset { display: flex; align-items: center; gap: 6px; color: var(--app-text); font-size: 13px; }
+.assets { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 6px 14px; }
+.title { display: flex; align-items: center; gap: 8px; font-size: 20px; line-height: 28px; font-weight: 600; min-width: 0; }
+.title .nm { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.titles { display: grid; gap: 6px; }
+.inst { display: flex; align-items: center; gap: 10px; padding: 8px 10px; border-radius: 8px; border: 1px solid transparent; }
+.inst.cur { border-color: var(--app-border); background: var(--app-bg-2); }
+.inst b { font-weight: 600; font-size: 14px; }
+.inst .hint { font-size: 12px; color: var(--app-text-2); margin-left: auto; }
+
+
+footer { padding-block: 56px 72px; color: var(--ink-3); font-size: 13px; }
+
+@media (max-width: 640px) {
+  header.intro { padding-block: 36px 20px; }
+  table.sizes td:first-child b { min-width: 0; display: block; }
+  .flow { grid-template-columns: 1fr; gap: 4px; }
+}
+</style>
+
+<div id="root" class="col-today pal-solid">
+
+<header class="intro wrap">
+  <span class="eyebrow">Icon design · Aside webapp · November 2026</span>
+  <h1>Aside Entity Icons</h1>
+  <p class="lede"><strong>A notebook and what goes in it</strong>, drawn on Lucide’s geometry. Every icon changes in place when its record changes state, and the dates and places content mentions follow the same rules.</p>
+</header>
+
+<main>
+
+<section class="block wrap" id="family">
+  <div class="head">
+    <span class="eyebrow">The set</span>
+    <h2>Five icons, every state</h2>
+  </div>
+  <div class="family-bar">
+    <p class="cap">Pick a state to watch the icon change in place.</p>
+    <button type="button" class="toggle" id="cycle" aria-pressed="true"><span class="dotx"></span>Cycle states</button>
+  </div>
+  <div class="family" id="family-grid"></div>
+</section>
+
+<section class="block wrap" id="smart">
+  <div class="head">
+    <span class="eyebrow">Smart elements</span>
+    <h2>Dates and places, on the same rules</h2>
+  </div>
+  <p class="cap">Not entities, but drawn on the same grid and stroke, and changed by the same rules.</p>
+  <div class="family" id="smart-grid"></div>
+</section>
+
+<section class="block wrap" id="thoughts">
+  <div class="head">
+    <span class="eyebrow">Design thoughts</span>
+    <h2>How the set holds together</h2>
+  </div>
+  <div class="thoughts" id="thought-grid"></div>
+</section>
+
+<section class="block wrap" id="sizes">
+  <div class="head">
+    <span class="eyebrow">Every size</span>
+    <h2>One drawing, every size</h2>
+  </div>
+  <p class="cap">One drawing at every size. In pills the settling ticks grow bolder and a worktree shows the branch alone. Smart elements keep one drawing throughout.</p>
+  <div class="scroll"><table class="spec sizes" id="sizes-table"></table></div>
+</section>
+
+<section class="block wrap" id="context">
+  <div class="head">
+    <span class="eyebrow">In the app</span>
+    <h2>Real records from the Aurora Studio fixture</h2>
+  </div>
+  <p class="cap">The webapp's sizes and pill rules, in both themes. Times read in Los Angeles, as the fixture intends.</p>
+  <div class="panels" id="panels"></div>
+</section>
+
+</main>
+
+<footer class="wrap">
+  Drawn by <code>webapp/src/entity-icon-drawings.ts</code> on Lucide’s geometry (ISC license).
+</footer>
+</div>
+<script>
+// webapp/src/entity-icon-drawings.ts, bundled as is: the page draws with the
+// app's own code.
+"use strict";
+var EntityIcons = (() => {
+  var __defProp = Object.defineProperty;
+  var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
+  var __getOwnPropNames = Object.getOwnPropertyNames;
+  var __hasOwnProp = Object.prototype.hasOwnProperty;
+  var __export = (target, all) => {
+    for (var name in all)
+      __defProp(target, name, { get: all[name], enumerable: true });
+  };
+  var __copyProps = (to, from, except, desc) => {
+    if (from && typeof from === "object" || typeof from === "function") {
+      for (let key of __getOwnPropNames(from))
+        if (!__hasOwnProp.call(to, key) && key !== except)
+          __defProp(to, key, { get: () => from[key], enumerable: !(desc = __getOwnPropDesc(from, key)) || desc.enumerable });
+    }
+    return to;
+  };
+  var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: true }), mod);
+
+  // webapp/src/entity-icon-drawings.ts
+  var entity_icon_drawings_exports = {};
+  __export(entity_icon_drawings_exports, {
+    ICON_SIZE: () => ICON_SIZE,
+    iconMarkup: () => iconMarkup,
+    iconStates: () => iconStates,
+    setEntityIcon: () => setEntityIcon
+  });
+  var RING = "M12 2a10 10 0 1 1 0 20a10 10 0 1 1 0-20Z";
+  var NOTEBOOK = "M6 2h12a2 2 0 0 1 2 2v16a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2Z";
+  var PENCIL = "M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.497z";
+  var BOOKMARK = "M17 3a2 2 0 0 1 2 2v15a1 1 0 0 1-1.496.868l-4.512-2.578a2 2 0 0 0-1.984 0l-4.512 2.578A1 1 0 0 1 5 20V5a2 2 0 0 1 2-2z";
+  var PAGE = "M6 22a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h8a2.4 2.4 0 0 1 1.704.706l3.588 3.588A2.4 2.4 0 0 1 20 8v12a2 2 0 0 1-2 2z";
+  var FOLD = "M14 2v5a1 1 0 0 0 1 1h5";
+  var openPage = (left, bottom) => bottom >= 18 ? `M4 ${left}V4a2 2 0 0 1 2-2h8a2.4 2.4 0 0 1 1.706.706l3.588 3.588A2.4 2.4 0 0 1 20 8v12a2 2 0 0 1-2 2` : `M${bottom} 22H18a2 2 0 0 0 2-2V8a2.4 2.4 0 0 0-.706-1.704l-3.588-3.588A2.4 2.4 0 0 0 14 2H6a2 2 0 0 0-2 2v${left - 4}`;
+  var BRANCH = "M15 6a9 9 0 0 0-9 9V3M18 3a3 3 0 1 1 0 6a3 3 0 1 1 0-6ZM6 15a3 3 0 1 1 0 6a3 3 0 1 1 0-6Z";
+  var RINGS = "M2 6h4M2 10h4M2 14h4M2 18h4";
+  var CALENDAR = "M5 3h14a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2Z";
+  var CALENDAR_OPEN = "M21 7.338V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h2.338";
+  var PIN = "M12 2a8 8 0 0 1 8 8c0 4.993-5.539 10.193-7.399 11.799a1 1 0 0 1-1.202 0C9.539 20.193 4 14.993 4 10a8 8 0 0 1 8-8Z";
+  var SWING = "scaleX(0.5) skewY(-14deg)";
+  var HINGE = "4px 12px";
+  var STACK = { back: "translate(0px, 5.5px) scale(0.75)", page: "translate(6px, 0.5px) scale(0.75)" };
+  var RINGED = {
+    check: { d: "m7.5 12 3 3 6-6", on: "ring" },
+    hands: { d: "M12 6v6l4 2", on: "ring" },
+    slash: { d: "M22 2 2 22", kind: "over" },
+    arrow: { d: "M10.5.5 12 2l-1.5 1.5", kind: "free" }
+  };
+  var ACTION_STATES = {
+    backlog: { marks: [], edge: ["3.65 3.85", 1.825] },
+    scheduled: { marks: [] },
+    slipped: { marks: ["hands"] },
+    done: { marks: ["check"], filled: true },
+    cancelled: { marks: ["slash"] },
+    recurring: { marks: ["arrow"], edge: ["51 9", 51] }
+  };
+  var PROJECT_STATES = { live: { marks: [] }, ended: { marks: ["check"], filled: true } };
+  var ICONS = {
+    instance: {
+      initial: "available",
+      // The first page sits behind the cover and shows as it swings open; a
+      // worktree gives the whole cover to the git branch.
+      full: {
+        layers: [
+          { id: "leaves", d: NOTEBOOK, alt: true, occ: ["cover"] },
+          { id: "cover", d: NOTEBOOK, origin: HINGE }
+        ],
+        marks: {
+          rings: { d: RINGS, kind: "free" },
+          spine: { d: "M16 2v20", on: "cover" },
+          lines: { d: "M14 8h3M14 12h4M14 16h2.5", on: "leaves" },
+          branch: { d: "M13.65 8.7a4.95 4.95 0 0 0-4.95 4.95V7.05M15.3 7.05a1.65 1.65 0 1 1 0 3.3a1.65 1.65 0 1 1 0-3.3ZM8.7 13.65a1.65 1.65 0 1 1 0 3.3a1.65 1.65 0 1 1 0-3.3Z", on: "cover" }
+        },
+        states: {
+          available: { marks: ["rings", "spine"] },
+          active: { marks: ["rings", "lines"], show: ["leaves"], solid: ["cover"], move: { cover: SWING } },
+          worktree: { marks: ["rings", "branch"] }
+        }
+      },
+      // At pill size the cover drops its spine and the open notebook its page
+      // lines; a worktree is Lucide's git branch on its own.
+      small: {
+        layers: [
+          { id: "leaves", d: NOTEBOOK, alt: true, occ: ["cover"] },
+          { id: "cover", d: NOTEBOOK, alt: true, origin: HINGE }
+        ],
+        marks: {
+          rings: { d: RINGS, kind: "free" },
+          git: { d: BRANCH, kind: "free" }
+        },
+        states: {
+          available: { marks: ["rings"], show: ["cover"] },
+          active: { marks: ["rings"], show: ["leaves", "cover"], solid: ["cover"], move: { cover: SWING } },
+          worktree: { marks: ["git"] }
+        }
+      }
+    },
+    entry: {
+      initial: "recorded",
+      full: {
+        layers: [{ id: "pen", d: PENCIL }],
+        marks: {
+          ferrule: { d: "m15 5 4 4", on: "pen" },
+          eraser: { d: "M15 5.013 17.188 2.825a2.819 2.819 0 0 1 3.986 3.987L19 8.986Z", on: "pen", fill: true },
+          line: { d: "M13 21h8", kind: "free" }
+        },
+        states: { recorded: { marks: ["ferrule", "eraser", "line"] } }
+      }
+    },
+    project: {
+      initial: "live",
+      full: { layers: [{ id: "rib", d: BOOKMARK }], marks: { check: { d: "m8 9.5 3 3 5-5", on: "rib" } }, states: PROJECT_STATES },
+      // The settling tick grows bolder at pill size, where the standard one
+      // shrinks to a hairline.
+      small: { layers: [{ id: "rib", d: BOOKMARK }], marks: { check: { d: "m8 9.5 3 3 5-5", on: "rib", weight: "bold" } }, states: PROJECT_STATES }
+    },
+    action: {
+      initial: "scheduled",
+      full: { layers: [{ id: "ring", d: RING }], marks: RINGED, states: ACTION_STATES, edges: true },
+      small: {
+        layers: [{ id: "ring", d: RING }],
+        marks: { ...RINGED, check: { d: "m7.5 12 3 3 6-6", on: "ring", weight: "bold" } },
+        states: ACTION_STATES,
+        edges: true
+      }
+    },
+    content: {
+      initial: "text",
+      // Lucide's file page at every size, its mark previewing what the reader
+      // opens. Text sits inside a closed page. A media mark or the PDF label is
+      // large, and the page opens around it the way Lucide's own file icons do,
+      // each opening cut to fit its mark.
+      full: {
+        layers: [
+          { id: "back", d: PAGE, alt: true, occ: ["page"], origin: "0 0" },
+          { id: "page", d: PAGE, alt: true, origin: "0 0" },
+          { id: "open-pdf", d: openPage(11.5, 18), alt: true },
+          { id: "open-image", d: openPage(13, 16), alt: true },
+          { id: "open-video", d: openPage(8.75, 11), alt: true },
+          { id: "open-audio", d: openPage(9, 13.5), alt: true },
+          { id: "open-webpage", d: openPage(9.25, 13.75), alt: true }
+        ],
+        marks: {
+          fold: { d: FOLD, on: "page" },
+          lines: { d: "M10 9H8M16 13H8M16 17H8", on: "page" },
+          // Drawn as strokes rather than text, so the label never joins the
+          // text of the link or row it labels.
+          pdf: { d: "M2 22.5v-7h1.55a1.75 1.75 0 0 1 0 3.5H2M7.9 15.5h.2a3 3 0 0 1 0 6h-.2ZM13.7 22.5v-7h2.8M13.7 18.5h2.3", kind: "free", weight: "letters" },
+          sun: { d: "M11 9a1.25 1.25 0 1 1 0 2.5a1.25 1.25 0 1 1 0-2.5Z", kind: "free", fill: true },
+          land: { d: "M1.5 22.5 6.5 15.5l3 4 1.5-1.5 1 4.5Z", kind: "free", fill: true },
+          // Lucide's `play`, scaled into the corner.
+          play: { d: "M2 13.7a1.2 1.2 0 0 1 1.805-1.037l7.198 4.199a1.2 1.2 0 0 1 .002 2.075l-7.2 4.2A1.2 1.2 0 0 1 2 22.1Z", kind: "free", fill: true },
+          // Four bars, the second tallest, each to its side shorter.
+          wave: { d: "M2.5 14.5v5M6 12v10M9.5 13.5v7M13 15.5v3", kind: "free" },
+          // A pie with its slice pulled out: rich, interactive content. The
+          // slice stands far enough off that a gap survives the outline.
+          pie: { d: "M6.5 17.5V13a4.5 4.5 0 1 0 4.5 4.5ZM10 14V9.5a4.5 4.5 0 0 1 4.5 4.5Z", kind: "free", fill: true }
+        },
+        states: {
+          text: { marks: ["fold", "lines"], show: ["page"] },
+          pdf: { marks: ["fold", "pdf"], show: ["open-pdf"] },
+          image: { marks: ["fold", "sun", "land"], show: ["open-image"] },
+          video: { marks: ["fold", "play"], show: ["open-video"] },
+          audio: { marks: ["fold", "wave"], show: ["open-audio"] },
+          webpage: { marks: ["fold", "pie"], show: ["open-webpage"] },
+          file: { marks: ["fold"], show: ["page"] },
+          collection: { marks: ["fold"], show: ["back", "page"], move: STACK }
+        }
+      }
+    },
+    date: {
+      initial: "day",
+      // Lucide's calendar page, its mark previewing the value: a day is the
+      // bare page, a range of days carries `calendar-range`'s two spans, and a
+      // clock time opens the page around the clock face, as `calendar-clock`
+      // does — the header stopping short of the face with the borders.
+      full: {
+        layers: [
+          { id: "page", d: CALENDAR, alt: true },
+          { id: "open", d: CALENDAR_OPEN, alt: true }
+        ],
+        marks: {
+          rings: { d: "M8 2v3M16 2v3", on: "page" },
+          head: { d: "M3 9h18", on: "page" },
+          stub: { d: "M3 9h5.859", on: "page" },
+          span: { d: "M7 13h.01M11 13h6M7 17h6M17 17h.01", on: "page" },
+          face: { d: "M16 10a6 6 0 1 1 0 12a6 6 0 1 1 0-12Z", kind: "free" },
+          hands: { d: "M16 14v2.2l1.6 1", kind: "free" }
+        },
+        states: {
+          day: { marks: ["rings", "head"], show: ["page"] },
+          range: { marks: ["rings", "head", "span"], show: ["page"] },
+          time: { marks: ["rings", "stub", "face", "hands"], show: ["open"] }
+        }
+      }
+    },
+    location: {
+      initial: "geo",
+      // Lucide's map pin around its point. A postal address with no saved
+      // coordinates has no point yet: it pends, its edge breaking into dashes
+      // as a backlog ring's does — six, spaced by the ring's gap and long
+      // enough to keep the crown, the shoulders and the tip.
+      full: {
+        layers: [{ id: "pin", d: PIN }],
+        marks: { point: { d: "M12 7a3 3 0 1 1 0 6a3 3 0 1 1 0-6Z", on: "pin" } },
+        states: {
+          geo: { marks: ["point"] },
+          postal: { marks: [], edge: ["5.6 4.4", 2.8] }
+        },
+        edges: true
+      }
+    }
+  };
+  function iconStates(kind) {
+    return Object.keys(ICONS[kind].full.states);
+  }
+  var ICON_SIZE = { pill: 10, stat: 11, row: 12, tile: 13, identity: 14, list: 16, title: 18 };
+  var PILL_MAX = 13;
+  var style = (props) => {
+    const text = Object.entries(props).filter(([, value]) => value !== void 0).map(([key, value]) => `${key}:${value}`).join(";");
+    return text ? ` style="${text}"` : "";
+  };
+  var nextMask = 0;
+  function iconMarkup(kind, state, size) {
+    const icon = ICONS[kind];
+    const small = size <= PILL_MAX && icon.small;
+    const drawing = small || icon.full;
+    const name = state in drawing.states ? state : icon.initial;
+    const pose = drawing.states[name];
+    const layerOf = new Map(drawing.layers.map((layer) => [layer.id, layer]));
+    const motion = (id2) => {
+      const layer = id2 === void 0 ? void 0 : layerOf.get(id2);
+      return layer?.origin ? { transform: pose.move?.[layer.id], "transform-origin": layer.origin } : {};
+    };
+    const hidden = (layer) => layer.alt && !pose.show?.includes(layer.id) ? 0 : void 0;
+    const marks = Object.entries(drawing.marks);
+    const markEl = ([name2, mark]) => {
+      const classes2 = ["m", mark.kind ?? "in", mark.fill && "fill", mark.weight].filter(Boolean).join(" ");
+      const attrs = style({ "--icon-on": pose.marks.includes(name2) ? 1 : void 0, ...motion(mark.on) });
+      return `<path class="${classes2}" d="${mark.d}"${mark.fill ? "" : ' pathLength="1"'}${attrs}/>`;
+    };
+    const gap = marks.filter(([, mark]) => mark.kind === "over").map(markEl).join("");
+    const id = `entity-icon-${++nextMask}`;
+    let defs = "", layers = "";
+    drawing.layers.forEach((layer, index) => {
+      const occluders = drawing.layers.filter((front) => layer.occ?.includes(front.id)).map((front) => `<path class="o" d="${front.d}"${style({ opacity: hidden(front), ...motion(front.id) })}/>`).join("");
+      const own = marks.filter(([, mark]) => (mark.kind ?? "in") === "in" && mark.on === layer.id).map(markEl).join("");
+      const masked = occluders || own || gap;
+      const [dash, offset] = pose.edge ?? ["60 0", 0];
+      const body = style({
+        opacity: hidden(layer),
+        "fill-opacity": pose.solid?.includes(layer.id) ? 1 : void 0,
+        ...drawing.edges && { "stroke-dasharray": dash, "stroke-dashoffset": offset },
+        ...motion(layer.id)
+      });
+      if (masked) defs += `<mask id="${id}-${index}" maskUnits="userSpaceOnUse" x="-6" y="-6" width="36" height="36"><rect x="-6" y="-6" width="36" height="36" fill="#fff"/><g class="occ">${occluders}</g><g class="knock">${own}</g><g class="gap">${gap}</g></mask>`;
+      layers += `<g class="lay"${masked ? ` mask="url(#${id}-${index})"` : ""}><path class="body" d="${layer.d}" pathLength="60"${body}/>${own}</g>`;
+    });
+    const top = marks.filter(([, mark]) => mark.kind === "free" || mark.kind === "over").map(markEl).join("");
+    const classes = `entity-icon${pose.filled ? " filled" : ""}`;
+    return `<svg class="${classes}" data-icon="${kind}" data-state="${name}" width="${size}" height="${size}" viewBox="0 0 24 24" aria-hidden="true"><defs>${defs}</defs>${layers}<g class="marks">${top}</g></svg>`;
+  }
+  function setEntityIcon(host, kind, state, size) {
+    const current = host.querySelector(":scope > svg.entity-icon");
+    if (current?.dataset.state === state && current.dataset.icon === kind && current.getAttribute("width") === String(size)) return;
+    const template = document.createElement("template");
+    template.innerHTML = iconMarkup(kind, state, size);
+    const next = template.content.firstElementChild;
+    if (!current || current.dataset.icon !== kind || current.getAttribute("width") !== String(size)) {
+      if (current) current.replaceWith(next);
+      else host.prepend(next);
+      return;
+    }
+    const before = [current, ...current.querySelectorAll("*")];
+    const after = [next, ...next.querySelectorAll("*")];
+    before.forEach((node, index) => {
+      for (const name of ["class", "style", "data-state"]) {
+        const value = after[index].getAttribute(name);
+        if (node.getAttribute(name) === value) continue;
+        if (value === null) node.removeAttribute(name);
+        else node.setAttribute(name, value);
+      }
+    });
+  }
+  return __toCommonJS(entity_icon_drawings_exports);
+})();
+</script>
+<script>
+(() => {
+  const { iconMarkup, setEntityIcon } = window.EntityIcons;
+  const ORDER = ['instance', 'entry', 'project', 'action', 'content'];
+  const SMART = ['date', 'location'];
+  const ALL = [...ORDER, ...SMART];
+  // Names and notes for each state; the drawings come from the bundle above.
+  const ICONS = {
+    instance: { name: 'Instance', object: 'Ring-bound notebook', def: 'available', states: {
+      available: { label: 'Instance', note: 'A directory with an <code>aside.md</code> manifest' },
+      active: { label: 'Active', note: 'The instance open in this tab' },
+      worktree: { label: 'Worktree', note: 'A linked Git worktree' },
+    } },
+    entry: { name: 'Entry', object: 'Pencil on a line', def: 'recorded', states: {
+      recorded: { label: 'Recorded', note: 'Entries never change state' },
+    } },
+    project: { name: 'Project', object: 'Bookmark ribbon', def: 'live', states: {
+      live: { label: 'Open', note: 'No <code>ended</code> timestamp' },
+      ended: { label: 'Ended', note: '<code>ended</code> is set' },
+    } },
+    action: { name: 'Action', object: 'Checkbox ring', def: 'scheduled', states: {
+      backlog: { label: 'Backlog', note: 'No <code>scheduled</code> time yet' },
+      scheduled: { label: 'Scheduled', note: 'Committed to a calendar time' },
+      slipped: { label: 'Slipped', note: 'Its scheduled time passed unresolved' },
+      done: { label: 'Done', note: '<code>resolution: done</code>' },
+      cancelled: { label: 'Cancelled', note: '<code>resolution: cancelled</code>' },
+      recurring: { label: 'Recurring', note: 'Has a <code>recurrence</code>' },
+    } },
+    content: { name: 'Artifact & attachment', object: 'Document page', def: 'text', states: {
+      text: { label: 'Text', note: 'A Markdown body, <code>notes.md</code>, <code>readme.txt</code>' },
+      pdf: { label: 'PDF', note: '<code>launch-brief.pdf</code>' },
+      image: { label: 'Image', note: '<code>aurora.svg</code>' },
+      video: { label: 'Video', note: '<code>orbit.mp4</code>' },
+      audio: { label: 'Audio', note: '<code>chime.wav</code>' },
+      webpage: { label: 'Webpage', note: '<code>index.html</code>, an interactive page' },
+      file: { label: 'File', note: '<code>archive.zip</code>, anything without a preview' },
+      collection: { label: 'Collection', note: 'An artifact of several files, no body' },
+    } },
+    date: { name: 'Date', object: 'Calendar page', def: 'day', states: {
+      day: { label: 'Day', note: '<code>#date/2026-10-15</code>' },
+      range: { label: 'Range', note: '<code>#date/2026-10-15/2026-10-18</code>' },
+      time: { label: 'Time', note: '<code>#date/2026-10-15T09:30</code>, or a timed interval' },
+    } },
+    location: { name: 'Location', object: 'Map pin', def: 'geo', states: {
+      geo: { label: 'Pinned', note: '<code>geo</code> saved: opens in Apple Maps' },
+      postal: { label: 'Postal only', note: 'No coordinates yet: inert until geocoded' },
+    } },
+  };
+  // Each rule lists its examples; a state draws with exactly one.
+  const OPS = {
+    open: { name: 'Open', meaning: 'In use', ex: [['instance', 'active']] },
+    settle: { name: 'Settle', meaning: 'Finished', ex: [['action', 'done'], ['project', 'ended']] },
+    pending: { name: 'Pending', meaning: 'Nothing committed yet', ex: [['action', 'backlog'], ['location', 'postal']] },
+    late: { name: 'Late', meaning: 'Its time passed', ex: [['action', 'slipped']] },
+    strike: { name: 'Strike', meaning: 'Dropped', ex: [['action', 'cancelled']] },
+    repeat: { name: 'Repeat', meaning: 'Comes back on a schedule', ex: [['action', 'recurring']] },
+    stack: { name: 'Stack', meaning: 'Several', ex: [['content', 'collection']] },
+    mark: { name: 'Mark', meaning: 'A kind of its own', ex: [['instance', 'worktree']] },
+  };
+  const ROLE_NAMES = { instance: 'Instance', entry: 'Entry', project: 'Project', action: 'Action', content: 'Artifact & attachment', date: 'Date', location: 'Location' };
+  const statesOf = (spec) => Object.entries(spec.states);
+  const PILL = 13;
+
+  function icon(entity, st, opts = {}) {
+    const svg = iconMarkup(entity, st, opts.size || 24);
+    return opts.cls ? svg.replace('class="entity-icon', `class="entity-icon ${opts.cls}`) : svg;
+  }
+  // Change state in place so CSS transitions animate the morph.
+  function morph(svg, st) {
+    setEntityIcon(svg.parentElement, svg.dataset.icon, st, Number(svg.getAttribute('width')));
+  }
+
+  const $ = (sel) => document.querySelector(sel);
+
+  // ───────────── The set ─────────────
+  const familyState = Object.fromEntries(ALL.map((e) => [e, ICONS[e].def]));
+  let cycleTimer = null;
+  function renderFamily() {
+    renderGrid('#family-grid', ORDER);
+    renderGrid('#smart-grid', SMART);
+  }
+  function renderGrid(sel, kinds) {
+    $(sel).innerHTML = kinds.map((e) => {
+      const spec = ICONS[e];
+      const cur = familyState[e];
+      const chips = statesOf(spec).map(([s, st]) =>
+        `<button type="button" class="chip" data-e="${e}" data-s="${s}" aria-pressed="${s === cur}"><span class="e-${e}">${icon(e, s, { size: 16 })}</span>${st.label}</button>`).join('');
+      const st = spec.states[cur];
+      return `<article class="card" data-card="${e}">
+        <div class="card-top">
+          <div class="stage e-${e}">${icon(e, cur, { size: 72, cls: 'hero' })}</div>
+          <div class="card-name"><span class="what">${spec.object}</span><h3>${spec.name}</h3></div>
+        </div>
+        <p class="card-state"><b>${st.label}.</b> ${st.note}</p>
+        <div class="chips" role="group" aria-label="${spec.name} states">${chips}</div>
+      </article>`;
+    }).join('');
+  }
+  function setFamilyState(e, s) {
+    familyState[e] = s;
+    const card = document.querySelector(`[data-card="${e}"]`);
+    morph(card.querySelector('.stage svg'), s);
+    card.querySelectorAll('.chip').forEach((c) => c.setAttribute('aria-pressed', String(c.dataset.s === s)));
+    const st = ICONS[e].states[s];
+    card.querySelector('.card-state').innerHTML = `<b>${st.label}.</b> ${st.note}`;
+  }
+  for (const sel of ['#family-grid', '#smart-grid']) $(sel).addEventListener('click', (ev) => {
+    const chip = ev.target.closest('.chip');
+    if (!chip) return;
+    stopCycle();
+    setFamilyState(chip.dataset.e, chip.dataset.s);
+  });
+  let tick = 0;
+  function startCycle() {
+    if (cycleTimer) return;
+    $('#cycle').setAttribute('aria-pressed', 'true');
+    cycleTimer = setInterval(() => {
+      tick++;
+      ALL.forEach((e, i) => {
+        if ((tick + i) % 2) return;
+        const keys = statesOf(ICONS[e]).map(([s]) => s);
+        if (keys.length < 2) return;
+        setFamilyState(e, keys[(keys.indexOf(familyState[e]) + 1) % keys.length]);
+      });
+    }, 1100);
+  }
+  function stopCycle() {
+    clearInterval(cycleTimer); cycleTimer = null;
+    $('#cycle').setAttribute('aria-pressed', 'false');
+  }
+  $('#cycle').addEventListener('click', () => (cycleTimer ? stopCycle() : startCycle()));
+
+  // ───────────── Lucide references ─────────────
+  // Each state's nearest Lucide icon (lucide-static 1.66.0, ISC license),
+  // shown beside our drawings in the size table.
+  const LUCIDE_REF = {"bookmark": "<path d=\"M17 3a2 2 0 0 1 2 2v15a1 1 0 0 1-1.496.868l-4.512-2.578a2 2 0 0 0-1.984 0l-4.512 2.578A1 1 0 0 1 5 20V5a2 2 0 0 1 2-2z\" />", "bookmark-check": "<path d=\"M17 3a2 2 0 0 1 2 2v15a1 1 0 0 1-1.496.868l-4.512-2.578a2 2 0 0 0-1.984 0l-4.512 2.578A1 1 0 0 1 5 20V5a2 2 0 0 1 2-2z\" /> <path d=\"m9 10 2 2 4-4\" />", "calendar": "<path d=\"M8 2v3\" /> <path d=\"M16 2v3\" /> <rect x=\"3\" y=\"3\" width=\"18\" height=\"18\" rx=\"2\" /> <path d=\"M3 9h18\" />", "calendar-clock": "<path d=\"M16 14v2.2l1.6 1\" /> <path d=\"M16 2v3\" /> <path d=\"M21 7.338V5a2 2 0 00-2-2H5a2 2 0 00-2 2v14a2 2 0 002 2h2.338\" /> <path d=\"M3 9h5.859\" /> <path d=\"M8 2v3\" /> <circle cx=\"16\" cy=\"16\" r=\"6\" />", "calendar-range": "<rect x=\"3\" y=\"3\" width=\"18\" height=\"18\" rx=\"2\" /> <path d=\"M16 2v3\" /> <path d=\"M3 9h18\" /> <path d=\"M8 2v3\" /> <path d=\"M17 13h-6\" /> <path d=\"M13 17H7\" /> <path d=\"M7 13h.01\" /> <path d=\"M17 17h.01\" />", "circle": "<circle cx=\"12\" cy=\"12\" r=\"10\" />", "circle-check": "<circle cx=\"12\" cy=\"12\" r=\"10\" /> <path d=\"m16 9-5.5 5.5L8 12\" />", "circle-dashed": "<path d=\"M10.1 2.182a10 10 0 0 1 3.8 0\" /> <path d=\"M13.9 21.818a10 10 0 0 1-3.8 0\" /> <path d=\"M17.609 3.721a10 10 0 0 1 2.69 2.7\" /> <path d=\"M2.182 13.9a10 10 0 0 1 0-3.8\" /> <path d=\"M20.279 17.609a10 10 0 0 1-2.7 2.69\" /> <path d=\"M21.818 10.1a10 10 0 0 1 0 3.8\" /> <path d=\"M3.721 6.391a10 10 0 0 1 2.7-2.69\" /> <path d=\"M6.391 20.279a10 10 0 0 1-2.69-2.7\" />", "circle-slash-2": "<circle cx=\"12\" cy=\"12\" r=\"10\" /> <path d=\"M22 2 2 22\" />", "clock": "<circle cx=\"12\" cy=\"12\" r=\"10\" /> <path d=\"M12 6v6l4 2\" />", "file": "<path d=\"M6 22a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h8a2.4 2.4 0 0 1 1.704.706l3.588 3.588A2.4 2.4 0 0 1 20 8v12a2 2 0 0 1-2 2z\" /> <path d=\"M14 2v5a1 1 0 0 0 1 1h5\" />", "file-chart-pie": "<path d=\"M15.941 22H18a2 2 0 0 0 2-2V8a2.4 2.4 0 0 0-.706-1.704l-3.588-3.588A2.4 2.4 0 0 0 14 2H6a2 2 0 0 0-2 2v3.512\" /> <path d=\"M14 2v5a1 1 0 0 0 1 1h5\" /> <path d=\"M4.017 11.512a6 6 0 1 0 8.466 8.475\" /> <path d=\"M9 16a1 1 0 0 1-1-1v-4c0-.552.45-1.008.995-.917a6 6 0 0 1 4.922 4.922c.091.544-.365.995-.917.995z\" />", "file-image": "<path d=\"M6 22a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h8a2.4 2.4 0 0 1 1.704.706l3.588 3.588A2.4 2.4 0 0 1 20 8v12a2 2 0 0 1-2 2z\" /> <path d=\"M14 2v5a1 1 0 0 0 1 1h5\" /> <circle cx=\"10\" cy=\"12\" r=\"2\" /> <path d=\"m20 17-1.296-1.296a2.41 2.41 0 0 0-3.408 0L9 22\" />", "file-play": "<path d=\"M6 22a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h8a2.4 2.4 0 0 1 1.704.706l3.588 3.588A2.4 2.4 0 0 1 20 8v12a2 2 0 0 1-2 2z\" /> <path d=\"M14 2v5a1 1 0 0 0 1 1h5\" /> <path d=\"M15.033 13.44a.647.647 0 0 1 0 1.12l-4.065 2.352a.645.645 0 0 1-.968-.56v-4.704a.645.645 0 0 1 .967-.56z\" />", "file-text": "<path d=\"M6 22a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h8a2.4 2.4 0 0 1 1.704.706l3.588 3.588A2.4 2.4 0 0 1 20 8v12a2 2 0 0 1-2 2z\" /> <path d=\"M14 2v5a1 1 0 0 0 1 1h5\" /> <path d=\"M10 9H8\" /> <path d=\"M16 13H8\" /> <path d=\"M16 17H8\" />", "file-type-corner": "<path d=\"M12 22h6a2 2 0 0 0 2-2V8a2.4 2.4 0 0 0-.706-1.706l-3.588-3.588A2.4 2.4 0 0 0 14 2H6a2 2 0 0 0-2 2v6\" /> <path d=\"M14 2v5a1 1 0 0 0 1 1h5\" /> <path d=\"M3 16v-1.5a.5.5 0 0 1 .5-.5h7a.5.5 0 0 1 .5.5V16\" /> <path d=\"M6 22h2\" /> <path d=\"M7 14v8\" />", "file-volume": "<path d=\"M4 11.55V4a2 2 0 0 1 2-2h8a2.4 2.4 0 0 1 1.706.706l3.588 3.588A2.4 2.4 0 0 1 20 8v12a2 2 0 0 1-2 2h-1.95\" /> <path d=\"M14 2v5a1 1 0 0 0 1 1h5\" /> <path d=\"M12 15a5 5 0 0 1 0 6\" /> <path d=\"M8 14.502a.5.5 0 0 0-.826-.381l-1.893 1.631a1 1 0 0 1-.651.243H3.5a.5.5 0 0 0-.5.501v3.006a.5.5 0 0 0 .5.501h1.129a1 1 0 0 1 .652.243l1.893 1.633a.5.5 0 0 0 .826-.38z\" />", "files": "<path d=\"M15 2h-4a2 2 0 0 0-2 2v11a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2V8\" /> <path d=\"M16.706 2.706A2.4 2.4 0 0 0 15 2v5a1 1 0 0 0 1 1h5a2.4 2.4 0 0 0-.706-1.706z\" /> <path d=\"M5 7a2 2 0 0 0-2 2v11a2 2 0 0 0 2 2h8a2 2 0 0 0 1.732-1\" />", "git-branch": "<path d=\"M15 6a9 9 0 0 0-9 9V3\" /> <circle cx=\"18\" cy=\"6\" r=\"3\" /> <circle cx=\"6\" cy=\"18\" r=\"3\" />", "map-pin": "<path d=\"M20 10c0 4.993-5.539 10.193-7.399 11.799a1 1 0 0 1-1.202 0C9.539 20.193 4 14.993 4 10a8 8 0 0 1 16 0\" /> <circle cx=\"12\" cy=\"10\" r=\"3\" />", "notebook": "<path d=\"M2 6h4\" /> <path d=\"M2 10h4\" /> <path d=\"M2 14h4\" /> <path d=\"M2 18h4\" /> <rect width=\"16\" height=\"20\" x=\"4\" y=\"2\" rx=\"2\" /> <path d=\"M16 2v20\" />", "notebook-text": "<path d=\"M2 6h4\" /> <path d=\"M2 10h4\" /> <path d=\"M2 14h4\" /> <path d=\"M2 18h4\" /> <rect width=\"16\" height=\"20\" x=\"4\" y=\"2\" rx=\"2\" /> <path d=\"M9.5 8h5\" /> <path d=\"M9.5 12H16\" /> <path d=\"M9.5 16H14\" />", "pencil-line": "<path d=\"M13 21h8\" /> <path d=\"m15 5 4 4\" /> <path d=\"M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.497z\" />", "rotate-cw": "<path d=\"M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8\" /> <path d=\"M21 3v5h-5\" />"};
+  const REF = {"instance": {"available": "notebook", "active": "notebook-text", "worktree": "git-branch"}, "entry": {"recorded": "pencil-line"}, "project": {"live": "bookmark", "ended": "bookmark-check"}, "action": {"backlog": "circle-dashed", "scheduled": "circle", "slipped": "clock", "done": "circle-check", "cancelled": "circle-slash-2", "recurring": "rotate-cw"}, "content": {"text": "file-text", "pdf": "file-type-corner", "image": "file-image", "video": "file-play", "audio": "file-volume", "webpage": "file-chart-pie", "file": "file", "collection": "files"}, "date": {"day": "calendar", "range": "calendar-range", "time": "calendar-clock"}, "location": {"geo": "map-pin", "postal": "map-pin"}};
+  const lucide = (name, size) => `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${LUCIDE_REF[name]}</svg>`;
+
+  // ───────────── Every size ─────────────
+  const SIZES = [10, 12, 16, 24, 48];
+  function renderSizes() {
+    const head = `<thead><tr><th rowspan="2">Icon · state</th><th colspan="2" class="grp-pill">Pill size</th><th colspan="3">Full drawing</th><th class="luccol">Lucide</th></tr><tr>${SIZES.map((z) => `<th class="${z <= PILL ? 'pillcol' : ''}">${z}px</th>`).join('')}<th class="luccol">48px</th></tr></thead>`;
+    const rows = ALL.flatMap((e) => statesOf(ICONS[e]).map(([s, st], i) =>
+      `<tr${i === 0 ? ' class="first"' : ''}><td><b>${i === 0 ? ROLE_NAMES[e] : ''}</b><span>${st.label}</span></td>${SIZES.map((z) =>
+        `<td class="${z <= PILL ? 'pillcol' : ''}"><span class="e-${e}">${icon(e, s, { size: z })}</span></td>`).join('')}<td class="luccol" title="${REF[e][s]}">${lucide(REF[e][s], 48)}</td></tr>`)).join('');
+    $('#sizes-table').innerHTML = head + `<tbody>${rows}</tbody>`;
+  }
+
+  // ───────────── Design thoughts ─────────────
+  const fig = (e, s, size, cap, opts = {}) =>
+    `<figure><span class="e-${e}">${icon(e, s, { size, ...opts })}</span>${cap ? `<figcaption>${cap}</figcaption>` : ''}</figure>`;
+  const ink = (e, size) => `<span style="color:var(--ink)">${icon(e, ICONS[e].def, { size, cls: 'silhouette' })}</span>`;
+  const to = '<span class="to">→</span>';
+  const MOTION = [['action', ['backlog', 'scheduled', 'done']], ['instance', ['available', 'active']], ['project', ['live', 'ended']], ['content', ['text', 'collection']], ['date', ['day', 'range', 'time']], ['location', ['geo', 'postal']]];
+  const THOUGHTS = () => [
+    {
+      title: 'A notebook and what goes in it',
+      vis: fig('instance', 'available', 32, 'notebook') + fig('entry', 'recorded', 32, 'pencil') + fig('project', 'live', 32, 'ribbon')
+        + fig('action', 'scheduled', 32, 'checkbox') + fig('content', 'text', 32, 'page'),
+      text: 'Every entity is an object from one world, drawn with Lucide’s own shapes, so the icons explain each other and sit with the app’s other icons.',
+    },
+    {
+      title: 'Contour first',
+      vis: ORDER.map((e) => ink(e, 32)).join('') + `<div class="pair">${ORDER.map((e) => ink(e, 10)).join('')}</div>`,
+      text: 'Each contour reads as a flat silhouette, even at 10px. A state changes the inside, never the footprint.',
+    },
+    {
+      title: 'Hollow until settled',
+      vis: `<div class="pair">${fig('action', 'scheduled', 32)}${to}${fig('action', 'done', 32)}</div><div class="pair">${fig('project', 'live', 32)}${to}${fig('project', 'ended', 32)}</div>`,
+      text: 'The ring and the ribbon stay open outlines while work is open, and fill with the same check when it is finished.',
+    },
+    {
+      title: 'One rule per state',
+      vis: `<ul class="rules">${Object.values(OPS).map((o) => {
+        const [e, s] = o.ex[0];
+        return `<li><span class="e-${e}">${icon(e, s, { size: 22 })}</span><span><b>${o.name}</b>${o.meaning}</span></li>`;
+      }).join('')}</ul>`,
+      text: 'A rule means the same thing wherever it appears.',
+    },
+    {
+      title: 'Pages preview what opens',
+      vis: statesOf(ICONS.content).map(([s, st]) => fig('content', s, 28, st.label.toLowerCase())).join(''),
+      text: 'Artifacts and attachments share one family, keyed by how the reader renders them. A media mark opens the page around it, as Lucide’s file-chart-pie does.',
+    },
+    {
+      title: 'Dates and places keep the rules',
+      vis: `<div class="pair">${fig('date', 'day', 28, 'day')}${fig('date', 'range', 28, 'range')}${fig('date', 'time', 28, 'time')}</div><div class="pair">${fig('location', 'geo', 28, 'pinned')}${fig('location', 'postal', 28, 'postal')}</div>`,
+      text: 'A date is a calendar page whose mark previews the value; a clock time opens the page around its face, as a media mark opens a file page, and never reads as a slipped ring. A pin with no saved coordinates pends with the backlog ring’s dashes.',
+    },
+    {
+      title: 'Lucide’s grid and stroke',
+      vis: [['content', 'image'], ['content', 'webpage'], ['instance', 'worktree'], ['action', 'done']]
+        .map(([e, s]) => `<div class="pair">${fig(e, s, 28)}${fig(e, s, 10)}</div>`).join(''),
+      text: 'Lucide’s 24-unit grid and 2-unit stroke at every size. Only pills differ: settling ticks grow bolder and a worktree is the branch alone.',
+    },
+    {
+      title: 'Line, filled when settled',
+      vis: fig('content', 'webpage', 32, 'line') + fig('entry', 'recorded', 32, 'line') + fig('action', 'done', 32, 'settled') + fig('instance', 'active', 32, 'open'),
+      text: 'Shapes draw in line, as Lucide does. Fill marks a state and gives a media mark its weight. Today’s colors: blue projects, green actions, grey for the rest.',
+    },
+    {
+      title: 'Lifecycle in the icon, urgency on the pill',
+      vis: `<div class="tags">${pill('action', 'slipped', 'Resolve the contrast audit', 'overdue')}${pill('action', 'backlog', 'Approve the launch words', 'due')}${pill('action', 'done', 'Prepare the media kit', 'closed')}</div>`,
+      text: 'Due and overdue keep their ring around the pill, so they compose with any icon state. Icons never show errors.',
+    },
+    {
+      title: 'Only what changed moves',
+      vis: MOTION.map(([e, states], i) => `<span class="e-${e}" data-motion="${i}">${icon(e, states[0], { size: 40, cls: 'motion' })}</span>`).join(''),
+      text: 'A tick draws in, dashes close, a cover swings open, a second page steps out, a clock sweeps onto the calendar, a pin finds its point. Reduced motion turns it off.',
+    },
+  ];
+  function renderThoughts() {
+    $('#thought-grid').innerHTML = THOUGHTS().map((t) =>
+      `<article class="thought"><div class="vis">${t.vis}</div><h3>${t.title}</h3><p>${t.text}</p></article>`).join('');
+  }
+  let motionTick = 0;
+  function stepMotion() {
+    motionTick++;
+    MOTION.forEach(([, states], i) => morph(document.querySelector(`[data-motion="${i}"] svg`), states[motionTick % states.length]));
+  }
+
+  // ───────────── In the app ─────────────
+  const pill = (e, s, name, extra = '') => `<span class="pill p-${e} ${extra}">${icon(e, s, { size: 10 })}<span class="pt">${name}</span></span>`;
+  // Marks per action at MOCK_NOW (2026-10-18T10:00), derived with actionMarks().
+  const FLOW_PILLS = () => [
+    pill('project', 'live', 'Aurora launch'),
+    pill('project', 'live', 'Design foundations'),
+    pill('project', 'live', 'Listening sessions · 東京 / Montréal'),
+    pill('action', 'backlog', 'Write a thoughtful welcome note'),
+    pill('action', 'slipped', 'Revisit the missed rehearsal'),
+    pill('action', 'backlog', 'Approve the launch words', 'due'),
+    pill('action', 'slipped', 'Resolve the contrast audit', 'overdue'),
+    pill('action', 'done', 'Prepare the local media kit', 'closed'),
+    pill('action', 'cancelled', 'Drop the confetti experiment', 'closed cancelled'),
+    pill('action', 'recurring', 'Aurora morning check-in'),
+    pill('action', 'scheduled', 'Tokyo research handoff · 東京'),
+    pill('action', 'scheduled', 'Check a deliberately long action title that wraps gracefully across narrow panels, calendar cards, and a phone-sized reader', 'due long'),
+  ].join('');
+  const inlineRef = (e, s, name) => `<span class="inline e-${e}">${icon(e, s, { size: 10 })}${name}</span>`;
+  const smartRef = (e, s, name) => `<span class="smart">${icon(e, s, { size: 10 })}${name}</span>`;
+  function panel(theme) {
+    const searchRow = (e, s, name, ty, muted) => `<div class="row${muted ? ' muted' : ''}"><span class="e-${e}">${icon(e, s, { size: 12 })}</span><span class="nm">${name}</span><span class="ty">${ty}</span></div>`;
+    const asset = (s, name) => `<span class="asset"><span class="e-content">${icon('content', s, { size: 12 })}</span>${name}</span>`;
+    return `<div class="app app-${theme}">
+      <div class="app-cap">${theme}</div>
+      <div class="app-sec">
+        <span class="lbl">Timeline</span>
+        <div class="flow"><span class="time">09:00</span><div class="fb">
+          <span class="ttl">Every kind of open thread</span>
+          <div class="tags">${FLOW_PILLS()}</div>
+        </div></div>
+        <div class="flow"><span class="time">Oct 15</span><div class="fb">
+          <p>The media kit is ready in ${inlineRef('content', 'text', 'Aurora media kit · every preview in one place')}. ${inlineRef('action', 'done', 'Prepare the local media kit')} is now complete. Open ${inlineRef('content', 'pdf', 'launch-brief.pdf')}.</p>
+        </div></div>
+
+      </div>
+      <div class="app-sec">
+        <span class="lbl">Search</span>
+        <div class="rows">
+          ${searchRow('project', 'live', 'Aurora launch', 'Project')}
+          ${searchRow('project', 'ended', 'Discovery · complete', 'Project', true)}
+          ${searchRow('action', 'scheduled', 'Final launch review', 'Action')}
+          ${searchRow('content', 'text', 'Typography · words with room to breathe', 'Artifact')}
+          ${searchRow('entry', 'recorded', 'Discovery complete: five conversations and three clear decisions.', 'Entry')}
+          ${searchRow('date', 'day', 'Jump to Oct 19, 2026', 'Date')}
+        </div>
+      </div>
+      <div class="app-sec">
+        <span class="lbl">Smart elements · Typography · words with room to breathe</span>
+        <p>Dates have their own references: ${smartRef('date', 'day', 'Oct 19, 2026')}, ${smartRef('date', 'time', 'Oct 19, 2026, 2:00 PM')}, and ${smartRef('date', 'time', 'Oct 19, 2026, 5:00 PM')}.</p>
+        <p>Locations keep coordinates and postal addresses together: ${smartRef('location', 'geo', '10 Downing Street, London')} and ${smartRef('location', 'geo', '<b>the meeting place</b>')}. A coordinate-only location is ${smartRef('location', 'geo', '35.6812, 139.7671')}; a postal-only location is ${smartRef('location', 'postal', '東京, 千代田区')}.</p>
+      </div>
+      <div class="app-sec">
+        <span class="lbl">Titles</span>
+        <div class="titles">
+          <div class="title"><span class="e-project">${icon('project', 'live', { size: 18 })}</span><span class="nm">Aurora launch</span></div>
+          <div class="title"><span class="e-action">${icon('action', 'done', { size: 18 })}</span><span class="nm">Prepare the local media kit</span></div>
+          <div class="title"><span class="e-content">${icon('content', 'text', { size: 18 })}</span><span class="nm">Aurora media kit</span></div>
+        </div>
+      </div>
+      <div class="app-sec">
+        <span class="lbl">Attachments · Aurora media kit</span>
+        <div class="assets">
+          ${asset('image', 'aurora.svg')}${asset('pdf', 'launch-brief.pdf')}${asset('audio', 'chime.wav')}${asset('video', 'orbit.mp4')}
+          ${asset('text', 'notes.md')}${asset('text', 'readme.txt')}${asset('file', 'archive.zip')}${asset('webpage', 'index.html')}
+        </div>
+      </div>
+      <div class="app-sec">
+        <span class="lbl">Instances</span>
+        <div class="rows">
+          <div class="inst cur"><span class="e-instance">${icon('instance', 'active', { size: 16 })}</span><b>Aurora Studio</b><span class="hint">this tab</span></div>
+          <div class="inst"><span class="e-instance">${icon('instance', 'available', { size: 16 })}</span><b>A fresh start</b></div>
+          <div class="inst"><span class="e-instance">${icon('instance', 'available', { size: 16 })}</span><b>Recovery workshop</b></div>
+        </div>
+      </div>
+    </div>`;
+  }
+  function renderPanels() { $('#panels').innerHTML = panel('light') + panel('dark'); }
+
+  // ───────────── Wiring ─────────────
+  function renderAll() {
+    renderFamily(); renderThoughts(); renderSizes(); renderPanels();
+  }
+
+  renderAll();
+  const reduce = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  if (reduce) stopCycle(); else { startCycle(); setInterval(stepMotion, 1400); }
+})();
+</script>

@@ -4,15 +4,23 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { buildSync } from 'esbuild';
+import {DaemonClient} from '../src/daemon/client.js';
+import {daemonPaths} from '../src/daemon/paths.js';
 
 // Drives the actual committed bundle as an MCP server over stdio, the way a real
-// client would, so the create_instance / select_instance tool wiring (and the
-// tutorial-instruction append) is exercised end to end rather than only init().
+// client would, so the createInstance / selectInstance mutations (and the
+// tutorial project) are exercised end to end rather than only init().
 const BUNDLE = join(__dirname, '..', 'dist', 'main.js');
 
 interface ToolReply {
   isError: boolean;
   text: string;
+}
+
+interface GraphQLReply extends ToolReply {
+  data: any;
+  errors?: Array<{message: string}>;
+  extensions: any;
 }
 
 // Minimal newline-delimited JSON-RPC client over the server's stdio.
@@ -24,8 +32,8 @@ class McpClient {
   private diagnostics = '';
   private exited = false;
 
-  constructor(cwd: string) {
-    this.proc = spawn('node', [BUNDLE, 'mcp', '--legacy'], { stdio: ['pipe', 'pipe', 'pipe'], cwd });
+  constructor(cwd: string, env?: NodeJS.ProcessEnv) {
+    this.proc = spawn('node', [BUNDLE, 'mcp'], { stdio: ['pipe', 'pipe', 'pipe'], cwd, env });
     this.proc.stderr!.on('data', data => { this.diagnostics = (this.diagnostics + data.toString()).slice(-8000); });
     this.proc.on('exit', (code, signal) => {
       this.exited = true;
@@ -71,9 +79,17 @@ class McpClient {
     return { isError: !!r.result?.isError, text };
   }
 
-  async tools(): Promise<any[]> {
-    const reply = await this.rpc('tools/list', {});
-    return reply.result.tools;
+  private async graphql(name: 'query' | 'mutate', document: string, variables?: Record<string, unknown>): Promise<GraphQLReply> {
+    const reply = await this.call(name, { document, ...(variables ? { variables } : {}) });
+    return { ...reply, ...JSON.parse(reply.text) };
+  }
+
+  query(document: string, variables?: Record<string, unknown>): Promise<GraphQLReply> {
+    return this.graphql('query', document, variables);
+  }
+
+  mutate(document: string, variables?: Record<string, unknown>): Promise<GraphQLReply> {
+    return this.graphql('mutate', document, variables);
   }
 
   close(): void {
@@ -81,7 +97,60 @@ class McpClient {
   }
 }
 
-describe.skipIf(!existsSync(BUNDLE))('MCP server (create_instance / select_instance)', () => {
+const CREATE_INSTANCE = 'mutation($input: CreateInstanceInput!) { createInstance(input: $input) { error tutorialProjectId instance { name description path active } } }';
+const SELECT_INSTANCE = 'mutation($path: String!) { selectInstance(path: $path) { error instance { path } } }';
+const CAPTURE = 'mutation($input: CaptureInput!) { capture(input: $input) { error entry { id } createdProjects { id } createdActions { id } } }';
+const UPDATE_ENTRY = 'mutation($id: ID!, $input: UpdateEntryInput!) { updateEntry(id: $id, input: $input) { error createdProjects { id } createdActions { id } } }';
+const UPDATE_ACTION = 'mutation($id: ID!, $input: UpdateActionInput!) { updateAction(id: $id, input: $input) { error action { id name description } } }';
+const UPDATE_PROJECT = 'mutation($id: ID!, $input: UpdateProjectInput!) { updateProject(id: $id, input: $input) { error project { id description } } }';
+const CREATE_ARTIFACT = 'mutation($input: CreateArtifactInput!) { createArtifact(input: $input) { error artifact { id handle content { ... on Attachment { filename handle } } attachments { filename handle } } } }';
+const UPDATE_ARTIFACT = 'mutation($id: ID!, $input: UpdateArtifactInput!) { updateArtifact(id: $id, input: $input) { error artifact { id handle } } }';
+
+describe.skipIf(!existsSync(BUNDLE))('MCP passive worktree discovery', () => {
+  it('uses owner-observed families for unregistered candidates without activating them', async () => {
+    const root = realpathSync(mkdtempSync('/tmp/aside-mcp-passive-worktrees-'));
+    const primary = join(root, 'primary'), linked = join(root, 'linked'), independent = join(root, 'independent');
+    const home = mkdtempSync('/tmp/aside-mcp-passive-daemon-');
+    const env = {...process.env, ASIDE_DAEMON_HOME: home, ASIDE_CAL_BIN: '/nonexistent/aside-cal'};
+    mkdirSync(primary);
+    writeFileSync(join(primary, 'aside.md'), '---\nid: shared-worktree\nname: Worktree fixture\n---\n');
+    const git = (...args: string[]) => execFileSync('git', ['-C', primary, '-c', 'core.hooksPath=/dev/null', ...args], {stdio: 'pipe'});
+    let client: McpClient | undefined;
+    try {
+      git('init', '-b', 'main'); git('add', '.');
+      git('-c', 'user.name=Test', '-c', 'user.email=test@example.com', 'commit', '--no-gpg-sign', '-m', 'fixture');
+      git('worktree', 'add', '--detach', linked);
+      client = new McpClient(root, env);
+      await client.handshake();
+      const listing = await client.query('{ activeInstance { path } instances { path } }');
+      expect(listing.isError).toBe(false);
+      expect(listing.data.activeInstance).toBeNull();
+      expect(listing.data.instances.map((instance: {path: string}) => instance.path).sort()).toEqual([primary, linked].sort());
+      expect(listing.text).not.toContain('Duplicate instance ID');
+      const owner = new DaemonClient({paths: daemonPaths({ASIDE_DAEMON_HOME: home})});
+      let status: {loaded: string[]; known: string[]};
+      try {status = await owner.request('status', undefined, {read: true});} finally {owner.close();}
+      expect(status.loaded).toEqual([]);
+      expect(status.known).toEqual([]);
+
+      // A genuinely independent copy must still receive the conflict warning.
+      client.close(); client = undefined;
+      mkdirSync(independent);
+      writeFileSync(join(independent, 'aside.md'), '---\nid: shared-worktree\nname: Independent fixture\n---\n');
+      client = new McpClient(root, env); await client.handshake();
+      const conflict = await client.query('{ instances { path } }');
+      expect(conflict.isError).toBe(false);
+      expect(conflict.extensions.diagnostics).toContainEqual(expect.objectContaining({code: 'instance_id_conflict',
+        message: expect.stringContaining('Duplicate instance ID detected: shared-worktree')}));
+    } finally {
+      client?.close();
+      try {execFileSync('node', [BUNDLE, 'daemon', 'stop', '--force'], {env, stdio: 'ignore', timeout: 20_000});} catch {}
+      rmSync(root, {recursive: true, force: true}); rmSync(home, {recursive: true, force: true});
+    }
+  });
+});
+
+describe.skipIf(!existsSync(BUNDLE))('MCP server (createInstance / selectInstance)', () => {
   let root: string;
   let client: McpClient;
 
@@ -97,74 +166,74 @@ describe.skipIf(!existsSync(BUNDLE))('MCP server (create_instance / select_insta
     if (root && existsSync(root)) rmSync(root, { recursive: true });
   });
 
-  it('rejects unsupported arguments in no-argument and creation tools', async () => {
-    const empty = await client.call('list_instances', { extra: true });
+  it('rejects unsupported tool arguments and creation fields', async () => {
+    const empty = await client.call('query', { document: '{ instances { path } }', extra: true });
     expect(empty.isError).toBe(true);
     expect(empty.text).toMatch(/extra/);
     const dir = join(root, 'rejected-unknown');
-    const create = await client.call('create_instance', { path: dir, name: 'Work', description: 'Work', created: '2026-10-04' });
+    const create = await client.mutate('mutation($path: String!) { createInstance(input: {path: $path, name: "Work", description: "Work", created: "2026-10-04"}) { error } }', { path: dir });
     expect(create.isError).toBe(true);
-    expect(create.text).toMatch(/created/);
+    expect(create.errors![0].message).toMatch(/created/);
     expect(existsSync(dir)).toBe(false);
   });
 
-  it('create_instance creates an empty instance, activates it, and omits the file list', async () => {
+  it('createInstance creates an empty instance, activates it, and adds no tutorial records', async () => {
     const dir = join(root, 'empty');
-    const { isError, text } = await client.call('create_instance', { path: dir, name: 'Work Log', description: 'My notes' });
-    expect(isError).toBe(false);
-    expect(text).toContain('Created and activated');
-    expect(text).toContain('Work Log');
-    expect(text).toContain('My notes');
-    expect(text).not.toContain('Created:');
-    expect(text).not.toContain('Tutorial content');
+    const created = await client.mutate(CREATE_INSTANCE, { input: { path: dir, name: 'Work Log', description: 'My notes' } });
+    expect(created.isError).toBe(false);
+    expect(created.data.createInstance).toEqual({ error: null, tutorialProjectId: null,
+      instance: { name: 'Work Log', description: 'My notes', path: realpathSync(dir), active: true } });
+    expect(created.extensions.mutations[0].changes.map((change: {path: string}) => change.path)).toEqual([join(dir, 'aside.md')]);
+    expect((await client.query('{ activeInstance { name } projects { totalCount } }')).data).toEqual({ activeInstance: { name: 'Work Log' }, projects: { totalCount: 0 } });
     expect(existsSync(join(dir, 'aside.md'))).toBe(true);
     expect(existsSync(join(dir, 'notes'))).toBe(false);
   });
 
-  it('create_instance --tutorial appends the walkthrough instruction with the project id', async () => {
+  it('createInstance with tutorial returns the walkthrough project id', async () => {
     const dir = join(root, 'tut');
-    const { isError, text } = await client.call('create_instance', { path: dir, name: 'Onboarding', description: 'A start', tutorial: true });
-    expect(isError).toBe(false);
-    expect(text).toContain('Tutorial content created');
-    expect(text).toMatch(/getting-started project \(\d{4}-\d{2}-\d{2}-meet-aside\)/);
-    expect(text).toContain('walk the user through it');
+    const created = await client.mutate(CREATE_INSTANCE, { input: { path: dir, name: 'Onboarding', description: 'A start', tutorial: true } });
+    expect(created.isError).toBe(false);
+    const id = created.data.createInstance.tutorialProjectId;
+    expect(id).toMatch(/^\d{4}-\d{2}-\d{2}-meet-aside$/);
+    expect((await client.query('query($id: ID!) { project(id: $id) { id } }', { id })).data.project).toEqual({ id });
     expect(existsSync(join(dir, 'projects'))).toBe(true);
   });
 
-  it('create_instance rejects a path that is already an instance', async () => {
+  it('createInstance rejects a path that is already an instance', async () => {
     const dir = join(root, 'dup');
-    await client.call('create_instance', { path: dir, name: 'A', description: 'B' });
-    const { isError, text } = await client.call('create_instance', { path: dir, name: 'A', description: 'B' });
+    await client.mutate(CREATE_INSTANCE, { input: { path: dir, name: 'A', description: 'B' } });
+    const { isError, errors } = await client.mutate(CREATE_INSTANCE, { input: { path: dir, name: 'A', description: 'B' } });
     expect(isError).toBe(true);
-    expect(text).toContain('Already an aside instance');
-    expect(text).toContain('Use select_instance');
+    expect(errors![0].message).toContain('Already an aside instance');
+    expect(errors![0].message).toContain('Use selectInstance');
   });
 
-  it('create_instance rejects a non-empty directory with an actionable message', async () => {
+  it('createInstance rejects a non-empty directory with an actionable message', async () => {
     const dir = join(root, 'nonempty');
     mkdirSync(dir, { recursive: true });
     writeFileSync(join(dir, 'file.txt'), 'x');
-    const { isError, text } = await client.call('create_instance', { path: dir, name: 'A', description: 'B' });
+    const { isError, errors } = await client.mutate(CREATE_INSTANCE, { input: { path: dir, name: 'A', description: 'B' } });
     expect(isError).toBe(true);
-    expect(text).toContain('already exists and is not empty');
-    expect(text).toContain('Choose a different path');
+    expect(errors![0].message).toContain('already exists and is not empty');
+    expect(errors![0].message).toContain('Choose a different path');
   });
 
-  it('create_instance requires name and description', async () => {
-    const { isError, text } = await client.call('create_instance', { path: join(root, 'missing') });
+  it('createInstance requires name and description', async () => {
+    const { isError, text } = await client.mutate(CREATE_INSTANCE, { input: { path: join(root, 'missing') } });
     expect(isError).toBe(true);
     expect(text).toMatch(/name/);
     expect(text).toMatch(/description/);
+    expect(existsSync(join(root, 'missing'))).toBe(false);
   });
 
-  it('select_instance rejects a non-instance and points at create_instance', async () => {
+  it('selectInstance rejects a non-instance and points at createInstance', async () => {
     const dir = join(root, 'plain');
     mkdirSync(dir, { recursive: true });
     writeFileSync(join(dir, 'readme.md'), 'hi');
-    const { isError, text } = await client.call('select_instance', { path: dir });
+    const { isError, errors } = await client.mutate(SELECT_INSTANCE, { path: dir });
     expect(isError).toBe(true);
-    expect(text).toContain('Not an aside instance');
-    expect(text).toContain('Use create_instance');
+    expect(errors![0].message).toContain('Not an aside instance');
+    expect(errors![0].message).toContain('Use createInstance');
   });
 });
 
@@ -177,9 +246,9 @@ describe.skipIf(!existsSync(BUNDLE))('MCP server (artifacts)', () => {
     mkdirSync(root, { recursive: true });
     client = new McpClient(root);
     await client.handshake();
-    const created = await client.call('create_instance', {
+    const created = await client.mutate(CREATE_INSTANCE, { input: {
       path: join(root, 'inst'), name: 'Artifacts', description: 'Durable content',
-    });
+    } });
     expect(created.isError).toBe(false);
   });
 
@@ -190,18 +259,21 @@ describe.skipIf(!existsSync(BUNDLE))('MCP server (artifacts)', () => {
     if (root && existsSync(root)) rmSync(root, { recursive: true, maxRetries: 5, retryDelay: 50 });
   });
 
-  it('registers artifact tools and artifact navigation without changing capture', async () => {
-    const tools = await client.tools();
-    expect(tools.map(tool => tool.name)).toEqual(expect.arrayContaining(['create_artifact', 'update_artifact', 'query_artifacts']));
-    expect(tools.find(tool => tool.name === 'capture').inputSchema.properties.artifacts).toBeUndefined();
-    expect(tools.find(tool => tool.name === 'show').inputSchema.properties.artifact.type).toBe('string');
-    expect(tools.find(tool => tool.name === 'show').inputSchema.properties.filename.type).toBe('string');
-    for (const name of ['create_artifact', 'update_artifact']) {
-      const schema = tools.find(tool => tool.name === name).inputSchema.properties;
-      expect(schema.proxy).toBeUndefined();
-      expect(schema.attachments).toBeUndefined();
+  it('exposes artifact operations and artifact navigation without changing capture', async () => {
+    const field = (name: string) => `${name}: __type(name: "${name}") { fields { name } inputFields { name type { name kind ofType { name } } } }`;
+    const { data } = await client.query(`{ ${['Mutation', 'Query', 'CaptureInput', 'ShowInput', 'CreateArtifactInput', 'UpdateArtifactInput'].map(field).join(' ')} }`);
+    const names = (type: {fields: Array<{name: string}>}) => type.fields.map(item => item.name);
+    const input = (type: {inputFields: Array<{name: string; type: any}>}, name: string) => type.inputFields.find(item => item.name === name)?.type;
+    expect(names(data.Mutation)).toEqual(expect.arrayContaining(['createArtifact', 'updateArtifact']));
+    expect(names(data.Query)).toEqual(expect.arrayContaining(['artifact', 'artifacts']));
+    expect(input(data.CaptureInput, 'artifacts')).toBeUndefined();
+    expect(input(data.ShowInput, 'artifact').name).toBe('ID');
+    expect(input(data.ShowInput, 'filename').name).toBe('String');
+    for (const type of [data.CreateArtifactInput, data.UpdateArtifactInput]) {
+      expect(input(type, 'proxy')).toBeUndefined();
+      expect(input(type, 'files')).toBeUndefined();
     }
-    expect(tools.find(tool => tool.name === 'update_artifact').inputSchema.properties.remove_files.type).toBe('array');
+    expect(input(data.UpdateArtifactInput, 'removeAttachments').kind).toBe('LIST');
   });
 
   it('creates, captures a handle inline, queries associations, and updates without changing identity', async () => {
@@ -209,62 +281,62 @@ describe.skipIf(!existsSync(BUNDLE))('MCP server (artifacts)', () => {
     const image = join(root, 'desktop.png');
     writeFileSync(source, '# Design review\n\nCurrent proposal.\n');
     writeFileSync(image, Buffer.from([0, 255, 10]));
-    const created = await client.call('create_artifact', {
-      name: 'Design review', description: 'Current design', body_file: source,
-      files: [{ source: image }],
-    });
+    const created = await client.mutate(CREATE_ARTIFACT, { input: {
+      name: 'Design review', description: 'Current design', bodyFile: source,
+      attachments: [{ source: image }],
+    } });
     expect(created.isError).toBe(false);
-    const id = created.text.match(/^artifact: #artifact\/(.+)$/m)![1];
-    expect(created.text).toContain(`#artifact/${id}/desktop.png`);
-    expect(created.text).not.toContain('file:');
-    const captured = await client.call('capture', {
+    const { id, handle, attachments } = created.data.createArtifact.artifact;
+    expect(handle).toBe(`#artifact/${id}`);
+    expect(attachments).toEqual([{ filename: 'desktop.png', handle: `#artifact/${id}/desktop.png` }]);
+    const captured = await client.mutate(CAPTURE, { input: {
       content: `Reviewed #artifact/${id}.`, description: 'Plan review',
-      projects: [{ name: 'Design', description: 'Design work' }],
-      actions: [{ name: 'Review plan', description: 'Review the design' }],
-    });
+      projects: [{ create: { name: 'Design', description: 'Design work' } }],
+      actions: [{ create: { name: 'Review plan', description: 'Review the design' } }],
+    } });
     expect(captured.isError).toBe(false);
-    const project = captured.text.match(/projects_created: \[([^\]]+)\]/)![1];
-    const action = captured.text.match(/actions_created: \[([^\]]+)\]/)![1];
-    const query = await client.call('query_artifacts', { projects: [project], actions: [action], detail: 'full' });
+    const project = captured.data.capture.createdProjects[0].id;
+    const action = captured.data.capture.createdActions[0].id;
+    const entry = captured.data.capture.entry.id;
+    const query = await client.query(`query($project: ID!, $action: ID!) {
+      artifacts(where: {projectIds: [$project], actionIds: [$action]}) { nodes { handle content { ... on MarkdownContent { text } } backlinks { nodes { ... on Entry { id } } } } }
+    }`, { project, action });
     expect(query.isError).toBe(false);
-    expect(query.text).toContain(`handle: #artifact/${id}`);
-    expect(query.text).toContain('# Design review');
-    expect(query.text).toContain('backlinks:');
-    const update = await client.call('update_artifact', {
-      id, name: 'Revised design', description: 'Updated summary',
+    expect(query.data.artifacts.nodes).toEqual([{ handle, content: { text: expect.stringContaining('# Design review') }, backlinks: { nodes: [{ id: entry }] } }]);
+    const update = await client.mutate(UPDATE_ARTIFACT, { id, input: {
+      name: 'Revised design', description: 'Updated summary',
       body: `![Desktop](#artifact/${id}/desktop.png)`,
-    });
+    } });
     expect(update.isError).toBe(false);
-    expect(update.text).toContain(`updated: #artifact/${id}`);
-    const latest = await client.call('query_artifacts', { ids: [id], detail: 'full' });
-    expect(latest.text).toContain('name: Revised design');
-    expect(latest.text).toContain(`![Desktop](#artifact/${id}/desktop.png)`);
-    const validation = await client.call('validate', {});
+    expect(update.data.updateArtifact.artifact).toEqual({ id, handle });
+    const latest = await client.query('query($id: ID!) { artifact(id: $id) { name content { ... on MarkdownContent { text } } } }', { id });
+    expect(latest.data.artifact).toEqual({ name: 'Revised design', content: { text: `![Desktop](#artifact/${id}/desktop.png)` } });
+    const validation = await client.query('{ activeInstance { validation { passed dataChecksRun } } }');
     expect(validation.isError).toBe(false);
-    expect(validation.text).not.toContain('FAIL');
+    expect(validation.data.activeInstance.validation).toEqual({ passed: true, dataChecksRun: true });
   });
 
   it('selects single binary attachment content and rejects invalid updates as MCP errors', async () => {
     const source = join(root, 'brief.bin');
     writeFileSync(source, Buffer.from([255, 0, 7]));
-    const created = await client.call('create_artifact', {
-      name: 'Binary brief', description: 'Review brief', files: [{ source }],
-    });
+    const created = await client.mutate(CREATE_ARTIFACT, { input: {
+      name: 'Binary brief', description: 'Review brief', attachments: [{ source }],
+    } });
     expect(created.isError).toBe(false);
-    const id = created.text.match(/^artifact: #artifact\/(.+)$/m)![1];
-    expect(created.text).toContain('attachments: [brief.bin]');
-    expect(created.text).toContain(`target: #artifact/${id}/brief.bin`);
-    const bad = await client.call('update_artifact', { id, remove_files: ['missing.bin'] });
+    const { id, content, attachments } = created.data.createArtifact.artifact;
+    expect(attachments).toEqual([{ filename: 'brief.bin', handle: `#artifact/${id}/brief.bin` }]);
+    expect(content).toEqual({ filename: 'brief.bin', handle: `#artifact/${id}/brief.bin` });
+    const bad = await client.mutate(UPDATE_ARTIFACT, { id, input: { removeAttachments: ['missing.bin'] } });
     expect(bad.isError).toBe(true);
-    expect(bad.text).toContain('does not exist');
-    const restored = await client.call('update_artifact', { id, body: '# Brief' });
+    expect(bad.errors![0].message).toContain('does not exist');
+    const restored = await client.mutate(UPDATE_ARTIFACT, { id, input: { body: '# Brief' } });
     expect(restored.isError).toBe(false);
     expect(existsSync(join(root, 'inst', 'artifacts', id.slice(0, 4), id, 'brief.bin'))).toBe(true);
-    const invalid = await client.call('create_artifact', {
-      name: 'Rejected imports', description: 'Invalid source', files: [{ source: 'relative.bin' }],
-    });
+    const invalid = await client.mutate(CREATE_ARTIFACT, { input: {
+      name: 'Rejected imports', description: 'Invalid source', attachments: [{ source: 'relative.bin' }],
+    } });
     expect(invalid.isError).toBe(true);
-    expect(invalid.text).toContain('absolute path');
+    expect(invalid.errors![0].message).toContain('absolute path');
   });
 });
 
@@ -277,9 +349,9 @@ describe.skipIf(!existsSync(BUNDLE))('MCP server (Markdown file inputs)', () => 
     mkdirSync(root, { recursive: true });
     client = new McpClient(root);
     await client.handshake();
-    const created = await client.call('create_instance', {
+    const created = await client.mutate(CREATE_INSTANCE, { input: {
       path: join(root, 'inst'), name: 'File imports', description: 'Markdown sources',
-    });
+    } });
     expect(created.isError).toBe(false);
   });
 
@@ -291,67 +363,64 @@ describe.skipIf(!existsSync(BUNDLE))('MCP server (Markdown file inputs)', () => 
   it('accepts file-only capture and nested sources, then updates all text through file arguments', async () => {
     const source = join(root, 'draft with spaces.md');
     const replacement = join(root, 'replacement.md');
-    writeFileSync(source, '# Imported draft\n\nCafé ☕ context.\n');
-    writeFileSync(replacement, '# Replacement draft\n\nUpdated from disk.\n');
-    const captured = await client.call('capture', {
-      content_file: source,
+    const imported = '# Imported draft\n\nCafé ☕ context.\n', replaced = '# Replacement draft\n\nUpdated from disk.\n';
+    writeFileSync(source, imported);
+    writeFileSync(replacement, replaced);
+    const captured = await client.mutate(CAPTURE, { input: {
+      contentFile: source,
       description: 'Imported entry',
-      projects: [{ name: 'Imported Project', description: 'Imported project', body_file: source }],
-      actions: [{ name: 'Imported Action', description: 'Imported action', body_file: source }],
-    });
+      projects: [{ create: { name: 'Imported Project', description: 'Imported project', bodyFile: source } }],
+      actions: [{ create: { name: 'Imported Action', description: 'Imported action', bodyFile: source } }],
+    } });
     expect(captured.isError).toBe(false);
-    const entryId = captured.text.match(/entry: (\S+)/)![1];
-    const projectId = captured.text.match(/projects_created: \[(.+)\]/)![1];
-    const actionId = captured.text.match(/actions_created: \[(.+)\]/)![1];
-    for (const [name, id] of [['query_entries', entryId], ['query_projects', projectId], ['query_actions', actionId]]) {
-      const query = await client.call(name, { ids: [id], detail: 'full' });
+    const entryId = captured.data.capture.entry.id;
+    const projectId = captured.data.capture.createdProjects[0].id;
+    const actionId = captured.data.capture.createdActions[0].id;
+    const text = async (entries: string[], projects: string[], actions: string[]) => {
+      const query = await client.query(`query($entries: [ID!], $projects: [ID!], $actions: [ID!]) {
+        entries(where: {ids: $entries}) { nodes { content } }
+        projects(where: {ids: $projects}) { nodes { body } }
+        actions(where: {ids: $actions}) { nodes { body } }
+      }`, { entries, projects, actions });
       expect(query.isError).toBe(false);
-      expect(query.text).toContain('  # Imported draft\n  \n  Café ☕ context.');
-    }
+      return [...query.data.entries.nodes.map((node: {content: string}) => node.content),
+        ...[...query.data.projects.nodes, ...query.data.actions.nodes].map((node: {body: string}) => node.body)];
+    };
+    expect(await text([entryId], [projectId], [actionId])).toEqual(Array(3).fill(imported.trimEnd()));
 
-    const entryUpdate = await client.call('update_entry', {
-      id: entryId,
-      content_file: replacement,
-      projects: [projectId, { name: 'Entry Update Project', description: 'Created in update', body_file: replacement }],
-      actions: [actionId, { name: 'Entry Update Action', description: 'Created in update', body_file: replacement }],
-    });
+    const entryUpdate = await client.mutate(UPDATE_ENTRY, { id: entryId, input: {
+      contentFile: replacement,
+      projects: { set: [{ existingId: projectId }, { create: { name: 'Entry Update Project', description: 'Created in update', bodyFile: replacement } }] },
+      actions: { set: [{ existingId: actionId }, { create: { name: 'Entry Update Action', description: 'Created in update', bodyFile: replacement } }] },
+    } });
     expect(entryUpdate.isError).toBe(false);
-    const newProjectId = entryUpdate.text.match(/projects_created: \[(.+)\]/)![1];
-    const newActionId = entryUpdate.text.match(/actions_created: \[(.+)\]/)![1];
-    expect((await client.call('update_action', { id: actionId, body_file: replacement })).isError).toBe(false);
-    expect((await client.call('update_project', { id: projectId, body_file: replacement })).isError).toBe(false);
-    for (const [name, ids] of [
-      ['query_entries', [entryId]],
-      ['query_projects', [projectId, newProjectId]],
-      ['query_actions', [actionId, newActionId]],
-    ] as const) {
-      const query = await client.call(name, { ids, detail: 'full' });
-      expect(query.isError).toBe(false);
-      expect(query.text).toContain('  # Replacement draft\n  \n  Updated from disk.');
-      expect(query.text).not.toContain('Café ☕ context.');
-    }
+    const newProjectId = entryUpdate.data.updateEntry.createdProjects[0].id;
+    const newActionId = entryUpdate.data.updateEntry.createdActions[0].id;
+    expect((await client.mutate(UPDATE_ACTION, { id: actionId, input: { bodyFile: replacement } })).isError).toBe(false);
+    expect((await client.mutate(UPDATE_PROJECT, { id: projectId, input: { bodyFile: replacement } })).isError).toBe(false);
+    expect(await text([entryId], [projectId, newProjectId], [actionId, newActionId])).toEqual(Array(5).fill(replaced.trimEnd()));
   });
 
   it('reports omitted capture content and simultaneous source fields instead of creating entities', async () => {
     const source = join(root, 'empty.md');
     writeFileSync(source, '');
-    const missing = await client.call('capture', { description: 'Missing source' });
+    const missing = await client.mutate(CAPTURE, { input: { description: 'Missing source' } });
     expect(missing.isError).toBe(true);
-    expect(missing.text).toContain('Provide either content or content_file');
-    const conflict = await client.call('capture', {
-      content: '', content_file: source, description: 'Conflicting sources',
-      actions: [{ name: 'Conflict Orphan', description: 'Must not be created' }],
-    });
+    expect(missing.errors![0].message).toContain('Provide content or contentFile');
+    const conflict = await client.mutate(CAPTURE, { input: {
+      content: '', contentFile: source, description: 'Conflicting sources',
+      actions: [{ create: { name: 'Conflict Orphan', description: 'Must not be created' } }],
+    } });
     expect(conflict.isError).toBe(true);
-    expect(conflict.text).toContain('Provide either content or content_file, not both');
-    const nestedConflict = await client.call('capture', {
-      content_file: source, description: 'Nested conflicting sources',
-      actions: [{ name: 'Nested Conflict Orphan', description: 'Must not be created', body: '', body_file: source }],
-    });
+    expect(conflict.errors![0].message).toContain('Provide either content or contentFile, not both');
+    const nestedConflict = await client.mutate(CAPTURE, { input: {
+      contentFile: source, description: 'Nested conflicting sources',
+      actions: [{ create: { name: 'Nested Conflict Orphan', description: 'Must not be created', body: '', bodyFile: source } }],
+    } });
     expect(nestedConflict.isError).toBe(true);
-    expect(nestedConflict.text).toContain('Provide either body or body_file, not both');
-    const actions = await client.call('query_actions', { search: 'Conflict Orphan', detail: 'full' });
-    expect(actions.text).toMatch(/^0 of 0/);
+    expect(nestedConflict.errors![0].message).toContain('Provide either body or bodyFile, not both');
+    const actions = await client.query('{ actions(where: {regex: "Conflict Orphan"}) { totalCount } }');
+    expect(actions.data.actions.totalCount).toBe(0);
   });
 });
 
@@ -364,7 +433,7 @@ describe.skipIf(!existsSync(BUNDLE))('MCP server (agent output contract)', () =>
     mkdirSync(root, { recursive: true });
     client = new McpClient(root);
     await client.handshake();
-    await client.call('create_instance', { path: join(root, 'inst'), name: 'Output', description: 'Round trips' });
+    await client.mutate(CREATE_INSTANCE, { input: { path: join(root, 'inst'), name: 'Output', description: 'Round trips' } });
   });
 
   afterAll(() => {
@@ -373,63 +442,63 @@ describe.skipIf(!existsSync(BUNDLE))('MCP server (agent output contract)', () =>
   });
 
   it('round-trips returned IDs, summaries, relationships, and authored metadata-like text', async () => {
-    const capture = await client.call('capture', {
-      content: 'A note.\n\nid: authored-example\nfile: authored-path', description: 'Entry summary',
-      projects: [{ name: 'Parent output', description: 'Parent summary' }, { name: 'Child output', description: 'Child summary' }],
-      actions: [{ name: 'Output action', description: 'Action summary' }],
-    });
+    const authored = 'A note.\n\nid: authored-example\nfile: authored-path';
+    const capture = await client.mutate(CAPTURE, { input: {
+      content: authored, description: 'Entry summary',
+      projects: [{ create: { name: 'Parent output', description: 'Parent summary' } }, { create: { name: 'Child output', description: 'Child summary' } }],
+      actions: [{ create: { name: 'Output action', description: 'Action summary' } }],
+    } });
     expect(capture.isError).toBe(false);
-    const entryId = capture.text.match(/^entry: (.+)$/m)![1];
-    const projectIds = capture.text.match(/^projects_created: \[(.+)\]$/m)![1].split(', ');
-    const actionId = capture.text.match(/^actions_created: \[(.+)\]$/m)![1];
-    const entry = await client.call('query_entries', { ids: [entryId], detail: 'full' });
-    const returnedId = entry.text.match(/^id: (.+)$/m)![1];
-    expect(returnedId).toBe(entryId);
-    expect(entry.text).toContain('content: |\n  A note.\n  \n  id: authored-example\n  file: authored-path');
-    expect(entry.text.match(/^id: /gm)).toHaveLength(1);
-    expect((await client.call('update_entry', { id: returnedId, description: 'Revised entry summary' })).isError).toBe(false);
+    const entryId = capture.data.capture.entry.id;
+    const projectIds = capture.data.capture.createdProjects.map((project: {id: string}) => project.id);
+    const actionId = capture.data.capture.createdActions[0].id;
+    const entry = await client.query('query($id: ID!) { entry(id: $id) { id content description } }', { id: entryId });
+    expect(entry.data.entry).toEqual({ id: entryId, content: authored, description: 'Entry summary' });
+    const revised = await client.mutate(UPDATE_ENTRY.replace('error createdProjects { id } createdActions { id }', 'error entry { id description }'), { id: entry.data.entry.id, input: { description: 'Revised entry summary' } });
+    expect(revised.isError).toBe(false);
+    expect(revised.data.updateEntry.entry).toEqual({ id: entryId, description: 'Revised entry summary' });
     const relation = { project: projectIds[1], description: 'Delivery workstream under the parent' };
-    const update = await client.call('update_project', { id: projectIds[0], related_projects: [relation], description: 'Revised parent summary' });
-    expect(update.text).toContain('Revised parent summary');
-    expect(update.text).toContain(relation.description);
-    const project = await client.call('query_projects', { ids: [projectIds[0]], detail: 'full' });
-    expect(project.text).toContain('Revised parent summary');
-    expect(project.text).toContain(relation.project);
-    expect(project.text).toContain(relation.description);
-    const action = await client.call('update_action', { id: actionId, description: 'Revised action summary' });
-    expect(action.text).toContain('Revised action summary');
-    expect((await client.call('query_actions', { ids: [actionId], detail: 'full' })).text).toContain('Revised action summary');
+    const update = await client.mutate(UPDATE_PROJECT, { id: projectIds[0], input: { relatedProjects: { upsert: [relation] }, description: 'Revised parent summary' } });
+    expect(update.data.updateProject.project).toEqual({ id: projectIds[0], description: 'Revised parent summary' });
+    const project = await client.query(`query($id: ID!) {
+      project(id: $id) { description relatedProjects { nodes { project { id } outgoingDescription } } }
+    }`, { id: projectIds[0] });
+    expect(project.data.project).toEqual({ description: 'Revised parent summary',
+      relatedProjects: { nodes: [{ project: { id: relation.project }, outgoingDescription: relation.description }] } });
+    const action = await client.mutate(UPDATE_ACTION, { id: actionId, input: { description: 'Revised action summary' } });
+    expect(action.data.updateAction.action).toMatchObject({ id: actionId, description: 'Revised action summary' });
+    expect((await client.query('query($id: ID!) { action(id: $id) { description } }', { id: actionId })).data.action.description).toBe('Revised action summary');
   });
 
-  it('returns an explicit next offset and stops on both the final and exhausted pages', async () => {
-    const first = await client.call('query_projects', { limit: 1 });
-    expect(first.text).toMatch(/^1 of 2/);
-    expect(first.text).toMatch(/^next_offset: 1$/m);
-    const last = await client.call('query_projects', { limit: 1, offset: 1 });
-    expect(last.text).toMatch(/^1 of 2/);
-    expect(last.text).toMatch(/^next_offset: null$/m);
-    const exhausted = await client.call('query_projects', { limit: 1, offset: 2 });
-    expect(exhausted.text).toMatch(/^0 of 2/);
-    expect(exhausted.text).toMatch(/^next_offset: null$/m);
+  it('reports the page position and stops on both the final and exhausted pages', async () => {
+    const pages = await client.query(`{
+      first: projects(limit: 1) { count offset totalCount }
+      last: projects(limit: 1, offset: 1) { count offset totalCount }
+      exhausted: projects(limit: 1, offset: 2) { count offset totalCount nodes { id } }
+    }`);
+    expect(pages.data).toEqual({
+      first: { count: 1, offset: 0, totalCount: 2 },
+      last: { count: 1, offset: 1, totalCount: 2 },
+      exhausted: { count: 0, offset: 2, totalCount: 2, nodes: [] },
+    });
   });
 
   it('returns errors for malformed dates, reversed ranges, and noninteger pagination', async () => {
     for (const args of [
-      { created_from: 'today' }, { created_to: '2026-02-30' },
-      { created_from: '2026-05-02', created_to: '2026-05-01' },
-      { offset: 0.5 }, { offset: -1 }, { limit: 1.5 }, { limit: 0 }, { limit: 101 },
+      'where: {createdFrom: "today"}', 'where: {createdTo: "2026-02-30"}',
+      'where: {createdFrom: "2026-05-02", createdTo: "2026-05-01"}',
+      'offset: 0.5', 'offset: -1', 'limit: 1.5', 'limit: 0', 'limit: 101',
     ]) {
-      for (const tool of ['query_entries', 'query_actions', 'query_projects', 'query_artifacts']) {
-        expect((await client.call(tool, args)).isError, `${tool}: ${JSON.stringify(args)}`).toBe(true);
+      for (const field of ['entries', 'actions', 'projects', 'artifacts']) {
+        expect((await client.query(`{ ${field}(${args}) { totalCount } }`)).isError, `${field}: ${args}`).toBe(true);
       }
     }
   });
 });
 
-// The unsynced-action reminder is gated on the calendar helper being present, which
-// resolveCalBin only honors on darwin. Point ASIDE_CAL_BIN at a fake helper that
-// answers each request with a canned response and records it (JSON per line) for
-// assertions, so both the reminder paths and the forward-sync wiring are testable.
+// Forward sync is gated on the calendar helper being present, which resolveCalBin
+// only honors on darwin. Point ASIDE_CAL_BIN at a fake helper that answers each
+// request with a canned response and records it (JSON per line) for assertions.
 const CAL_OK = process.platform === 'darwin' && existsSync(BUNDLE);
 describe.skipIf(!CAL_OK)('MCP server (calendar wiring)', () => {
   let root: string;
@@ -442,6 +511,17 @@ describe.skipIf(!CAL_OK)('MCP server (calendar wiring)', () => {
   function calRequests(): Array<Record<string, any>> {
     if (!existsSync(rec)) return [];
     return readFileSync(rec, 'utf-8').split('\n').filter(Boolean).map((l) => JSON.parse(l));
+  }
+
+  const syncState = async (id: string): Promise<{id: string; status: string; reason: string | null} | undefined> =>
+    (await client.query('{ activeInstance { calendarSync { syncStates { id status reason } } } }')).data.activeInstance.calendarSync.syncStates.find((state: {id: string}) => state.id === id);
+  async function waitForSyncState(id: string, status: string): Promise<string | undefined> {
+    let state = await syncState(id);
+    for (let i = 0; i < 50 && state?.status !== status; i++) {
+      await new Promise(resolve => setTimeout(resolve, 50));
+      state = await syncState(id);
+    }
+    return state?.status;
   }
 
   beforeAll(async () => {
@@ -489,7 +569,7 @@ rl.on('line', (line) => {
     process.env.ASIDE_DAEMON_HOME = mkdtempSync('/tmp/aside-test-cal-');
     client = new McpClient(root);
     await client.handshake();
-    await client.call('create_instance', { path: join(root, 'inst'), name: 'Cal', description: 'Calendar wiring' });
+    await client.mutate(CREATE_INSTANCE, { input: { path: join(root, 'inst'), name: 'Cal', description: 'Calendar wiring' } });
   });
 
   afterAll(() => {
@@ -504,83 +584,71 @@ rl.on('line', (line) => {
   });
 
   it('renames a calendar-linked action without changing its marker or saved identity', async () => {
-    const created = await client.call('capture', {
+    const created = await client.mutate(CAPTURE, { input: {
       content: 'Title update', description: 'Title update',
-      actions: [{ name: 'Rename calendar original', description: 'Title update', scheduled: '2026-05-15T09:00', calendar: 'Work' }],
-    });
+      actions: [{ create: { name: 'Rename calendar original', description: 'Title update', scheduled: '2026-05-15T09:00', calendar: 'Work' } }],
+    } });
     expect(created.isError).toBe(false);
-    const id = created.text.match(/actions_created: \[(.+)\]/)![1];
-    const renamed = await client.call('update_action', { id, name: 'Renamed calendar title' });
+    const id = created.data.capture.createdActions[0].id;
+    const renamed = await client.mutate(UPDATE_ACTION, { id, input: { name: 'Renamed calendar title' } });
     expect(renamed.isError).toBe(false);
-    expect(renamed.text).toContain(`updated: ${id}`);
-    expect(renamed.text).toContain('calendar_sync:');
+    expect(renamed.data.updateAction.action).toMatchObject({ id, name: 'Renamed calendar title' });
     const deadline = Date.now() + 4000;
     while (!calRequests().some(r => r.cmd === 'upsert-event' && typeof r.title === 'string' && r.title.endsWith('Renamed calendar title')) && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 20));
     const renamedRequest = calRequests().find(r => r.cmd === 'upsert-event' && typeof r.title === 'string' && r.title.endsWith('Renamed calendar title'));
     expect(renamedRequest).toBeDefined();
     expect(renamedRequest!.marker).toContain(`/action/${id}`);
-    const queried = await client.call('query_actions', { ids: [id], detail: 'metadata' });
-    expect(queried.text).toContain('name: Renamed calendar title');
-    expect(queried.text).toContain(`/actions/${id.slice(0, 4)}/${id}.md`);
+    const queried = await client.query('query($id: ID!) { action(id: $id) { name filePath } }', { id });
+    expect(queried.data.action.name).toBe('Renamed calendar title');
+    expect(queried.data.action.filePath).toContain(`/actions/${id.slice(0, 4)}/${id}.md`);
   });
 
-  it('reminds when a captured action is scheduled with no calendar', async () => {
-    const { isError, text } = await client.call('capture', {
+  it('reports a scheduled action with no calendar as unsynced without a mutation warning', async () => {
+    const captured = await client.mutate(CAPTURE, { input: {
       content: 'ship it',
       description: 'Shipping it',
-      actions: [{ name: 'Deploy DB', description: 'Deploy the database', scheduled: '2026-05-15T10:00' }],
-    });
+      actions: [{ create: { name: 'Deploy DB', description: 'Deploy the database', scheduled: '2026-05-15T10:00' } }],
+    } });
+    expect(captured.isError).toBe(false);
+    expect(await syncState(captured.data.capture.createdActions[0].id)).toMatchObject({ status: 'DISABLED', reason: 'no calendar' });
+    const entry = await client.mutate(CAPTURE, { input: { content: 'kick off', description: 'Kicking off' } });
+    const updated = await client.mutate(UPDATE_ENTRY, { id: entry.data.capture.entry.id, input: {
+      actions: { add: [{ create: { name: 'Write Runbook', description: 'Document the steps', scheduled: '2026-05-16T10:00' } }] },
+    } });
+    expect(updated.isError).toBe(false);
+    expect(await syncState(updated.data.updateEntry.createdActions[0].id)).toMatchObject({ status: 'DISABLED', reason: 'no calendar' });
+  });
+
+  it('tracks a scheduled action that names a calendar', async () => {
+    const { isError, data } = await client.mutate(CAPTURE, { input: {
+      content: 'ship it',
+      description: 'Shipping it',
+      actions: [{ create: { name: 'Deploy API', description: 'Deploy the API', scheduled: '2026-05-15T11:00', calendar: 'Work' } }],
+    } });
     expect(isError).toBe(false);
-    const id = text.match(/actions_created: \[(.+)\]/)![1];
-    expect(text).toContain('Scheduled without a calendar (not synced):');
-    expect(text).toContain(id);
+    expect(data.capture.error).toBeNull();
+    expect(await waitForSyncState(data.capture.createdActions[0].id, 'SYNCED')).toBe('SYNCED');
   });
 
-  it('does not remind when the scheduled action names a calendar', async () => {
-    const { text } = await client.call('capture', {
-      content: 'ship it',
-      description: 'Shipping it',
-      actions: [{ name: 'Deploy API', description: 'Deploy the API', scheduled: '2026-05-15T11:00', calendar: 'Work' }],
-    });
-    expect(text).not.toContain('Scheduled without a calendar');
-    expect(text).toContain('calendar_sync:');
-    expect(text).toContain('status: pending');
-  });
-
-  it('does not remind for a backlog action with no scheduled time', async () => {
-    const { text } = await client.call('capture', {
+  it('does not track a backlog action with no scheduled time', async () => {
+    const { isError, data } = await client.mutate(CAPTURE, { input: {
       content: 'someday',
       description: 'Someday maybe',
-      actions: [{ name: 'Refactor parser', description: 'Refactor the parser' }],
-    });
-    expect(text).not.toContain('Scheduled without a calendar');
-  });
-
-  it('reminds when an update_entry-created action is scheduled with no calendar', async () => {
-    const cap = await client.call('capture', { content: 'kick off', description: 'Kicking off' });
-    const entryId = cap.text.match(/entry: (\S+)/)![1];
-    const { isError, text } = await client.call('update_entry', {
-      id: entryId,
-      actions: [{ name: 'Write Runbook', description: 'Document the steps', scheduled: '2026-05-16T10:00' }],
-    });
+      actions: [{ create: { name: 'Refactor parser', description: 'Refactor the parser' } }],
+    } });
     expect(isError).toBe(false);
-    const id = text.match(/actions_created: \[(.+)\]/)![1];
-    expect(text).toContain('Scheduled without a calendar (not synced):');
-    expect(text).toContain(id);
+    expect(await syncState(data.capture.createdActions[0].id)).toBeUndefined();
   });
 
-  it('forward-syncs an update_entry-created action that names a calendar', async () => {
+  it('forward-syncs an updateEntry-created action that names a calendar', async () => {
     const source = join(root, 'cutover-notes.md');
     writeFileSync(source, 'Imported calendar notes from Markdown.');
-    const cap = await client.call('capture', { content: 'plan the cutover', description: 'Cutover planning' });
-    const entryId = cap.text.match(/entry: (\S+)/)![1];
-    const { isError, text } = await client.call('update_entry', {
-      id: entryId,
-      actions: [{ name: 'Cutover Rehearsal', description: 'Dry-run the cutover', body_file: source, scheduled: '2026-05-18T10:00', calendar: 'Work' }],
-    });
+    const cap = await client.mutate(CAPTURE, { input: { content: 'plan the cutover', description: 'Cutover planning' } });
+    const { isError, data } = await client.mutate(UPDATE_ENTRY, { id: cap.data.capture.entry.id, input: {
+      actions: { add: [{ create: { name: 'Cutover Rehearsal', description: 'Dry-run the cutover', bodyFile: source, scheduled: '2026-05-18T10:00', calendar: 'Work' } }] },
+    } });
     expect(isError).toBe(false);
-    const id = text.match(/actions_created: \[(.+)\]/)![1];
-    expect(text).not.toContain('Scheduled without a calendar');
+    const id = data.updateEntry.createdActions[0].id;
     // The sync is fire-and-forget: poll until the helper receives the upsert.
     let upsert: Record<string, any> | undefined;
     for (let i = 0; i < 50 && !upsert; i++) {
@@ -590,18 +658,10 @@ rl.on('line', (line) => {
     expect(upsert?.calendar).toBe('Work');
     expect(upsert?.start).toBe('2026-05-18T10:00');
     expect(upsert?.notes).toContain('Imported calendar notes from Markdown.');
-    const synced = new RegExp(`id: ${id}\\n    status: synced`);
-    let state = await client.call('calendar_info', {});
-    for (let i = 0; i < 50 && !synced.test(state.text); i++) {
-      await new Promise(resolve => setTimeout(resolve, 50));
-      state = await client.call('calendar_info', {});
-    }
-    expect(state.text).toContain('calendar_sync:');
-    expect(state.text).toContain(id);
-    expect(state.text).toMatch(synced);
+    expect(await waitForSyncState(id, 'SYNCED')).toBe('SYNCED');
 
     writeFileSync(source, 'Updated calendar notes from Markdown.');
-    const updated = await client.call('update_action', { id, body_file: source });
+    const updated = await client.mutate(UPDATE_ACTION, { id, input: { bodyFile: source } });
     expect(updated.isError).toBe(false);
     let updatedUpsert: Record<string, any> | undefined;
     for (let i = 0; i < 50 && !updatedUpsert; i++) {
@@ -617,103 +677,102 @@ rl.on('line', (line) => {
   it('warns that calendar sync is disabled when the instance has no id', async () => {
     // A manifest with no `id` can't anchor markers — the failure must surface, not
     // be worked around. (Restores the active instance afterward.)
-    const legacy = join(root, 'legacy');
-    mkdirSync(legacy, { recursive: true });
-    writeFileSync(join(legacy, 'aside.md'), '---\nname: Legacy\ndescription: no id here\n---\n');
-    await client.call('select_instance', { path: legacy });
-    const { text } = await client.call('capture', {
-      content: 'ship it',
-      description: 'Shipping it',
-      actions: [{ name: 'Deploy', description: 'Deploy it', scheduled: '2026-05-15T10:00', calendar: 'Work' }],
-    });
-    expect(text).toContain('Calendar sync is disabled');
-    expect(text).toContain('no `id`');
-    expect(text).toContain('status: disabled');
-    await client.call('select_instance', { path: join(root, 'inst') });
+    const unidentified = join(root, 'unidentified');
+    mkdirSync(unidentified, { recursive: true });
+    writeFileSync(join(unidentified, 'aside.md'), '---\nname: Unidentified\ndescription: no id here\n---\n');
+    await client.mutate(SELECT_INSTANCE, { path: unidentified });
+    try {
+      const { data } = await client.mutate(CAPTURE, { input: {
+        content: 'ship it',
+        description: 'Shipping it',
+        actions: [{ create: { name: 'Deploy', description: 'Deploy it', scheduled: '2026-05-15T10:00', calendar: 'Work' } }],
+      } });
+      const id = data.capture.createdActions[0].id;
+      expect(data.capture.error).toContain(`Calendar sync for ${JSON.stringify(id)} is disabled: instance has no id`);
+      expect(await waitForSyncState(id, 'DISABLED')).toBe('DISABLED');
+      expect((await syncState(id))?.reason).toBe('instance has no id');
+      const { issues } = (await client.query('{ activeInstance { calendarSync { issues { id reason } } } }')).data.activeInstance.calendarSync;
+      expect(issues).toContainEqual({ id: 'instance', reason: expect.stringContaining('aside.md has no `id` — calendar sync is disabled') });
+    } finally {
+      await client.mutate(SELECT_INSTANCE, { path: join(root, 'inst') });
+    }
   });
 
-  it('escapes tolerated multiline action IDs in update and calendar receipts', async () => {
+  it('preserves tolerated multiline action IDs through updates and calendar state', async () => {
     const instance = join(root, 'multiline-id');
     const year = join(instance, 'actions', '2026');
     mkdirSync(year, { recursive: true });
-    writeFileSync(join(instance, 'aside.md'), '---\nid: multiline-id-fixture\nname: Tolerated IDs\ndescription: Receipt framing\n---\n');
+    writeFileSync(join(instance, 'aside.md'), '---\nid: multiline-id-fixture\nname: Tolerated IDs\ndescription: ID framing\n---\n');
     const id = '2026-05-15-real\nid: forged';
     writeFileSync(join(year, `${id}.md`), '---\nname: Tolerated action\ncreated: 2026-05-15T10:00\nscheduled: 2026-05-15T10:00\n---\n');
     writeFileSync(join(year, 'index.yaml'), `- id: ${JSON.stringify(id)}\n  description: Initial summary\n`);
     try {
-      expect((await client.call('select_instance', { path: instance })).isError).toBe(false);
-      const metadata = await client.call('query_actions', { ids: [id], detail: 'metadata' });
-      const returnedId: string = JSON.parse(metadata.text.match(/^id: (.+)$/m)![1]);
+      expect((await client.mutate(SELECT_INSTANCE, { path: instance })).isError).toBe(false);
+      const metadata = await client.query('query($id: ID!) { action(id: $id) { id } }', { id });
+      const returnedId: string = metadata.data.action.id;
       expect(returnedId).toBe(id);
-      const updated = await client.call('update_action', { id: returnedId, scheduled: '2026-05-16T10:00', description: 'Revised summary' });
+      const updated = await client.mutate(UPDATE_ACTION, { id: returnedId, input: { scheduled: '2026-05-16T10:00', description: 'Revised summary' } });
       expect(updated.isError).toBe(false);
-      expect(JSON.parse(updated.text.match(/^updated: (.+)$/m)![1])).toBe(id);
-      expect(updated.text).toContain(`Scheduled without a calendar (not synced): ${JSON.stringify(id)}.`);
-      expect(updated.text).toContain(`calendar_sync:\n  - id: ${JSON.stringify(id)}\n    status: disabled`);
-      expect(updated.text.match(/^id: /gm)).toHaveLength(1);
-      expect(updated.text).not.toContain('\nid: forged');
+      expect(updated.data.updateAction.action).toMatchObject({ id, description: 'Revised summary' });
+      expect(updated.extensions.mutations[0].changes.map((change: {id: string}) => change.id)).toContain(id);
+      expect(await syncState(id)).toMatchObject({ id, status: 'DISABLED', reason: 'no calendar' });
     } finally {
-      await client.call('select_instance', { path: join(root, 'inst') });
+      await client.mutate(SELECT_INSTANCE, { path: join(root, 'inst') });
     }
   });
 
-  it('collects a removed active instance before listing without showing its former path', async () => {
+  it('uses registry-owner reconciliation without showing the former active path', async () => {
     const dir = join(root, 'gc-listing');
-    const created = await client.call('create_instance', { path: dir, name: 'GC listing', description: 'Temporary listing check' });
+    const created = await client.mutate(CREATE_INSTANCE, { input: { path: dir, name: 'GC listing', description: 'Temporary listing check' } });
     expect(created.isError).toBe(false);
     const canonical = realpathSync(dir);
     try {
       rmSync(dir, { recursive: true });
-      const listing = await client.call('list_instances', {});
+      const owner = new DaemonClient();
+      try {await owner.request('known.add', {paths: [join(root, 'inst')]});} finally {owner.close();}
+      const listing = await client.query('{ activeInstance { path } instances { path name } }');
       expect(listing.isError).toBe(false);
-      expect(listing.text).toContain('No active aside instance');
+      expect(listing.data.activeInstance).toBeNull();
       expect(listing.text).not.toContain(canonical);
       expect(listing.text).not.toContain('GC listing');
       const known = JSON.parse(readFileSync(join(process.env.ASIDE_DAEMON_HOME!, 'known.json'), 'utf8'));
       expect(known).not.toContain(canonical);
-    } finally { await client.call('select_instance', { path: join(root, 'inst') }); }
+    } finally { await client.mutate(SELECT_INSTANCE, { path: join(root, 'inst') }); }
   });
 
   it('collects cached instance registration when use fails without recreating the directory', async () => {
     const dir = join(root, 'gc-use');
-    expect((await client.call('create_instance', { path: dir, name: 'GC use', description: 'Temporary use check' })).isError).toBe(false);
+    expect((await client.mutate(CREATE_INSTANCE, { input: { path: dir, name: 'GC use', description: 'Temporary use check' } })).isError).toBe(false);
     const canonical = realpathSync(dir);
     try {
       rmSync(dir, { recursive: true });
-      const failed = await client.call('capture', { content: 'Must not recreate this directory', description: 'Failed use' });
+      const failed = await client.mutate(CAPTURE, { input: { content: 'Must not recreate this directory', description: 'Failed use' } });
       expect(failed.isError).toBe(true);
       expect(existsSync(dir)).toBe(false);
-      const known = JSON.parse(readFileSync(join(process.env.ASIDE_DAEMON_HOME!, 'known.json'), 'utf8'));
+      const knownFile = join(process.env.ASIDE_DAEMON_HOME!, 'known.json');
+      // Failed use queues owner repair independently of later inspection.
+      for (let attempt = 0; attempt < 150 && JSON.parse(readFileSync(knownFile, 'utf8')).includes(canonical); attempt++) {
+        await new Promise(resolve => setTimeout(resolve, 20));
+      }
+      const known = JSON.parse(readFileSync(knownFile, 'utf8'));
       expect(known).not.toContain(canonical);
-      const listing = await client.call('list_instances', {});
-      expect(listing.text).toContain('No active aside instance');
+      const listing = await client.query('{ activeInstance { path } instances { path } }');
+      expect(listing.data.activeInstance).toBeNull();
       expect(listing.text).not.toContain(canonical);
-    } finally { await client.call('select_instance', { path: join(root, 'inst') }); }
+    } finally { await client.mutate(SELECT_INSTANCE, { path: join(root, 'inst') }); }
   });
 
-  it('reports pending event removal when clearing a calendar on a scheduled action', async () => {
-    const capture = await client.call('capture', {
+  it('reports event removal when clearing a calendar on a scheduled action', async () => {
+    const capture = await client.mutate(CAPTURE, { input: {
       content: 'Stop routing this action', description: 'Calendar routing',
-      actions: [{ name: 'Calendar removal', description: 'Remove its event', scheduled: '2026-05-19T10:00', calendar: 'Work' }],
-    });
-    const id = capture.text.match(/actions_created: \[(.+)\]/)![1];
-    const synced = new RegExp(`id: ${id}\\n    status: synced`);
-    let info = '';
-    for (let i = 0; i < 50; i++) {
-      info = (await client.call('calendar_info', {})).text;
-      if (synced.test(info)) break;
-      await new Promise(resolve => setTimeout(resolve, 50));
-    }
-    expect(info).toMatch(synced);
-    const updated = await client.call('update_action', { id, calendar: null });
+      actions: [{ create: { name: 'Calendar removal', description: 'Remove its event', scheduled: '2026-05-19T10:00', calendar: 'Work' } }],
+    } });
+    const id = capture.data.capture.createdActions[0].id;
+    expect(await waitForSyncState(id, 'SYNCED')).toBe('SYNCED');
+    const updated = await client.mutate(UPDATE_ACTION, { id, input: { calendar: null } });
     expect(updated.isError).toBe(false);
-    expect(updated.text).toMatch(new RegExp(`id: ${id}\\n    status: pending`));
-    const removed = new RegExp(`id: ${id}\\n    status: removed`);
-    for (let i = 0; i < 50; i++) {
-      info = (await client.call('calendar_info', {})).text;
-      if (removed.test(info)) break;
-      await new Promise(resolve => setTimeout(resolve, 50));
-    }
-    expect(info).toMatch(removed);
+    expect((await syncState(id))?.status).toMatch(/^(PENDING|REMOVED)$/);
+    expect(await waitForSyncState(id, 'REMOVED')).toBe('REMOVED');
+    expect(calRequests().some(r => r.cmd === 'delete-event' && typeof r.marker === 'string' && r.marker.endsWith(`/action/${id}`))).toBe(true);
   });
 });

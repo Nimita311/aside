@@ -1,0 +1,1172 @@
+{
+  "label": "model-after",
+  "sourceManifestSha256": "b7b83612a62e28e94ffb3f66112d6470a21aed0c937c2a6aacb2cad6ff4af0df",
+  "sourceFiles": [
+    {
+      "path": "cli/src/automation/controller.ts",
+      "bytes": 10349,
+      "sha256": "9ecca277fa3934e2b1efe56a16e423265a12d3400919ee2fcccbca1e07eeaa08"
+    },
+    {
+      "path": "cli/src/automation/declaration.ts",
+      "bytes": 842,
+      "sha256": "c1f0b10ba783314fe0eeb98a4868dfbc0d7055f4fa31a62ab441336479bc1509"
+    },
+    {
+      "path": "cli/src/automation/delegation-protocol.ts",
+      "bytes": 599,
+      "sha256": "de113acca4fb0fb66f2c89104728040031620ecc0ae9405f798396c154055fa0"
+    },
+    {
+      "path": "cli/src/automation/delegation.ts",
+      "bytes": 3672,
+      "sha256": "ed31b3491bf618d8b29b88030c8d08fe1f6c2be45d99dafe4dafe7259287b74a"
+    },
+    {
+      "path": "cli/src/automation/execution.ts",
+      "bytes": 11039,
+      "sha256": "0ca470c75d46b7600a577f5e876c37fd30d94eabe73de8936c8f2f2332e29bfc"
+    },
+    {
+      "path": "cli/src/automation/model-warmup.ts",
+      "bytes": 4686,
+      "sha256": "b370daf9aa89107309d98e3bcc85bb06b6af50b477aba7ffc12c988b7e92eeee"
+    },
+    {
+      "path": "cli/src/automation/models.ts",
+      "bytes": 26398,
+      "sha256": "4c88de1fb79b493a8a9db71b4e23c892f360702100bbfa39a4bcd6dfa9e7ef89"
+    },
+    {
+      "path": "cli/src/automation/schedule.ts",
+      "bytes": 9988,
+      "sha256": "9d6a64f928b5172c1667022d1d40f9e41225af4cdd1da69c3878bc96e4468eb1"
+    },
+    {
+      "path": "cli/src/automation/scheduler.ts",
+      "bytes": 10207,
+      "sha256": "06f1dbec5c47d5cbd4e99b49294c135aed6a8888dbd3cdc19d939b06744a21a1"
+    },
+    {
+      "path": "cli/src/automation/storage.ts",
+      "bytes": 7646,
+      "sha256": "1992cbe4a47ba8c6454939c766ffce717d22a7694f45699bd9ed7289b4a9bb48"
+    },
+    {
+      "path": "cli/src/automation/worker.ts",
+      "bytes": 9905,
+      "sha256": "8ef47536254c1d753873318f47ea294dc4164cf7e635a994740d4d6fa6279bec"
+    },
+    {
+      "path": "cli/src/commands/artifact.ts",
+      "bytes": 4755,
+      "sha256": "19f6ad5e37163d92bd169b6365c7cbb45bc499852403384abed094a277f2ea84"
+    },
+    {
+      "path": "cli/src/commands/daemon-status.ts",
+      "bytes": 3616,
+      "sha256": "05a5cf49f8e0e9338cf61f7e363f54d93f94db389fce901c06e2abb86ca131b4"
+    },
+    {
+      "path": "cli/src/commands/daemon.ts",
+      "bytes": 12310,
+      "sha256": "53b575ecde8c8554338f82f2bac53ceaee2cd6aa9ddb03d6264100ea6da4fd20"
+    },
+    {
+      "path": "cli/src/commands/diagnostics.ts",
+      "bytes": 2399,
+      "sha256": "20b363fe0a2b9db2974cffb5fb27251dcf9670e3c8f36f8ee8d021800e9c66b7"
+    },
+    {
+      "path": "cli/src/commands/graphql.ts",
+      "bytes": 3067,
+      "sha256": "da9d3bf97eb1ccb1727eb5a689829dff8509a4296a46433ceed5820582b0ddb7"
+    },
+    {
+      "path": "cli/src/commands/init.ts",
+      "bytes": 7804,
+      "sha256": "1f82df8f7ed173e74bef78c498414b42388f87dd670103300393ca99a01ad991"
+    },
+    {
+      "path": "cli/src/commands/instance-checks.ts",
+      "bytes": 1108,
+      "sha256": "782631e6679738c17f7a073ae03a4afc5e8ed5e224ea419c47e185a4a4a12c15"
+    },
+    {
+      "path": "cli/src/commands/instance-gc.ts",
+      "bytes": 665,
+      "sha256": "9581359fa143f11b37344b6ca9ab04c3669684cf40567d630a0aea901b18116a"
+    },
+    {
+      "path": "cli/src/commands/instance.ts",
+      "bytes": 9300,
+      "sha256": "1ada2d7658be63e6e09319f381bef6d3f43c9d643ac42bdd00d74a397a4e9eff"
+    },
+    {
+      "path": "cli/src/commands/mcp.ts",
+      "bytes": 3830,
+      "sha256": "37d60e30db5e6523ab1eea356c8cee58d14141e82ed1f134c3e0122a00e4a36d"
+    },
+    {
+      "path": "cli/src/commands/options.ts",
+      "bytes": 21826,
+      "sha256": "efc9b617a0fe0d762ea724faa069242f3ef620e7d17110b14a9406b96d1c4fec"
+    },
+    {
+      "path": "cli/src/commands/output.ts",
+      "bytes": 4484,
+      "sha256": "f5b357648801720915370e56bd2de32239f63ee5a84c7f1a1778e935bf0a92ee"
+    },
+    {
+      "path": "cli/src/commands/plugin.ts",
+      "bytes": 44546,
+      "sha256": "22a6db8f26ddbe371515eaca57b8edaf6e1ab9c45d34e99a57ed01a7080c6058"
+    },
+    {
+      "path": "cli/src/commands/show-target.ts",
+      "bytes": 2590,
+      "sha256": "272ef3a22e319f311a8dee095228c17c77eeab6b341094e941acce46b3b67a3e"
+    },
+    {
+      "path": "cli/src/commands/show.ts",
+      "bytes": 4968,
+      "sha256": "4ecdb054769a8090b368f0e300c2a878f5e2d2c514b0796328e8871cc00e29d4"
+    },
+    {
+      "path": "cli/src/commands/usage.ts",
+      "bytes": 6541,
+      "sha256": "ca32280995082aee784563a788c315e7d87456a1510e549f980aedffd761b26d"
+    },
+    {
+      "path": "cli/src/commands/validate.ts",
+      "bytes": 1401,
+      "sha256": "4ccbd5fd6dd1441b9c6f7d7e41559db4697dc1e501f5ab96dd9945fb4335e008"
+    },
+    {
+      "path": "cli/src/core/action-projections.ts",
+      "bytes": 3885,
+      "sha256": "2719ebfa41944b2915b77546fced09260bbe473121f69c63d9e31331b8ec9b29"
+    },
+    {
+      "path": "cli/src/core/artifact-reference.ts",
+      "bytes": 3353,
+      "sha256": "5c2062240cd20dadefddf35461c36831ef087b103670c271695849636ba1ccd8"
+    },
+    {
+      "path": "cli/src/core/artifact-traversal.ts",
+      "bytes": 3283,
+      "sha256": "e8e3d1e46f58bddc9959cbb1723f81e2fadbe3b02e8b9dd3a3e136ee0b1a8326"
+    },
+    {
+      "path": "cli/src/core/artifact.ts",
+      "bytes": 3323,
+      "sha256": "06735e44f38aee7f7f0d18e52fff48de5ea16c83ace118ce03df1037aa8b8250"
+    },
+    {
+      "path": "cli/src/core/async.ts",
+      "bytes": 363,
+      "sha256": "8e31d97bc71b74090cd55c036456f319e54a0ea15c66b4d147e553b035c0c924"
+    },
+    {
+      "path": "cli/src/core/automation.ts",
+      "bytes": 7795,
+      "sha256": "68bced8e697993f2725e5648610ab1e1097bbb1a00579082a40c9187c51aeb2e"
+    },
+    {
+      "path": "cli/src/core/calendar-name.ts",
+      "bytes": 409,
+      "sha256": "5bdaa913f3cb70b5580fe8e58e624f51d1fec6a4662f8170239842ec9572bac6"
+    },
+    {
+      "path": "cli/src/core/coerce.ts",
+      "bytes": 6198,
+      "sha256": "c28489310ad4b43ea9fb63ed5a83b0bef2a1f8866f95c335e016fdcb1f52279a"
+    },
+    {
+      "path": "cli/src/core/content-attachment.ts",
+      "bytes": 619,
+      "sha256": "05fc01f46b6948ac4c37f2811068906bb1a8f62b4d8c0947ea6d1e5109a81c5b"
+    },
+    {
+      "path": "cli/src/core/content-reference.ts",
+      "bytes": 4390,
+      "sha256": "ef368c388f04d0e3334baaed1eadb5386edf1eb4828bf0ae4b9d47a8b4dd5611"
+    },
+    {
+      "path": "cli/src/core/data-core.ts",
+      "bytes": 48840,
+      "sha256": "48c0fefaa49f2eaf716a3b0d639bb89cec6a2848a82a2e2177d280b7684f9219"
+    },
+    {
+      "path": "cli/src/core/data-snapshot.ts",
+      "bytes": 2204,
+      "sha256": "5325ba4d901ef28dafeaf6f3ad8846e2c6cb7547636d415770755826f1488325"
+    },
+    {
+      "path": "cli/src/core/data-source.ts",
+      "bytes": 8177,
+      "sha256": "fe5fdb653ff42656c9647f6db5e934c76184aeeb0d4d86d56c77c75c93da8436"
+    },
+    {
+      "path": "cli/src/core/date.ts",
+      "bytes": 2023,
+      "sha256": "a885d4f460e84f0dcb5c20ae2ef62279fa3924a3e504b913f0485dfdef5dc490"
+    },
+    {
+      "path": "cli/src/core/delegation.ts",
+      "bytes": 876,
+      "sha256": "bf4ce55762ab78c8d85eb11940ef76fabf92aa22f51cb1a5ad716efb47fbd9d2"
+    },
+    {
+      "path": "cli/src/core/identity.ts",
+      "bytes": 985,
+      "sha256": "08c14c0def10859ddd4806aa62ba2b5c2a2821a6b68f400bc3f3a56b240a11a5"
+    },
+    {
+      "path": "cli/src/core/instance.ts",
+      "bytes": 6165,
+      "sha256": "cc87bb947002d0064f4502786424f91232af7fdeccacaefaee03bb360b9b6d24"
+    },
+    {
+      "path": "cli/src/core/managed-path.ts",
+      "bytes": 6840,
+      "sha256": "11787b8fe713a4cf3c1e9981d28434375b8f512ceb55e0213698819976defa02"
+    },
+    {
+      "path": "cli/src/core/markdown.ts",
+      "bytes": 7341,
+      "sha256": "29c591728fb9a52c1ae9e1af4bbd0b433a570640c3f50a2778ae95f10d281224"
+    },
+    {
+      "path": "cli/src/core/media.ts",
+      "bytes": 1499,
+      "sha256": "e58df977e153242d7eb4c4f238a435ff659b72380e3870f2553120eb0da35362"
+    },
+    {
+      "path": "cli/src/core/parser.ts",
+      "bytes": 13760,
+      "sha256": "f76b28cb1ed874f0a1284c08b6119e7c1111381b8f3c756dae4d027cc565a175"
+    },
+    {
+      "path": "cli/src/core/reader.ts",
+      "bytes": 8052,
+      "sha256": "c739bb026cc06fa71790b41a26df70e6b0f605de635a6ea0dc87d0165f67b149"
+    },
+    {
+      "path": "cli/src/core/record-model.ts",
+      "bytes": 8214,
+      "sha256": "042f01375d526f9150fc21a3dca1ee11f37a170d5140d61b2819cd9f7193b6f6"
+    },
+    {
+      "path": "cli/src/core/record-reference.ts",
+      "bytes": 6115,
+      "sha256": "04da6fec0108dff4acbaa9d7f980ab17050b635fe1e199c50a4850fe0b1462d7"
+    },
+    {
+      "path": "cli/src/core/recurrence.ts",
+      "bytes": 41251,
+      "sha256": "9513aead228e03646815bb6ecf856699a56ea3b637ca06ee7b5337914a74eabe"
+    },
+    {
+      "path": "cli/src/core/rrule-count.ts",
+      "bytes": 18277,
+      "sha256": "2523867c0eddb63c85db952c9a3f15826cceaaace8755f10911d050542e75fa4"
+    },
+    {
+      "path": "cli/src/core/scheduling.ts",
+      "bytes": 6741,
+      "sha256": "01d7e6db4898374d24b833911ba8a9181dc215be2dbe1bb61cae66ae0723c273"
+    },
+    {
+      "path": "cli/src/core/slug.ts",
+      "bytes": 3253,
+      "sha256": "ec5d73bd52a410e4460d260c16fbe883ef66db93a52f2022775deec18fb7e043"
+    },
+    {
+      "path": "cli/src/core/source-version.ts",
+      "bytes": 3049,
+      "sha256": "368fea282a05cfac2de7708468fdcd11a173239346b620d2f4f1e18aee809a71"
+    },
+    {
+      "path": "cli/src/core/system-config.ts",
+      "bytes": 2774,
+      "sha256": "b2cfff812ace5f1b07312721831f8a71c340171734407f4cf234843737f5f167"
+    },
+    {
+      "path": "cli/src/core/types.ts",
+      "bytes": 5124,
+      "sha256": "0d14e5ebdaeb166f0b69fbd4b2d79ab4a75477bfb4b92129e1d50d573abfaede"
+    },
+    {
+      "path": "cli/src/core/validator.ts",
+      "bytes": 32802,
+      "sha256": "f4a33797948d60d5ec33eefc1292add72b98ef9b4838234d35b831af7982f71b"
+    },
+    {
+      "path": "cli/src/core/web-file-grant.ts",
+      "bytes": 3371,
+      "sha256": "080e6e0f5d4ff708211607459a6c5082ca0389ea4af6082e6868f77b1f45591e"
+    },
+    {
+      "path": "cli/src/core/web-query.ts",
+      "bytes": 1218,
+      "sha256": "406c875830a39d19af165bb900639f8305367ee5e6474614d9f74ee21e2e4474"
+    },
+    {
+      "path": "cli/src/core/worktree.ts",
+      "bytes": 6069,
+      "sha256": "029e77de90b859ed0bae0d6173dd2c425e8e9ce8f192a4a16d4507eb41ef3835"
+    },
+    {
+      "path": "cli/src/daemon/client.ts",
+      "bytes": 11793,
+      "sha256": "fbcbbc605f7269d1d5a6be056f9a59bf031bdb018610851180976bc0844ece77"
+    },
+    {
+      "path": "cli/src/daemon/daemon.ts",
+      "bytes": 25509,
+      "sha256": "5459bd8ac4d9da600119aa8f3c0448a35f3df730353b76ae09544aae6a6b5f28"
+    },
+    {
+      "path": "cli/src/daemon/filelock.ts",
+      "bytes": 2654,
+      "sha256": "f4114c9e198250ea4e8c91017b0bd1434f96edf05da81660250be6fc02683cf0"
+    },
+    {
+      "path": "cli/src/daemon/host.ts",
+      "bytes": 46184,
+      "sha256": "025333314c49809e25c0eada79b1c6a7db5d5470414e8c8155f066b58f59c993"
+    },
+    {
+      "path": "cli/src/daemon/instance-lifecycle.ts",
+      "bytes": 4755,
+      "sha256": "bb33d2459c2f6637240b37471410aef1f88151bec731be7f47c99bca4bea6ea1"
+    },
+    {
+      "path": "cli/src/daemon/jsonrpc.ts",
+      "bytes": 4208,
+      "sha256": "ff84e04d8e47661730f06b531cd7f97bb66959ddb663db154754789ce4cb043c"
+    },
+    {
+      "path": "cli/src/daemon/launchd.ts",
+      "bytes": 5375,
+      "sha256": "9008e12d7bb00ec7c7762e8bee6fb718240faa18141f4dbd9c9ca83d7956ed1e"
+    },
+    {
+      "path": "cli/src/daemon/paths.ts",
+      "bytes": 2561,
+      "sha256": "c2037238ea4e28e0c17c501dd2a652142ba243f096dc3bfc391a99c2f75809e2"
+    },
+    {
+      "path": "cli/src/daemon/protocol.ts",
+      "bytes": 1370,
+      "sha256": "3c48e21a75009d03ee68f7a48965ba81ed6f0939fa2b07028cc4ad5321457a8b"
+    },
+    {
+      "path": "cli/src/graphql/automation-prompts.ts",
+      "bytes": 3093,
+      "sha256": "30ac0b2724fea61b8c55ba5983d1615ffe74505a9c0ecc70940c63b57e79122c"
+    },
+    {
+      "path": "cli/src/graphql/automation-runtime.ts",
+      "bytes": 6205,
+      "sha256": "fe5d58ba10959e0d86249ca378945de2529097dd24134d1383d880e6db406710"
+    },
+    {
+      "path": "cli/src/graphql/automations.ts",
+      "bytes": 11265,
+      "sha256": "ff9560c2452123044d68c2b5981b8029291afad3308a59f0b6ae9b0ebe364fa7"
+    },
+    {
+      "path": "cli/src/graphql/delegations.ts",
+      "bytes": 3289,
+      "sha256": "6c0bb5e0acd3316725c3e7427c87379d2dd903b6d3fe67a7b36742c238192cb5"
+    },
+    {
+      "path": "cli/src/graphql/execution-budget.ts",
+      "bytes": 4493,
+      "sha256": "b0d85809a79913e4307f22866dcebca529daeceeb3c6ceb51fe7c63c754cd2ce"
+    },
+    {
+      "path": "cli/src/graphql/inputs.ts",
+      "bytes": 18988,
+      "sha256": "00d33b0803bbf557023d80fcb04fa5c681db5562f26d6ddf46abed6c24c8ff74"
+    },
+    {
+      "path": "cli/src/graphql/query.ts",
+      "bytes": 30067,
+      "sha256": "4d055926975c27f95c9a7a7de72666d0fe4fe1eb3fa72dac0933a4f00d8fefa7"
+    },
+    {
+      "path": "cli/src/graphql/references.ts",
+      "bytes": 8820,
+      "sha256": "26075b6fd3a43d9497fd3fbfde68bbcdcb0908089ea588d09bf148c55b538ee5"
+    },
+    {
+      "path": "cli/src/graphql/results.ts",
+      "bytes": 4653,
+      "sha256": "e98d3fb2c2ab94622b8d52c64c4483954132175752e4a1d5c8ef02d050eeabc1"
+    },
+    {
+      "path": "cli/src/graphql/schema.ts",
+      "bytes": 51507,
+      "sha256": "caff938da016668b6672189523fed017e0216a7866a7d9dbbcdda3d1af42feff"
+    },
+    {
+      "path": "cli/src/graphql/sdl.ts",
+      "bytes": 78287,
+      "sha256": "99a510efc4d478739edc74c267e0932843835328ac989da4f78d688b0c6ca48e"
+    },
+    {
+      "path": "cli/src/graphql/search.ts",
+      "bytes": 5245,
+      "sha256": "63baf4b754e2e26d4b621dd94b96670df26159214e81f94ab9e05845d7703d26"
+    },
+    {
+      "path": "cli/src/graphql/system-daemon.ts",
+      "bytes": 1472,
+      "sha256": "2fc1db693e62e16391cabc1e23930fd8ba36e4afd1cc2010f74a0026b5bfa44d"
+    },
+    {
+      "path": "cli/src/graphql/system-info-sdl.ts",
+      "bytes": 7319,
+      "sha256": "b8112221f7d31f0c15f14d4dd0ae2b3125d14015dd4c3c07524c636603e0a2c3"
+    },
+    {
+      "path": "cli/src/graphql/system-info.ts",
+      "bytes": 4938,
+      "sha256": "6f6dd93024bc0a6e30299ef0688ead96e2a815f164902e63d4eb64170622b8c3"
+    },
+    {
+      "path": "cli/src/graphql/system-installation.ts",
+      "bytes": 6666,
+      "sha256": "c72d2b1c6aa0dc9a0245dcc463e622e75f7e3acb0625fc53eb5c30e7f8b64160"
+    },
+    {
+      "path": "cli/src/graphql/usage.ts",
+      "bytes": 14532,
+      "sha256": "d2c9739e1f9725c3c11597d8f399728852a91b6974102335e7407f727278ae00"
+    },
+    {
+      "path": "cli/src/launcher.js",
+      "bytes": 346,
+      "sha256": "ffeea02a504dc811cad4fa41b2501fb851672cfe990b65bb17fb105ff0eaa503"
+    },
+    {
+      "path": "cli/src/main.ts",
+      "bytes": 2624,
+      "sha256": "ba0889db9f2819c8cd68efc16b56fbec353b3e1b4ad3912a4d3ab8160077550e"
+    },
+    {
+      "path": "cli/src/mcp/attachments.ts",
+      "bytes": 2119,
+      "sha256": "226642a6a1563eec79d90238041eb8d1e18d3a739837538cfb81beb392f1f0bc"
+    },
+    {
+      "path": "cli/src/mcp/calendar/client.ts",
+      "bytes": 15420,
+      "sha256": "a58ef442dc15fe382a10ea2f5853f9a747abd98192717258f0bae8e3d729395c"
+    },
+    {
+      "path": "cli/src/mcp/calendar/diagnostics.ts",
+      "bytes": 2658,
+      "sha256": "99ab3b3918b588dceeb9b56bcb33048914a125be0939e5ef4fe9aa8b20c657ab"
+    },
+    {
+      "path": "cli/src/mcp/calendar/info.ts",
+      "bytes": 7816,
+      "sha256": "279330dd214436c3cba87ef46475498bc0470ebc991c3dba167cffe98473d6d9"
+    },
+    {
+      "path": "cli/src/mcp/calendar/lock.ts",
+      "bytes": 1353,
+      "sha256": "345ce36731420a3e8dade14a952a2c494bff8dd1f2aed7379d062f5d351dc6cf"
+    },
+    {
+      "path": "cli/src/mcp/calendar/markers.ts",
+      "bytes": 4496,
+      "sha256": "30b6f0a20e0cad58bc5d6dc8eb6aa8f0d99b33f33e332df4d30f7b828c2c4276"
+    },
+    {
+      "path": "cli/src/mcp/calendar/protocol.ts",
+      "bytes": 4843,
+      "sha256": "17fe59a15d1cb0c012840691cb7b701285d3e504feb3e491b457b99962cc531b"
+    },
+    {
+      "path": "cli/src/mcp/calendar/recurrence-rule.ts",
+      "bytes": 4475,
+      "sha256": "0659fbabe0d961f965859c7de596e06cb1c23534a103a7dc65513cea8b2759c1"
+    },
+    {
+      "path": "cli/src/mcp/calendar/recurrence-state.ts",
+      "bytes": 4825,
+      "sha256": "4c7301480b185280284e711929ac468415873e2a76a18f3b7ea167adbd1c695e"
+    },
+    {
+      "path": "cli/src/mcp/calendar/recurrence-sync.ts",
+      "bytes": 33818,
+      "sha256": "3b6f189bf9c5e11af3bb35615ce9d53f0d00d3def4f97fd762993c3b7864d131"
+    },
+    {
+      "path": "cli/src/mcp/calendar/routing.ts",
+      "bytes": 1337,
+      "sha256": "0270e67b9044ae6692592ddafb033a5afdcfde095beef485b0b2af213a13c59f"
+    },
+    {
+      "path": "cli/src/mcp/calendar/sync.ts",
+      "bytes": 91585,
+      "sha256": "10c4fc84145e5891d8b157e565cd83a1fad02ddddb1d68ec52787d1c12173f83"
+    },
+    {
+      "path": "cli/src/mcp/calendar/timing.ts",
+      "bytes": 4721,
+      "sha256": "f7ee01ef63783bb8d755cc27b58726dbf7977089455322ae0dd13eb9e3acf702"
+    },
+    {
+      "path": "cli/src/mcp/format.ts",
+      "bytes": 10766,
+      "sha256": "7e5333e9a5ecc4b150ce332bfe83aca21cb06ab55ef52cff5ee843301256c358"
+    },
+    {
+      "path": "cli/src/mcp/instance-registry.ts",
+      "bytes": 2408,
+      "sha256": "632fa5a8f66830c230f9f05432c4d2d3ce8f214511e0599491325721b30093b9"
+    },
+    {
+      "path": "cli/src/mcp/instance-session.ts",
+      "bytes": 10707,
+      "sha256": "5bd86fe5fab61889e33e12037b64382673e2b656f957a3ec919dc04a11bd2026"
+    },
+    {
+      "path": "cli/src/mcp/recurrence-history.ts",
+      "bytes": 1963,
+      "sha256": "3a6ce2ad34a9319e640b2dfd70fd5ed67a16ad1839c11685ac5e2d174c072e78"
+    },
+    {
+      "path": "cli/src/mcp/regex-worker.ts",
+      "bytes": 567,
+      "sha256": "7514ba1adf6c507751cff3cab458c143fcd6680b0592718e837ff5991a5795af"
+    },
+    {
+      "path": "cli/src/mcp/resources/about.md",
+      "bytes": 1498,
+      "sha256": "61fe644b476d7ce5d4c748c2f008ccd308c9c8c2a65de1c9758ab5c0931ecb41"
+    },
+    {
+      "path": "cli/src/mcp/resources/automate.md",
+      "bytes": 11438,
+      "sha256": "4e1ad70377e7fdb404cdd3d1a440a3a3899d2ae6c56342d127ae940b08b3c40d"
+    },
+    {
+      "path": "cli/src/mcp/resources/planning.md",
+      "bytes": 13190,
+      "sha256": "2e2b7c626d42295f521b7d7ba4b7407d883b3f1912bdd92ce51b3ed46df40160"
+    },
+    {
+      "path": "cli/src/mcp/resources/records.md",
+      "bytes": 14485,
+      "sha256": "dd1158b45f8dd8074f46642cc35753f4aeac5ff70f70a5d6749f842702bc631c"
+    },
+    {
+      "path": "cli/src/mcp/resources/setup.md",
+      "bytes": 7149,
+      "sha256": "0e89d38e98c3607c085914bfd25de4942be9d41b2b9a7c51db606bbdd3456e6d"
+    },
+    {
+      "path": "cli/src/mcp/resources/shared/authoring.md",
+      "bytes": 2640,
+      "sha256": "daf268717a41136cb15514bbb51e41627b504b2478bf46b3a08d934fa916dbc4"
+    },
+    {
+      "path": "cli/src/mcp/resources/shared/session.md",
+      "bytes": 3675,
+      "sha256": "b49af95ebbfb5ff76ae30353f9f86939504b04dee3b269edf11500698389f98d"
+    },
+    {
+      "path": "cli/src/mcp/resources.ts",
+      "bytes": 3898,
+      "sha256": "b325da10ae692c1ef43a4bec476f9f0cdda6426420d794ec53f7a0be420747fb"
+    },
+    {
+      "path": "cli/src/mcp/schemas.ts",
+      "bytes": 27917,
+      "sha256": "4090578df1c047bf24be1c694fa0c9ab57bee75d34672fe22918c7f2bc5e0909"
+    },
+    {
+      "path": "cli/src/mcp/search.ts",
+      "bytes": 8623,
+      "sha256": "84a5a68a7edef5f6896881b1e391ff24982c28efe2919fd1fa33dae6d07367dd"
+    },
+    {
+      "path": "cli/src/mcp/server.ts",
+      "bytes": 17921,
+      "sha256": "1e9805d5130b1cbcb7d5c102fba76d67e15d563bba43ae85737e079d2bed0fb9"
+    },
+    {
+      "path": "cli/src/mcp/store.ts",
+      "bytes": 39341,
+      "sha256": "52f832f23cf44784bcb72c6c252760da01845b91926b59429a9a2b670f168384"
+    },
+    {
+      "path": "cli/src/mcp/tools/artifact.ts",
+      "bytes": 17421,
+      "sha256": "c42c05ec862cb3887f55a69ea760207fadd5cebf4d49b6c06b090a38d3774b4c"
+    },
+    {
+      "path": "cli/src/mcp/tools/automation-edits.ts",
+      "bytes": 9519,
+      "sha256": "33434f50d6badf45574a7389b7e089db88538b1fbd87d7b64f6b4f1635c01849"
+    },
+    {
+      "path": "cli/src/mcp/tools/capture.ts",
+      "bytes": 13608,
+      "sha256": "63aae2080b0e57038edf2d47db0b67d22675ef4df7c176714e477f57ecdab5a5"
+    },
+    {
+      "path": "cli/src/mcp/tools/content-source.ts",
+      "bytes": 1275,
+      "sha256": "4abdcae50c56fcd2694829998adb0565cc47656b1346af73b484189792d9feb0"
+    },
+    {
+      "path": "cli/src/mcp/tools/entry-file.ts",
+      "bytes": 4984,
+      "sha256": "d66871473b1a23410d0cc345321508b83fd4cadc104e58e63152fab11d67da07"
+    },
+    {
+      "path": "cli/src/mcp/tools/front-matter.ts",
+      "bytes": 9358,
+      "sha256": "2c4b59ef5befe2ebfccc17b510f41abb410212102fa60391aa5e58e0af789027"
+    },
+    {
+      "path": "cli/src/mcp/tools/index-file.ts",
+      "bytes": 9043,
+      "sha256": "4ca306f37afc0272f046c2c466c6ad2e35300733455f922b7797f7d6de2c9437"
+    },
+    {
+      "path": "cli/src/mcp/tools/instance.ts",
+      "bytes": 6005,
+      "sha256": "04042673e8e617301c572f7cafeb973be9019459ca382ab586b1f06827138a82"
+    },
+    {
+      "path": "cli/src/mcp/tools/link-edits.ts",
+      "bytes": 5937,
+      "sha256": "622efe46e8b1ffd094048cb453c3bec5fd073068697b62b9f58061e2266db519"
+    },
+    {
+      "path": "cli/src/mcp/tools/mutation-result.ts",
+      "bytes": 4690,
+      "sha256": "e9bee6552c0a5c0a84321847e45b8de0280117485e03af5373b657d056bd7c92"
+    },
+    {
+      "path": "cli/src/mcp/tools/query.ts",
+      "bytes": 15606,
+      "sha256": "b7a1792f8cae9ebe2bf0d5b47de2cc2128f5b38ba99940b9eb01996d6b8a787d"
+    },
+    {
+      "path": "cli/src/mcp/tools/recurrence.ts",
+      "bytes": 4654,
+      "sha256": "4bdca65a4bfe60cd1caa3f15dabb6acb5abc503e5a9a1bfd0d88051b5e81476a"
+    },
+    {
+      "path": "cli/src/mcp/tools/serialize.ts",
+      "bytes": 4139,
+      "sha256": "e5458f253c2abd4784eee915061d2bfd379c57057017b7ac0ce100d5bd0e3f3a"
+    },
+    {
+      "path": "cli/src/mcp/tools/show.ts",
+      "bytes": 4897,
+      "sha256": "9628ef30d84dd93d1d454ff0f19a8188ab737c04457b06b760d8358b7b6a7f47"
+    },
+    {
+      "path": "cli/src/mcp/tools/update.ts",
+      "bytes": 21151,
+      "sha256": "27a28bc2ebf9751cd1778f49660ab79ec6222933049a195c9f45ab0d154c40df"
+    },
+    {
+      "path": "cli/src/mcp/tools/validate.ts",
+      "bytes": 784,
+      "sha256": "050bc13f8efc15bf45cfefc009596d3894d784f1042806e1ba7e4ba47c71c2db"
+    },
+    {
+      "path": "cli/src/mcp/tools/yaml.ts",
+      "bytes": 832,
+      "sha256": "4faac9a084d564db1d2ae7147f59cda0549d050542c5603da81204083b168f6e"
+    },
+    {
+      "path": "cli/src/semantic/availability.ts",
+      "bytes": 4508,
+      "sha256": "cced7a9cdc1dac963cd0fc472c6afbab220a41338e98d5215a37f8db44aedc14"
+    },
+    {
+      "path": "cli/src/semantic/cache-retention.ts",
+      "bytes": 7901,
+      "sha256": "7d61568a5053dc1dcf5f9cf676f639caa9f814c96fbc56682b6ba37d8cd275e7"
+    },
+    {
+      "path": "cli/src/semantic/documents.ts",
+      "bytes": 5980,
+      "sha256": "a97a4860d67c7ce140d61908395f812244fc7f2d2758c94be1204b8a4131b9c2"
+    },
+    {
+      "path": "cli/src/semantic/embedding.ts",
+      "bytes": 13344,
+      "sha256": "d2b06e69bb0ae601612f86477865084da631862ce28062d1bc51511de9f748ca"
+    },
+    {
+      "path": "cli/src/semantic/reconciler.ts",
+      "bytes": 11157,
+      "sha256": "d21e350d96761e4a0e432ab8204b516166b897f150184551e41887265e55d780"
+    },
+    {
+      "path": "cli/src/semantic/search.ts",
+      "bytes": 32365,
+      "sha256": "936102f1f373c635f09bfe79136cff13189a3a0bb8c22b87ce13511177460a70"
+    },
+    {
+      "path": "cli/src/semantic/source-version.ts",
+      "bytes": 1029,
+      "sha256": "f502d9b7e6f8582345af1cdd2dc18f05ba3f396f3d5537b27db73e97647d139e"
+    },
+    {
+      "path": "cli/src/templates.d.ts",
+      "bytes": 368,
+      "sha256": "0ed39d495f258a24f92fb42aab584f2291f1d99b3849c546cf19388fa56a1f98"
+    },
+    {
+      "path": "cli/src/version.ts",
+      "bytes": 501,
+      "sha256": "8fc5f2933b974a6a2d3fd9c1584862a1044e8e7d5654197a6b802a45b7eaa0c0"
+    },
+    {
+      "path": "cli/src/web/auth.ts",
+      "bytes": 8670,
+      "sha256": "263c852d8cd4c0b995c953c9be123fd2b7af4808d0b35edc4338a5d028ed09c1"
+    },
+    {
+      "path": "cli/src/web/catalogue.ts",
+      "bytes": 5015,
+      "sha256": "c8d877f5e5346b16b61cd22517dd1a7c4bca82a2a7848e3869b7ef67e2d7468a"
+    },
+    {
+      "path": "cli/src/web/file-grants.ts",
+      "bytes": 1661,
+      "sha256": "b7135061f2d97c6f3c3dcc407ea6d3c066f21d03ae383323a8fb9435a411956f"
+    },
+    {
+      "path": "cli/src/web/handoff.ts",
+      "bytes": 2374,
+      "sha256": "e67791750857ea01da583c5be5653a13cd9570eac6fe363ce014a454149ecfff"
+    },
+    {
+      "path": "cli/src/web/locate.ts",
+      "bytes": 3002,
+      "sha256": "f2f47ada31698dfd4f5c111ee49a7538d39b666f546adb855993a65095d79ed6"
+    },
+    {
+      "path": "cli/src/web/query.ts",
+      "bytes": 5226,
+      "sha256": "c332fdd20dbecc7ac45febd3fd03ab6b66a24bc3a91e969f878d981e14ef7def"
+    },
+    {
+      "path": "cli/src/web/server.ts",
+      "bytes": 33863,
+      "sha256": "442e446bebcbe44891fbb2c03c655afae62b82cb0433e8911ed750c32c2d61a6"
+    },
+    {
+      "path": "cli/src/web/summary.ts",
+      "bytes": 2107,
+      "sha256": "89ec04253a5df1c435e1325719cfecfa89b22442ae4ae414fbb3a55e2ac6475e"
+    }
+  ],
+  "snapshotSha256": "32893c9aea926210af5b7dc9782fccf84893038336b00175951c7aea1728d0ed",
+  "system": {
+    "platform": "darwin",
+    "arch": "arm64",
+    "release": "27.0.0",
+    "cpu": "Apple M3 Ultra",
+    "cores": 32,
+    "ramGiB": 256,
+    "node": "v26.12.1"
+  },
+  "method": {
+    "warmups": 5,
+    "sourceSamples": 30,
+    "rankedSamples": 30,
+    "rankedSamplesAt10000OrMore": 10,
+    "dimension": 1024,
+    "cache": "Warm OS filesystem cache and completed native semantic index; no file watchers or periodic reconciliation.",
+    "sourceOnly": "Lifecycle source-refresh cost: actual Store.rebuild plus loaded-hash access; unchanged bytes and exact source hash asserted. This phase is outside retrieval in the optimized implementation.",
+    "ranked": "Sequential lifecycle index-readiness barrier then read-only SemanticSearchService.search; includes loaded-hash comparison, generation binding or legacy model checks, native index validation and vector ranking. Source rebuilds and model discovery per query are measured explicitly.",
+    "vectors": "Deterministic SHA256-seeded 1024-dimensional vectors (or --dimension); document and query inference excluded. Actual configured Ollama /api/tags identity calls are measured during ranked searches.",
+    "setup": "Index creation and model-generation discovery excluded. The pinned implementation resolves and verifies its real native Ollama digest once before synthetic indexing. The legacy implementation captures identity once to avoid HTTP checks for synthetic document batches.",
+    "fixture": "Existing synthetic writeSemanticFixture;12 entries share a weekly note, most remaining records occupy individual Markdown files.",
+    "percentiles": "Nearest-rank percentiles; sequential single client; phase percentiles must not be added to derive a total percentile.",
+    "exclusions": "No real embedding inference, daemon socket transport, GraphQL filtering/serialization, first indexing or cold disk cache. This is a freshness/retrieval benchmark, not embedding quality or complete production latency.",
+    "checks": "Warm queries must embed no documents, preserve native table version/checkpoint and source/index file metadata, and produce identical handles per query within and across revisions. Loaded-version implementations must rebuild no source during retrieval. Generation-bound implementations must perform no discovery during retrieval and must use the same captured generation for documents and queries."
+  },
+  "results": [
+    {
+      "records": 100,
+      "files": 94,
+      "bytes": 31269,
+      "model": "qwen3-embedding:0.6b",
+      "modelIdentity": "qwen3-embedding:0.6b@ac6da0dfba84a81fdbfbaf330198c33cd77c4cdfc53e8bc50eb581914a15621d\nquery-instruction-v1:Given a web search query, retrieve relevant passages that answer the query\ncontext:8192",
+      "modelEndpoint": "http://127.0.0.1:11434",
+      "sourceOnly": {
+        "refresh": {
+          "samples": 30,
+          "p50Ms": 5.260082999999952,
+          "p95Ms": 5.987333999999976,
+          "minMs": 4.066332999999986,
+          "maxMs": 6.052791000000013,
+          "meanMs": 5.195195699999999
+        },
+        "fingerprint": {
+          "samples": 30,
+          "p50Ms": 0.003958000000011452,
+          "p95Ms": 0.005541999999991276,
+          "minMs": 0.0009170000000153777,
+          "maxMs": 0.006750000000010914,
+          "meanMs": 0.0035694666666662065
+        },
+        "total": {
+          "samples": 30,
+          "p50Ms": 5.264124999999979,
+          "p95Ms": 5.990833999999978,
+          "minMs": 4.067250000000001,
+          "maxMs": 6.0573750000000075,
+          "meanMs": 5.198765166666665
+        }
+      },
+      "ranked": {
+        "total": {
+          "samples": 30,
+          "p50Ms": 1.0895419999999945,
+          "p95Ms": 1.5393750000000068,
+          "minMs": 0.9602920000000381,
+          "maxMs": 1.6640409999999974,
+          "meanMs": 1.1595888333333315
+        },
+        "ensureCurrent": {
+          "samples": 30,
+          "p50Ms": 0.003291999999987638,
+          "p95Ms": 0.006959000000051674,
+          "minMs": 0.0019169999999917309,
+          "maxMs": 0.007875000000012733,
+          "meanMs": 0.0036638999999998607
+        },
+        "serviceSearch": {
+          "samples": 30,
+          "p50Ms": 1.0855829999999855,
+          "p95Ms": 1.5355420000000208,
+          "minMs": 0.9574590000000285,
+          "maxMs": 1.657624999999996,
+          "meanMs": 1.1559249333333317
+        },
+        "identity": {
+          "samples": 30,
+          "p50Ms": 0,
+          "p95Ms": 0,
+          "minMs": 0,
+          "maxMs": 0,
+          "meanMs": 0
+        },
+        "identityCallsPerQuery": [
+          0
+        ],
+        "generationResolutionsPerQuery": [
+          0
+        ],
+        "pinnedQueryGeneration": "qwen3-embedding:0.6b@ac6da0dfba84a81fdbfbaf330198c33cd77c4cdfc53e8bc50eb581914a15621d\nquery-instruction-v1:Given a web search query, retrieve relevant passages that answer the query\ncontext:8192",
+        "sourceRebuildsPerQuery": [
+          0
+        ],
+        "documentEmbeddings": 0,
+        "queryEmbeddings": 35,
+        "nativeStorageUnchanged": true,
+        "sourceAndIndexFilesUnchanged": true,
+        "rankedHandlesEqualToComparison": true
+      },
+      "rankedHandles": {
+        "How can I recover my notes if my computer disappears?": [
+          "#action/2026-06-09-distractor-000052",
+          "#action/2026-06-09-distractor-000076",
+          "#project/2026-06-08-air-gap",
+          "#action/2026-06-08-handrail",
+          "#project/2026-06-09-distractor-000075",
+          "#artifact/2026-06-09-distractor-000068",
+          "#artifact/2026-06-09-distractor-000080",
+          "#action/2026-06-08-small-envelope",
+          "#entry/2026-06-08T09:09",
+          "#artifact/2026-06-09-distractor-000086"
+        ],
+        "Cold copy": [
+          "#project/2026-06-08-small-envelope",
+          "#action/2026-06-08-handrail",
+          "#artifact/2026-06-09-distractor-000098",
+          "#entry/2026-06-08T09:00",
+          "#artifact/2026-06-09-distractor-000053",
+          "#project/2026-06-09-distractor-000051",
+          "#entry/2026-06-08T09:05",
+          "#action/2026-06-09-distractor-000058",
+          "#project/2026-06-08-handrail",
+          "#action/2026-06-09-distractor-000052"
+        ],
+        "What did we decide about the ending without any dialogue?": [
+          "#artifact/2026-06-09-distractor-000086",
+          "#action/2026-06-09-distractor-000055",
+          "#project/2026-06-09-distractor-000042",
+          "#entry/2026-06-08T09:09",
+          "#action/2026-06-08-green-room",
+          "#project/2026-06-08-paper-trail",
+          "#entry/2026-06-08T09:00",
+          "#action/2026-06-09-distractor-000079",
+          "#action/2026-06-09-distractor-000094",
+          "#action/2026-06-08-paper-trail"
+        ]
+      }
+    },
+    {
+      "records": 1000,
+      "files": 994,
+      "bytes": 310794,
+      "model": "qwen3-embedding:0.6b",
+      "modelIdentity": "qwen3-embedding:0.6b@ac6da0dfba84a81fdbfbaf330198c33cd77c4cdfc53e8bc50eb581914a15621d\nquery-instruction-v1:Given a web search query, retrieve relevant passages that answer the query\ncontext:8192",
+      "modelEndpoint": "http://127.0.0.1:11434",
+      "sourceOnly": {
+        "refresh": {
+          "samples": 30,
+          "p50Ms": 49.77066700000023,
+          "p95Ms": 53.64520900000002,
+          "minMs": 46.61862499999984,
+          "maxMs": 55.70683299999996,
+          "meanMs": 50.150566700000006
+        },
+        "fingerprint": {
+          "samples": 30,
+          "p50Ms": 0.002708999999867956,
+          "p95Ms": 0.00454200000012861,
+          "minMs": 0.0019579999998313724,
+          "maxMs": 0.012334000000009837,
+          "meanMs": 0.003204133333341967
+        },
+        "total": {
+          "samples": 30,
+          "p50Ms": 49.77375000000029,
+          "p95Ms": 53.64850000000001,
+          "minMs": 46.62129199999981,
+          "maxMs": 55.71016600000007,
+          "meanMs": 50.15377083333335
+        }
+      },
+      "ranked": {
+        "total": {
+          "samples": 30,
+          "p50Ms": 1.9456249999998363,
+          "p95Ms": 2.2604999999998654,
+          "minMs": 1.7705829999999878,
+          "maxMs": 2.5780829999998787,
+          "meanMs": 2.000199999999965
+        },
+        "ensureCurrent": {
+          "samples": 30,
+          "p50Ms": 0.003541999999924883,
+          "p95Ms": 0.010041999999884865,
+          "minMs": 0.002124999999978172,
+          "maxMs": 0.012874999999894499,
+          "meanMs": 0.004206933333261986
+        },
+        "serviceSearch": {
+          "samples": 30,
+          "p50Ms": 1.9434999999998581,
+          "p95Ms": 2.2548750000000837,
+          "minMs": 1.7673329999997804,
+          "maxMs": 2.573957999999948,
+          "meanMs": 1.995993066666703
+        },
+        "identity": {
+          "samples": 30,
+          "p50Ms": 0,
+          "p95Ms": 0,
+          "minMs": 0,
+          "maxMs": 0,
+          "meanMs": 0
+        },
+        "identityCallsPerQuery": [
+          0
+        ],
+        "generationResolutionsPerQuery": [
+          0
+        ],
+        "pinnedQueryGeneration": "qwen3-embedding:0.6b@ac6da0dfba84a81fdbfbaf330198c33cd77c4cdfc53e8bc50eb581914a15621d\nquery-instruction-v1:Given a web search query, retrieve relevant passages that answer the query\ncontext:8192",
+        "sourceRebuildsPerQuery": [
+          0
+        ],
+        "documentEmbeddings": 0,
+        "queryEmbeddings": 35,
+        "nativeStorageUnchanged": true,
+        "sourceAndIndexFilesUnchanged": true,
+        "rankedHandlesEqualToComparison": true
+      },
+      "rankedHandles": {
+        "How can I recover my notes if my computer disappears?": [
+          "#artifact/2026-06-09-distractor-000386",
+          "#action/2026-06-09-distractor-000424",
+          "#action/2026-06-09-distractor-000052",
+          "#artifact/2026-06-09-distractor-000956",
+          "#action/2026-06-09-distractor-000715",
+          "#project/2026-06-09-distractor-000222",
+          "#project/2026-06-09-distractor-000363",
+          "#artifact/2026-06-09-distractor-000599",
+          "#project/2026-06-09-distractor-000564",
+          "#action/2026-06-09-distractor-000076"
+        ],
+        "Cold copy": [
+          "#artifact/2026-06-09-distractor-000203",
+          "#action/2026-06-09-distractor-000451",
+          "#project/2026-06-08-small-envelope",
+          "#artifact/2026-06-09-distractor-000857",
+          "#action/2026-06-09-distractor-000934",
+          "#action/2026-06-09-distractor-000610",
+          "#artifact/2026-06-09-distractor-000494",
+          "#action/2026-06-09-distractor-000376",
+          "#artifact/2026-06-09-distractor-000713",
+          "#action/2026-06-09-distractor-000712"
+        ],
+        "What did we decide about the ending without any dialogue?": [
+          "#project/2026-06-09-distractor-000228",
+          "#action/2026-06-09-distractor-000607",
+          "#action/2026-06-09-distractor-000862",
+          "#project/2026-06-09-distractor-000675",
+          "#artifact/2026-06-09-distractor-000404",
+          "#action/2026-06-09-distractor-000937",
+          "#action/2026-06-09-distractor-000502",
+          "#action/2026-06-09-distractor-000454",
+          "#artifact/2026-06-09-distractor-000506",
+          "#artifact/2026-06-09-distractor-000809"
+        ]
+      }
+    },
+    {
+      "records": 10000,
+      "files": 9994,
+      "bytes": 3133044,
+      "model": "qwen3-embedding:0.6b",
+      "modelIdentity": "qwen3-embedding:0.6b@ac6da0dfba84a81fdbfbaf330198c33cd77c4cdfc53e8bc50eb581914a15621d\nquery-instruction-v1:Given a web search query, retrieve relevant passages that answer the query\ncontext:8192",
+      "modelEndpoint": "http://127.0.0.1:11434",
+      "sourceOnly": {
+        "refresh": {
+          "samples": 30,
+          "p50Ms": 504.72208300000057,
+          "p95Ms": 528.9055000000008,
+          "minMs": 479.16920799999934,
+          "maxMs": 529.0353749999995,
+          "meanMs": 504.5629624666669
+        },
+        "fingerprint": {
+          "samples": 30,
+          "p50Ms": 0.0027500000014697434,
+          "p95Ms": 0.0036670000008598436,
+          "minMs": 0.002207999999882304,
+          "maxMs": 0.00370900000052643,
+          "meanMs": 0.0028361666668691517
+        },
+        "total": {
+          "samples": 30,
+          "p50Ms": 504.72520800000166,
+          "p95Ms": 528.9080830000003,
+          "minMs": 479.1715829999994,
+          "maxMs": 529.038125000001,
+          "meanMs": 504.5657986333337
+        }
+      },
+      "ranked": {
+        "total": {
+          "samples": 10,
+          "p50Ms": 5.304667000000336,
+          "p95Ms": 5.7384579999998095,
+          "minMs": 5.051666999999725,
+          "maxMs": 5.7384579999998095,
+          "meanMs": 5.374629199999982
+        },
+        "ensureCurrent": {
+          "samples": 10,
+          "p50Ms": 0.005042000000685221,
+          "p95Ms": 0.006500000003143214,
+          "minMs": 0.003958999997848878,
+          "maxMs": 0.006500000003143214,
+          "meanMs": 0.005066799999985961
+        },
+        "serviceSearch": {
+          "samples": 10,
+          "p50Ms": 5.299542000000656,
+          "p95Ms": 5.731957999996666,
+          "minMs": 5.047708000001876,
+          "maxMs": 5.731957999996666,
+          "meanMs": 5.369562399999995
+        },
+        "identity": {
+          "samples": 10,
+          "p50Ms": 0,
+          "p95Ms": 0,
+          "minMs": 0,
+          "maxMs": 0,
+          "meanMs": 0
+        },
+        "identityCallsPerQuery": [
+          0
+        ],
+        "generationResolutionsPerQuery": [
+          0
+        ],
+        "pinnedQueryGeneration": "qwen3-embedding:0.6b@ac6da0dfba84a81fdbfbaf330198c33cd77c4cdfc53e8bc50eb581914a15621d\nquery-instruction-v1:Given a web search query, retrieve relevant passages that answer the query\ncontext:8192",
+        "sourceRebuildsPerQuery": [
+          0
+        ],
+        "documentEmbeddings": 0,
+        "queryEmbeddings": 15,
+        "nativeStorageUnchanged": true,
+        "sourceAndIndexFilesUnchanged": true,
+        "rankedHandlesEqualToComparison": true
+      },
+      "rankedHandles": {
+        "How can I recover my notes if my computer disappears?": [
+          "#artifact/2026-06-09-distractor-001085",
+          "#artifact/2026-06-09-distractor-008081",
+          "#action/2026-06-09-distractor-002164",
+          "#artifact/2026-06-09-distractor-002417",
+          "#artifact/2026-06-09-distractor-004475",
+          "#artifact/2026-06-09-distractor-003152",
+          "#project/2026-06-09-distractor-004686",
+          "#project/2026-06-09-distractor-009606",
+          "#action/2026-06-09-distractor-002752",
+          "#artifact/2026-06-09-distractor-005264"
+        ],
+        "Cold copy": [
+          "#project/2026-06-09-distractor-007086",
+          "#action/2026-06-09-distractor-007825",
+          "#project/2026-06-09-distractor-003126",
+          "#artifact/2026-06-09-distractor-005324",
+          "#action/2026-06-09-distractor-007732",
+          "#artifact/2026-06-09-distractor-009668",
+          "#action/2026-06-09-distractor-001051",
+          "#artifact/2026-06-09-distractor-006134",
+          "#project/2026-06-09-distractor-005193",
+          "#project/2026-06-09-distractor-006687"
+        ],
+        "What did we decide about the ending without any dialogue?": [
+          "#artifact/2026-06-09-distractor-005537",
+          "#action/2026-06-09-distractor-007276",
+          "#artifact/2026-06-09-distractor-003596",
+          "#project/2026-06-09-distractor-001905",
+          "#project/2026-06-09-distractor-000228",
+          "#project/2026-06-09-distractor-006774",
+          "#project/2026-06-09-distractor-008772",
+          "#project/2026-06-09-distractor-003162",
+          "#project/2026-06-09-distractor-001104",
+          "#artifact/2026-06-09-distractor-004004"
+        ]
+      }
+    }
+  ]
+}

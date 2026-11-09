@@ -49,4 +49,17 @@ describe('user action failure toast', () => {
     expect(toast.textContent).toBe('Second failure');
     vi.advanceTimersByTime(3000); expect(toast.hidden).toBe(true);
   });
+
+  it('keeps an explicit navigation action available until it is activated', () => {
+    vi.useFakeTimers();
+    const run = vi.fn();
+    showActionFailure('This entry is outside the flow search.', { label: 'Open in all entries', run });
+    const toast = document.getElementById('action-toast')!;
+    vi.advanceTimersByTime(ACTION_TOAST_MS * 2);
+    expect(toast.hidden).toBe(false);
+    expect(run).not.toHaveBeenCalled();
+    toast.querySelector<HTMLButtonElement>('button')!.click();
+    expect(run).toHaveBeenCalledOnce();
+    expect(toast.hidden).toBe(true);
+  });
 });

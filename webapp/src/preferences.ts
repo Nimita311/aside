@@ -7,6 +7,8 @@ export interface DateTimePreferences {
   timeFormat: TimeFormat;
   dateFormat?: DateFormat;
   timeStyle?: DisplayStyle;
+  // Calendar columns use JavaScript's weekday indices: Sunday = 0.
+  weekStartsOn?: number;
 }
 
 const DISPLAY_STYLES = ['short', 'medium', 'long', 'full'] as const;
@@ -18,6 +20,10 @@ export function timeStyle(value: string | null): DisplayStyle {
 }
 export function timeFormat(value: string | null): TimeFormat {
   return value === '12h' || value === '24h' ? value : 'locale';
+}
+
+export function weekStartsOn(value: string | null): number {
+  return value !== null && /^[0-6]$/.test(value) ? Number(value) : 1;
 }
 
 export function animationSpeed(value: string | null): number {

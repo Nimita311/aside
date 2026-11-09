@@ -34,6 +34,8 @@ describe('JSON-RPC frame limit', () => {
 
   it('closes the connection when a line exceeds the limit and fails pending requests as disconnected', async () => {
     const { peer, client } = await pair(1024);
+    // Observe rejection before the socket closes, rather than leaving it
+    // unhandled while waiting for the client's close notification.
     const disconnected = expect(peer.request('status')).rejects.toBeInstanceOf(RpcDisconnected);
     client.resume(); // Observe EOF: an unread socket never reports the remote close.
     client.write('x'.repeat(2048));

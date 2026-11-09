@@ -10,3 +10,5 @@
   description: "A deliberately empty artifact document."
 - id: 2026-10-12-diagram-error
   description: "An intentionally broken diagram keeps its source readable and offers Retry."
+- id: 2026-10-12-recent-decisions
+  description: "An agent-defined entry flow for recent decisions and review notes."

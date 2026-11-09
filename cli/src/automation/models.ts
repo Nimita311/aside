@@ -1,10 +1,11 @@
 import { spawn, type ChildProcess } from 'node:child_process';
-import { accessSync, constants, existsSync, mkdirSync, readFileSync, realpathSync, renameSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
+import { accessSync, constants, mkdirSync, readFileSync, realpathSync, renameSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
 import { createHash, randomUUID } from 'node:crypto';
 import { homedir } from 'node:os';
 import { delimiter, dirname, isAbsolute, join, resolve } from 'node:path';
-import { parseConfig } from '../core/parser.js';
 import type { ExecutionConfig } from '../core/automation.js';
+import {assertExecutionCwd} from '../runtime/execution-cwd.js';
+import {resolveExecutionContext, type ExecutionContextSnapshot} from '../core/execution-context.js';
 import { MODEL_CATALOG_LOCK_TIMEOUT_MS, MODEL_DISCOVERY_MAX_BYTES, MODEL_DISCOVERY_MAX_MODELS, MODEL_DISCOVERY_TERMINATE_TIMEOUT_MS, MODEL_DISCOVERY_TIMEOUT_MS } from '../core/system-config.js';
 import { daemonPaths } from '../daemon/paths.js';
 import { FileLock } from '../daemon/filelock.js';
@@ -17,7 +18,7 @@ export interface ModelOption {
   availability: 'AVAILABLE' | 'UNKNOWN'; reason?: string;
 }
 export interface ModelCatalogSnapshot { models: ModelOption[]; diagnostics: string[]; revision: string }
-export interface CatalogOptions { refresh?: boolean; signal?: AbortSignal }
+export interface CatalogOptions { refresh?: boolean; signal?: AbortSignal; executionContext: ExecutionContextSnapshot }
 interface Binding { engine: ModelEngine; model: string; label: string }
 interface SavedCatalog { version: 1; root: string; bindings: Record<string, Binding>; catalogs: Partial<Record<ModelEngine, VendorModel[]>> }
 export type ModelDiscovery = (engine: ModelEngine, command: string, cwd: string, signal: AbortSignal, env: NodeJS.ProcessEnv) => Promise<VendorModel[]>;
@@ -31,16 +32,6 @@ function abortable<T>(work: Promise<T>, signal: AbortSignal): Promise<T> {
     signal.addEventListener('abort', abort, { once: true });
     work.then(resolveResult, reject).finally(() => signal.removeEventListener('abort', abort)).catch(() => {});
   });
-}
-
-export function readExecutionContext(root: string): { config: ExecutionConfig; cwd: string } {
-  const file = join(root, '.aside');
-  const parsed = existsSync(file) ? parseConfig(readFileSync(file, 'utf8')) : { value: {}, issues: [] };
-  if (parsed.issues.some(issue => issue.severity === 'error')) throw new Error(`Invalid execution config: ${parsed.issues.map(issue => issue.message).join('; ')}`);
-  const config = parsed.value.execution ?? {};
-  const cwd = resolve(root, config.cwd ?? '.');
-  if (!statSync(cwd).isDirectory()) throw new Error(`Execution cwd is not a directory: ${cwd}`);
-  return { config, cwd };
 }
 
 // Spawn and discovery use the same PATH and effective working directory.
@@ -134,8 +125,8 @@ function validateVendorModels(models: VendorModel[]): VendorModel[] {
 function fileStamp(path: string): string {
   try { const stat = statSync(path); return `${realpathSync(path)}:${stat.dev}:${stat.ino}:${stat.size}:${stat.mtimeMs}:${stat.ctimeMs}`; } catch { return `${path}:absent`; }
 }
-function fingerprint(root: string, cwd: string, config: ExecutionConfig, env: NodeJS.ProcessEnv, commands: Partial<Record<ModelEngine, string>>, publication = false): string {
-  const files = [join(root, '.aside'), join(env.CODEX_HOME ?? join(env.HOME ?? homedir(), '.codex'), 'config.toml'),
+function fingerprint(root: string, cwd: string, config: ExecutionConfig, env: NodeJS.ProcessEnv, commands: Partial<Record<ModelEngine, string>>, executionRevision: string, publication = false): string {
+  const files = [join(env.CODEX_HOME ?? join(env.HOME ?? homedir(), '.codex'), 'config.toml'),
     join(env.CLAUDE_CONFIG_DIR ?? join(env.HOME ?? homedir(), '.claude'), 'settings.json')];
   // Vendor initialization can update these without changing execution settings.
   // They invalidate cached reads, but do not make their own probe obsolete.
@@ -152,31 +143,35 @@ function fingerprint(root: string, cwd: string, config: ExecutionConfig, env: No
     const path = executablePath(definition.command, cwd, env);
     return [[name, path ? fileStamp(path) : null]];
   });
-  return hash(JSON.stringify({ root, cwd, config, environment, namedCommands, commands: Object.entries(commands).map(([engine, path]) => [engine, path ? fileStamp(path) : null]), files: files.map(fileStamp) }));
+  return hash(JSON.stringify({ root, cwd, config, executionRevision, environment, namedCommands, commands: Object.entries(commands).map(([engine, path]) => [engine, path ? fileStamp(path) : null]), files: files.map(fileStamp) }));
 }
 
 export class ModelCatalog {
   private entries = new Map<string, { fingerprint: string; snapshot: ModelCatalogSnapshot }>();
+  private contexts = new Map<string, string>();
   private pending = new Map<string, { controller: AbortController; work: Promise<ModelCatalogSnapshot>; subscribers: number; settled: boolean }>();
   constructor(private options: ModelCatalogOptions = {}) {}
-  async for(root: string, options: CatalogOptions = {}): Promise<ModelCatalogSnapshot> {
+  async for(root: string, options: CatalogOptions): Promise<ModelCatalogSnapshot> {
+    const { config, cwd } = resolveExecutionContext(options?.executionContext);
     options.signal?.throwIfAborted();
     root = resolve(root);
     const env = this.options.env?.() ?? process.env;
     const directory = this.options.stateDirectory ?? stateDirectory(env);
     const key = cachePath(root, directory);
-    const { config, cwd } = readExecutionContext(root);
+    this.contexts.set(key, options.executionContext.revision);
+    assertExecutionCwd(cwd);
     const commands = Object.fromEntries((['codex', 'claude'] as const).map(engine => [engine, executablePath(engine, cwd, env)])) as Partial<Record<ModelEngine, string>>;
-    const version = fingerprint(root, cwd, config, env, commands);
-    const publication = fingerprint(root, cwd, config, env, commands, true);
+    const version = fingerprint(root, cwd, config, env, commands, options.executionContext.revision);
+    const publication = fingerprint(root, cwd, config, env, commands, options.executionContext.revision, true);
     const cached = this.entries.get(key);
     if (!options.refresh && cached?.fingerprint === version) return structuredClone(cached.snapshot);
     const currentFingerprint = (guard = false) => {
       try {
         const currentEnv = this.options.env?.() ?? process.env;
-        const context = readExecutionContext(root);
+        if (this.contexts.get(key) !== options.executionContext.revision) return undefined;
+        const context = resolveExecutionContext(options.executionContext);
         const installed = Object.fromEntries((['codex', 'claude'] as const).map(engine => [engine, executablePath(engine, context.cwd, currentEnv)]));
-        return fingerprint(root, context.cwd, context.config, currentEnv, installed, guard);
+        return fingerprint(root, context.cwd, context.config, currentEnv, installed, options.executionContext.revision, guard);
       } catch { return undefined; }
     };
     const current = () => currentFingerprint(true) === publication;
@@ -295,7 +290,7 @@ export class ModelCatalog {
 }
 
 const catalog = new ModelCatalog();
-export const catalogFor = (root: string, options: CatalogOptions = {}) => catalog.for(root, options);
+export const catalogFor = (root: string, options: CatalogOptions) => catalog.for(root, options);
 const discoverModels: ModelDiscovery = (engine, command, cwd, signal, env) => engine === 'codex'
   ? discoverCodexModels(command, cwd, signal, env) : discoverClaudeModels(command, cwd, signal, env);
 

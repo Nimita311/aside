@@ -1,4 +1,4 @@
-import { formatScalar } from '../mcp/format.js';
+import { formatScalar } from '../core/text.js';
 
 export interface HealthCheck {
   code: string;

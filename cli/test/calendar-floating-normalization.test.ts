@@ -1,12 +1,14 @@
+import {calendarMutationFixture} from './calendar-fixture.js';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { execFileSync } from 'node:child_process';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { scheduleInstant, schedulingIssues, wallTimeAt } from '../src/core/scheduling.js';
-import { Store } from '../src/mcp/store.js';
+import { Store } from '../src/source/store.js';
 import { handleCapture } from '../src/mcp/tools/capture.js';
 import { CalClient } from '../src/mcp/calendar/client.js';
-import { CalSync, storeAction } from '../src/mcp/calendar/sync.js';
+import {storeAction} from '../src/mcp/calendar/sync.js';
+import {CalendarSyncFixture as CalSync} from './calendar-fixture.js';
 import { buildMarker } from '../src/mcp/calendar/markers.js';
 import { eventTimingDiagnostic } from '../src/mcp/calendar/timing.js';
 import type { CalEvent } from '../src/mcp/calendar/protocol.js';
@@ -39,7 +41,7 @@ function fixture({ done = false, scheduled = '2026-03-08T02:30', duration, timez
     return { eventId: eid };
   });
   const remove = vi.spyOn(cal, 'deleteEvent').mockImplementation(async ({ eventId }) => ({ deleted: events.delete(eventId) }));
-  const sync = new CalSync(cal, 'work', store); fixtures.push({ dir, store, sync });
+  const sync = new CalSync(cal, 'work', store, undefined, undefined, calendarMutationFixture(store)); fixtures.push({ dir, store, sync });
   return { dir, store, sync, id, cal, events, list, get, upsert, remove, action: () => storeAction(store, id)!, file: store.getActionFile(id)! };
 }
 function deferred<T>() { let resolve!: (value: T) => void; const promise = new Promise<T>(r => { resolve = r; }); return { promise, resolve }; }
@@ -169,7 +171,7 @@ describe('floating Calendar save confirmation', () => {
 it.skipIf(process.platform !== 'darwin')('native parser permits only floating normalization and an unsaved EventKit object retains the effective time', () => {
   const dir = mkdtempSync('/tmp/aside-floating-native-');
   try {
-    const native = readFileSync(new URL('../native/aside-cal/main.swift', import.meta.url), 'utf8');
+    const native = readFileSync(new URL('../native/aside-native/Calendar.swift', import.meta.url), 'utf8');
     const functions = native.slice(native.indexOf('func parseWall('), native.indexOf('// A timed calendar event'));
     const probe = `import Foundation\nimport EventKit\n${functions}\n
 let la = TimeZone(identifier: "America/Los_Angeles")!

@@ -46,7 +46,7 @@ describe('reference type and lifecycle descriptions', () => {
     expect(referenceLabel(link)).toBe('Publish website'); expect(document.activeElement).toBe(link);
     expect(window.getSelection()!.anchorNode).toBe(text); expect(window.getSelection()!.toString()).toBe('Publish');
     refreshDisplay(card, options('2026-10-04T10:02'));
-    expect(link.querySelectorAll('.ref-description')).toHaveLength(1); expect(link.querySelectorAll('.ref-status')).toHaveLength(1);
+    expect(link.querySelectorAll('.ref-description')).toHaveLength(1); expect(link.querySelectorAll('svg.entity-icon')).toHaveLength(1);
   });
   it('keeps a folded active entity name and composed lifecycle information available on the bubble', () => {
     const opts = options(); opts.activeFilter = { type: 'action', id: action };

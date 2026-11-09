@@ -10,6 +10,7 @@ import { compileDelegation, delegationKey, nextDelegation } from './delegation.j
 import type { DelegationDispatchResult, PreparedDelegation } from './delegation-protocol.js';
 import { AUTOMATION_WORKER_TIMEOUT_MS } from '../core/system-config.js';
 import { scheduleInstant } from '../core/scheduling.js';
+import { nativeCommand } from '../native/helper.js';
 
 const port = parentPort!;
 const storage = new RunStorage(workerData.storage);
@@ -102,8 +103,9 @@ async function dispatchDelegation(source: AutomationSource, at: number, automati
 let helper: ReturnType<typeof spawn> | undefined;
 let stopping = false;
 if (process.platform === 'darwin') {
-  if (existsSync(workerData.wakeBinary)) {
-    helper = spawn(workerData.wakeBinary, [], { stdio: ['pipe', 'pipe', 'ignore'] });
+  const command = nativeCommand('system-events', { legacyPath: workerData.wakeBinary, nativePath: workerData.nativeBinary });
+  if (command && existsSync(command.file)) {
+    helper = spawn(command.file, command.args, { stdio: ['pipe', 'pipe', 'ignore'] });
     let buffer = '';
     helper.stdout!.on('data', chunk => {
       buffer += chunk.toString();
@@ -117,7 +119,7 @@ if (process.platform === 'darwin') {
     });
     const unavailable = () => { if (!stopping) { warning = 'Native wake/clock notifications are unavailable; rebuild the CLI. Timer accuracy is limited across sleep and clock changes.'; changed(); } };
     helper.on('error', unavailable); helper.on('exit', unavailable);
-  } else warning = 'Native wake/clock helper is missing; rebuild the CLI.';
+  } else warning = 'Native helper for wake/clock notifications is missing; rebuild the CLI.';
 }
 port.on('message', async message => {
   try {

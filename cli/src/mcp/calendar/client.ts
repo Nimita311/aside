@@ -1,10 +1,9 @@
 import { CALENDAR_HELPER_TIMEOUT_MS, CALENDAR_HELPER_TERMINATE_TIMEOUT_MS, CALENDAR_HELPER_EXIT_DRAIN_MS } from '../../core/system-config.js';
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { existsSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
-import { dirname, join } from 'node:path';
 import { platform, release } from 'node:os';
 import { daemonPaths } from '../../daemon/paths.js';
+import { nativeCommand } from '../../native/helper.js';
 import { diagnoseCalEnvironment, type CalendarDiagnostic } from './diagnostics.js';
 import type {
   UpsertSeriesArgs, UpsertOccurrenceArgs, GetSeriesArgs,
@@ -44,26 +43,21 @@ interface Pending {
   reject: (err: Error) => void;
 }
 
-// The bundled helper sits next to the compiled entrypoint (dist/main.js →
-// dist/aside-cal). ASIDE_CAL_BIN overrides this for dev and tests.
-function bundledBinPath(): string {
-  return join(dirname(fileURLToPath(import.meta.url)), 'aside-cal');
-}
-
 // Locate a usable helper binary, or null when calendar sync can't run here
 // (non-macOS, or the helper hasn't been built). null makes the feature degrade
 // to "unavailable" rather than erroring.
 export function resolveCalBin(): string | null {
-  const candidate = process.env.ASIDE_CAL_BIN || bundledBinPath();
+  const candidate = nativeCommand('calendar', { legacyEnv: 'ASIDE_CAL_BIN' })!.file;
   return diagnoseCalEnvironment(platform(), release(), candidate, existsSync(candidate)) ? null : candidate;
 }
 
-// Talks to one long-lived aside-cal process over JSON/stdio. The process is
+// Talks to one long-lived `aside-native calendar` process over JSON/stdio. The process is
 // spawned lazily on first request and respawned if it dies; it shuts down when
 // the daemon exits (stdin close ends its loop). Requests are matched to responses
 // by a monotonic id.
 export class CalClient {
   private binPath: string | null;
+  private binArgs: string[];
   private proc: ChildProcessWithoutNullStreams | null = null;
   private pending = new Map<string, Pending>();
   private changedListeners = new Set<() => void>();
@@ -76,14 +70,16 @@ export class CalClient {
 
   // Pass a path (or null) to inject one; omit to auto-resolve the bundled binary.
   constructor(binPath?: string | null) {
-    this.expectedPath = binPath || process.env.ASIDE_CAL_BIN || bundledBinPath();
+    const command = nativeCommand('calendar', { legacyPath: binPath, legacyEnv: 'ASIDE_CAL_BIN' });
+    this.expectedPath = command?.file ?? nativeCommand('calendar', { legacyEnv: 'ASIDE_CAL_BIN' })!.file;
+    this.binArgs = command?.args ?? [];
     this.unavailable = binPath === undefined
       ? diagnoseCalEnvironment(platform(), release(), this.expectedPath, existsSync(this.expectedPath))
       : binPath === null ? diagnoseCalEnvironment('darwin', '23', this.expectedPath, false) : undefined;
     this.binPath = binPath === undefined ? (this.unavailable ? null : this.expectedPath) : binPath;
   }
 
-  // Whether a helper binary is present to talk to. calendar_info reports this so
+  // Whether a helper binary is present to talk to. systemInfo.calendar reports this so
   // the agent can explain that sync is macOS-only / not yet built.
   available(): boolean {
     return this.binPath !== null;
@@ -99,11 +95,11 @@ export class CalClient {
     if ((error instanceof CalUnavailable || error instanceof CalError) && error.diagnostic) return { ...error.diagnostic, ...(command ? { command } : {}) };
     const code = error instanceof CalError ? error.code : undefined;
     const recovery = code === 'calendar-not-found' || code === 'calendar-ambiguous' || code === 'calendar-read-only'
-      ? 'Call calendar_info and choose a uniquely named writable calendar, or supply calendar_account; rename calendars/accounts when names still collide.'
+      ? 'Call systemInfo.calendar through query and choose a uniquely named writable calendar, or supply calendarAccount; rename calendars/accounts when names still collide.'
       : code === 'invalid-scheduling' ? 'Correct the action scheduling fields and run aside instance validate before retrying.'
-      : code === 'event-time-unrepresentable' ? 'Sync is blocked in both directions for this action. Fix the Calendar time or explicitly change scheduled/timezone to an unambiguous start, then check calendar_info; name, notes, and duration-only edits do not unblock it.'
+      : code === 'event-time-unrepresentable' ? 'Sync is blocked in both directions for this action. Fix the Calendar time or explicitly change scheduled/timezone to an unambiguous start, then check Instance.calendarSync through query; name, notes, and duration-only edits do not unblock it.'
       : code === 'event-recurring' ? 'Remove the calendar event recurrence to resume sync.'
-      : 'Inspect the helper stderr and daemon log, then call calendar_info again. Pending sync retries remain queued.';
+      : 'Inspect the helper stderr and daemon log, then call systemInfo.calendar through query again. Pending sync retries remain queued.';
     return this.context({ category: code || (command === 'request-access' ? 'authorization-request-failed' : error instanceof CalError ? 'helper-command-failed' : error instanceof CalUnavailable ? 'helper-communication-failed' : 'operation-failed'), reason: error instanceof Error ? error.message : String(error), recovery, ...(command ? { command } : {}) });
   }
 
@@ -193,9 +189,9 @@ export class CalClient {
 
   private ensureStarted(): ChildProcessWithoutNullStreams {
     if (this.proc) return this.proc;
-    if (!this.binPath) throw new CalUnavailable('calendar helper (aside-cal) is not available', this.unavailable);
+    if (!this.binPath) throw new CalUnavailable('calendar helper (aside-native calendar) is not available', this.unavailable);
     this.stderr = '';
-    const proc = spawn(this.binPath, [], { stdio: ['pipe', 'pipe', 'pipe'] });
+    const proc = spawn(this.binPath, this.binArgs, { stdio: ['pipe', 'pipe', 'pipe'] });
     proc.stdout.setEncoding('utf8');
     // Guarded like the terminal events below: a killed helper's late flush
     // must not corrupt the respawned helper's parse buffer.
@@ -219,7 +215,7 @@ export class CalClient {
     };
     const exitError = (code: number | null, signal: NodeJS.Signals | null) => new CalUnavailable(`calendar helper exited (${signal ?? code})`, this.context({
       category: 'helper-exited', reason: `calendar helper exited (${signal ?? code})`,
-      recovery: 'Inspect helper stderr and the daemon log. A fresh helper will be started on the next retry; call calendar_info to check its state.',
+      recovery: 'Inspect helper stderr and the daemon log. A fresh helper will be started on the next retry; call systemInfo.calendar through query to check its state.',
       ...(code !== null ? { exit_code: code } : {}), ...(signal ? { signal } : {}),
     }));
     // A write to a dead helper's stdin emits EPIPE here; route it through fail()
@@ -232,7 +228,7 @@ export class CalClient {
       exitTimer.unref?.();
     });
     proc.on('close', (code, signal) => onTerminate(exitError(code, signal)));
-    proc.on('error', (err) => onTerminate(new CalUnavailable(`calendar helper failed to start: ${err.message}`, this.context({ category: 'helper-start-failed', reason: err.message, recovery: 'Inspect the helper path, executable permissions, stderr and daemon log. Repair the source build, restart the shared daemon if the helper was replaced, then call calendar_info.' }))));
+    proc.on('error', (err) => onTerminate(new CalUnavailable(`calendar helper failed to start: ${err.message}`, this.context({ category: 'helper-start-failed', reason: err.message, recovery: 'Inspect the helper path, executable permissions, stderr and daemon log. Repair the source build, restart the shared daemon if the helper was replaced, then call systemInfo.calendar through query.' }))));
     this.proc = proc;
     return proc;
   }
@@ -294,7 +290,7 @@ export class CalClient {
         timeoutMs > 0
           ? setTimeout(() => {
               if (this.pending.delete(id)) {
-                const diagnostic = this.context({ category: 'helper-timeout', command: cmd, reason: `calendar helper timed out on ${cmd}`, recovery: 'Inspect helper stderr and the daemon log; the command outcome is unknown. Pending sync retries remain queued. Call calendar_info to check recovery.' });
+                const diagnostic = this.context({ category: 'helper-timeout', command: cmd, reason: `calendar helper timed out on ${cmd}`, recovery: 'Inspect helper stderr and the daemon log; the command outcome is unknown. Pending sync retries remain queued. Call systemInfo.calendar through query to check recovery.' });
                         reject(new CalUnavailable(diagnostic.reason, diagnostic));
               }
             }, timeoutMs)

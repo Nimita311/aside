@@ -1,0 +1,4984 @@
+{
+  "system": {
+    "platform": "darwin",
+    "arch": "arm64",
+    "release": "27.0.0",
+    "cpu": "Apple M3 Ultra",
+    "cores": 32,
+    "ramGiB": 256,
+    "node": "v26.12.1"
+  },
+  "fixture": {
+    "records": 300,
+    "chunks": 300,
+    "characters": 68065,
+    "queries": 24,
+    "repeats": 3,
+    "relevanceGrades": {
+      "entry": 3,
+      "action": 2,
+      "project": 1
+    }
+  },
+  "method": {
+    "regex": "Hand-authored case-insensitive regex; matches name/description/body; boolean matches ordered newest created then handle. Patterns supplied beside every query.",
+    "semantic": "Real production SemanticSearchService, explicitly selected dense mode (production default), warm local Ollama model; evaluation-only hybrid BM25+dense RRF comparator; no answer generation or reranking. Production embedQuery hook preserves model instructions. Each query embeds on every repetition.",
+    "percentiles": "Nearest rank; single client sequential; first search includes index construction and one query.",
+    "memory": "Node RSS sampled every 20ms during each model run. Ollama /api/ps model allocation reported separately; not total machine peak.",
+    "quality": "Authored synthetic corpus and relevance judgments; quality is a smoke test, not an independent corpus benchmark."
+  },
+  "sourceHashes": {
+    "src/semantic/search.ts": "9dcb823f639a7c359d27180e5c1642caac765c9a3f5557ccdc5c88640c1eb87d",
+    "src/semantic/documents.ts": "3b497db4822f958ad1810cdf9b3cda7b9534a3842826c1882cb1e8056bbf9f26",
+    "src/semantic/embedding.ts": "76e1985baa1016e7731fdaddce76b3edf1b8eeac81148e531b210846e40ea256",
+    "bench/semantic-fixture.ts": "0e75efc4c47bc3633816542b670f0d3f6e839688b174a2c053aee8283fba573b"
+  },
+  "lancedbVersion": "0.40.0",
+  "ollamaVersion": {
+    "version": "0.40.12"
+  },
+  "models": [
+    {
+      "model": "qwen3-embedding:0.6b",
+      "identity": "qwen3-embedding:0.6b@ac6da0dfba84a81fdbfbaf330198c33cd77c4cdfc53e8bc50eb581914a15621d\nquery-instruction-v1:Given a web search query, retrieve relevant passages that answer the query",
+      "dimension": 1024,
+      "modelWarmupMs": 32.785,
+      "indexedChunks": 300,
+      "firstSearchMs": 4355.413,
+      "initialEmbedding": {
+        "calls": 20,
+        "texts": 301,
+        "totalMs": 4032.964
+      },
+      "initialChunksPerSecond": 68.88,
+      "indexBytes": 1572546,
+      "memory": {
+        "startingNodeRssMiB": 56.194,
+        "peakNodeRssMiB": 183.189,
+        "finalNodeRssMiB": 183.205,
+        "ollamaReportedModelBytes": 4763083079,
+        "ollamaReportedGpuBytes": 4763083079
+      },
+      "restart": {
+        "ms": 67.35,
+        "embeddedTexts": 1,
+        "embeddingCalls": 1,
+        "note": "New service object and connection in the same Node process; persisted index reused. One query embedding is expected; not an OS process restart."
+      },
+      "incrementalEdit": {
+        "handle": "#action/2026-06-08-cold-copy",
+        "foundEditedRecord": true,
+        "ms": 86.045,
+        "embeddedTexts": 2,
+        "embeddingCalls": 2,
+        "note": "One short action body changed; includes one query embedding."
+      },
+      "summary": {
+        "all": {
+          "queries": 24,
+          "recall5": 0.944,
+          "recall10": 0.958,
+          "mrr10": 1,
+          "ndcg10": 0.789,
+          "latency": {
+            "samples": 72,
+            "p50Ms": 65.864,
+            "p95Ms": 77.84
+          }
+        },
+        "paraphrase": {
+          "queries": 12,
+          "recall5": 0.889,
+          "recall10": 0.917,
+          "mrr10": 1,
+          "ndcg10": 0.869,
+          "latency": {
+            "samples": 36,
+            "p50Ms": 66.002,
+            "p95Ms": 77.84
+          }
+        },
+        "exact": {
+          "queries": 12,
+          "recall5": 1,
+          "recall10": 1,
+          "mrr10": 1,
+          "ndcg10": 0.71,
+          "latency": {
+            "samples": 36,
+            "p50Ms": 65.534,
+            "p95Ms": 92.588
+          }
+        }
+      },
+      "results": [
+        {
+          "id": "cold-copy-paraphrase",
+          "category": "paraphrase",
+          "query": "How can I recover my notes if my computer disappears?",
+          "handles": [
+            "#entry/2026-06-08T09:00",
+            "#project/2026-06-08-cold-copy",
+            "#project/2026-06-08-paper-trail",
+            "#action/2026-06-08-cold-copy",
+            "#action/2026-06-08-paper-trail",
+            "#action/2026-06-08-air-gap",
+            "#entry/2026-06-08T09:08",
+            "#entry/2026-06-08T09:07",
+            "#project/2026-06-08-air-gap",
+            "#project/2026-06-09-distractor-000294"
+          ],
+          "metrics": {
+            "recall5": 1,
+            "recall10": 1,
+            "reciprocalRank": 1,
+            "ndcg10": 0.9499797323370371
+          },
+          "latencyMs": [
+            66.32,
+            62.697,
+            64.364
+          ]
+        },
+        {
+          "id": "cold-copy-exact",
+          "category": "exact",
+          "query": "Cold copy",
+          "handles": [
+            "#project/2026-06-08-cold-copy",
+            "#action/2026-06-08-cold-copy",
+            "#entry/2026-06-08T09:00",
+            "#project/2026-06-08-paper-trail",
+            "#action/2026-06-08-paper-trail",
+            "#project/2026-06-08-small-envelope",
+            "#project/2026-06-08-air-gap",
+            "#action/2026-06-08-doorstep",
+            "#action/2026-06-09-distractor-000250",
+            "#action/2026-06-09-distractor-000202"
+          ],
+          "metrics": {
+            "recall5": 1,
+            "recall10": 1,
+            "reciprocalRank": 1,
+            "ndcg10": 0.6806060567602009
+          },
+          "latencyMs": [
+            64.123,
+            62.761,
+            66.26
+          ]
+        },
+        {
+          "id": "quiet-stage-paraphrase",
+          "category": "paraphrase",
+          "query": "What did we decide about the ending without any dialogue?",
+          "handles": [
+            "#entry/2026-06-08T09:01",
+            "#entry/2026-06-08T09:05",
+            "#action/2026-06-08-quiet-stage",
+            "#artifact/2026-06-09-distractor-000158",
+            "#artifact/2026-06-09-distractor-000254",
+            "#artifact/2026-06-09-distractor-000122",
+            "#artifact/2026-06-09-distractor-000146",
+            "#artifact/2026-06-09-distractor-000218",
+            "#artifact/2026-06-09-distractor-000050",
+            "#artifact/2026-06-09-distractor-000062"
+          ],
+          "metrics": {
+            "recall5": 0.6666666666666666,
+            "recall10": 0.6666666666666666,
+            "reciprocalRank": 1,
+            "ndcg10": 0.9049495058460971
+          },
+          "latencyMs": [
+            70.328,
+            65.73,
+            66.605
+          ]
+        },
+        {
+          "id": "quiet-stage-exact",
+          "category": "exact",
+          "query": "Quiet stage",
+          "handles": [
+            "#action/2026-06-08-quiet-stage",
+            "#project/2026-06-08-quiet-stage",
+            "#entry/2026-06-08T09:01",
+            "#action/2026-06-08-air-gap",
+            "#project/2026-06-08-handrail",
+            "#action/2026-06-09-distractor-000202",
+            "#entry/2026-06-08T09:05",
+            "#entry/2026-06-08T09:04",
+            "#project/2026-06-08-doorstep",
+            "#project/2026-06-08-paper-trail"
+          ],
+          "metrics": {
+            "recall5": 1,
+            "recall10": 1,
+            "reciprocalRank": 1,
+            "ndcg10": 0.7591919243197319
+          },
+          "latencyMs": [
+            64.656,
+            65.376,
+            67.688
+          ]
+        },
+        {
+          "id": "doorstep-paraphrase",
+          "category": "paraphrase",
+          "query": "Why were new users abandoning setup before they could try the app?",
+          "handles": [
+            "#entry/2026-06-08T09:02",
+            "#project/2026-06-08-doorstep",
+            "#action/2026-06-08-doorstep",
+            "#entry/2026-06-08T09:05",
+            "#action/2026-06-09-distractor-000226",
+            "#action/2026-06-09-distractor-000070",
+            "#project/2026-06-08-air-gap",
+            "#action/2026-06-09-distractor-000130",
+            "#action/2026-06-09-distractor-000190",
+            "#action/2026-06-09-distractor-000214"
+          ],
+          "metrics": {
+            "recall5": 1,
+            "recall10": 1,
+            "reciprocalRank": 1,
+            "ndcg10": 0.9721212198129313
+          },
+          "latencyMs": [
+            65.864,
+            67.974,
+            67.292
+          ]
+        },
+        {
+          "id": "doorstep-exact",
+          "category": "exact",
+          "query": "Doorstep",
+          "handles": [
+            "#project/2026-06-08-doorstep",
+            "#action/2026-06-08-doorstep",
+            "#entry/2026-06-08T09:02",
+            "#project/2026-06-08-long-hall",
+            "#project/2026-06-08-handrail",
+            "#project/2026-06-08-green-room",
+            "#action/2026-06-08-handrail",
+            "#project/2026-06-08-small-envelope",
+            "#action/2026-06-09-distractor-000109",
+            "#action/2026-06-09-distractor-000205"
+          ],
+          "metrics": {
+            "recall5": 1,
+            "recall10": 1,
+            "reciprocalRank": 1,
+            "ndcg10": 0.6806060567602009
+          },
+          "latencyMs": [
+            74.039,
+            92.588,
+            95.085
+          ]
+        },
+        {
+          "id": "far-table-paraphrase",
+          "category": "paraphrase",
+          "query": "Which plan makes the team gathering work for people who cannot eat dairy?",
+          "handles": [
+            "#project/2026-06-08-far-table",
+            "#entry/2026-06-08T09:03",
+            "#action/2026-06-08-far-table",
+            "#project/2026-06-09-distractor-000201",
+            "#project/2026-06-08-long-hall",
+            "#project/2026-06-09-distractor-000213",
+            "#project/2026-06-09-distractor-000045",
+            "#project/2026-06-09-distractor-000261",
+            "#project/2026-06-09-distractor-000249",
+            "#project/2026-06-09-distractor-000285"
+          ],
+          "metrics": {
+            "recall5": 1,
+            "recall10": 1,
+            "reciprocalRank": 1,
+            "ndcg10": 0.7363636171343382
+          },
+          "latencyMs": [
+            77.84,
+            88.717,
+            71.745
+          ]
+        },
+        {
+          "id": "far-table-exact",
+          "category": "exact",
+          "query": "Far table",
+          "handles": [
+            "#action/2026-06-08-far-table",
+            "#project/2026-06-08-far-table",
+            "#entry/2026-06-08T09:03",
+            "#action/2026-06-08-long-hall",
+            "#project/2026-06-08-long-hall",
+            "#project/2026-06-08-last-train",
+            "#action/2026-06-09-distractor-000256",
+            "#action/2026-06-09-distractor-000064",
+            "#action/2026-06-09-distractor-000124",
+            "#artifact/2026-06-09-distractor-000209"
+          ],
+          "metrics": {
+            "recall5": 1,
+            "recall10": 1,
+            "reciprocalRank": 1,
+            "ndcg10": 0.7591919243197319
+          },
+          "latencyMs": [
+            65.831,
+            67.509,
+            66.633
+          ]
+        },
+        {
+          "id": "handrail-paraphrase",
+          "category": "paraphrase",
+          "query": "How do we stop a failed rollout from taking the website down?",
+          "handles": [
+            "#action/2026-06-08-handrail",
+            "#entry/2026-06-08T09:04",
+            "#project/2026-06-08-handrail",
+            "#project/2026-06-08-paper-trail",
+            "#action/2026-06-09-distractor-000250",
+            "#project/2026-06-08-air-gap",
+            "#action/2026-06-09-distractor-000202",
+            "#action/2026-06-09-distractor-000226",
+            "#action/2026-06-08-paper-trail",
+            "#action/2026-06-09-distractor-000130"
+          ],
+          "metrics": {
+            "recall5": 1,
+            "recall10": 1,
+            "reciprocalRank": 1,
+            "ndcg10": 0.8428282648809379
+          },
+          "latencyMs": [
+            67.621,
+            68.885,
+            66.233
+          ]
+        },
+        {
+          "id": "handrail-exact",
+          "category": "exact",
+          "query": "Handrail",
+          "handles": [
+            "#project/2026-06-08-handrail",
+            "#action/2026-06-08-handrail",
+            "#entry/2026-06-08T09:04",
+            "#project/2026-06-08-last-train",
+            "#project/2026-06-08-long-hall",
+            "#action/2026-06-08-last-train",
+            "#artifact/2026-06-09-distractor-000191",
+            "#project/2026-06-08-doorstep",
+            "#artifact/2026-06-09-distractor-000119",
+            "#entry/2026-06-08T09:10"
+          ],
+          "metrics": {
+            "recall5": 1,
+            "recall10": 1,
+            "reciprocalRank": 1,
+            "ndcg10": 0.6806060567602009
+          },
+          "latencyMs": [
+            65.035,
+            63.569,
+            66.188
+          ]
+        },
+        {
+          "id": "long-hall-paraphrase",
+          "category": "paraphrase",
+          "query": "What makes the meeting screen usable without touching a mouse?",
+          "handles": [
+            "#entry/2026-06-08T09:05",
+            "#action/2026-06-08-doorstep",
+            "#action/2026-06-08-long-hall",
+            "#project/2026-06-09-distractor-000240",
+            "#project/2026-06-08-long-hall",
+            "#project/2026-06-09-distractor-000204",
+            "#project/2026-06-09-distractor-000288",
+            "#project/2026-06-08-doorstep",
+            "#project/2026-06-09-distractor-000048",
+            "#project/2026-06-09-distractor-000264"
+          ],
+          "metrics": {
+            "recall5": 1,
+            "recall10": 1,
+            "reciprocalRank": 1,
+            "ndcg10": 0.9461356536981058
+          },
+          "latencyMs": [
+            68.86,
+            65.308,
+            64.045
+          ]
+        },
+        {
+          "id": "long-hall-exact",
+          "category": "exact",
+          "query": "Long hall",
+          "handles": [
+            "#project/2026-06-08-long-hall",
+            "#action/2026-06-08-long-hall",
+            "#entry/2026-06-08T09:05",
+            "#project/2026-06-08-green-room",
+            "#project/2026-06-08-handrail",
+            "#artifact/2026-06-09-distractor-000248",
+            "#artifact/2026-06-09-distractor-000176",
+            "#artifact/2026-06-09-distractor-000152",
+            "#action/2026-06-08-handrail",
+            "#artifact/2026-06-09-distractor-000164"
+          ],
+          "metrics": {
+            "recall5": 1,
+            "recall10": 1,
+            "reciprocalRank": 1,
+            "ndcg10": 0.6806060567602009
+          },
+          "latencyMs": [
+            61.559,
+            65.336,
+            66.548
+          ]
+        },
+        {
+          "id": "steady-mile-paraphrase",
+          "category": "paraphrase",
+          "query": "What was the plan for getting back to running without hurting my leg again?",
+          "handles": [
+            "#entry/2026-06-08T09:06",
+            "#action/2026-06-08-steady-mile",
+            "#project/2026-06-08-steady-mile",
+            "#project/2026-06-08-last-train",
+            "#entry/2026-06-08T09:00",
+            "#entry/2026-06-08T09:10",
+            "#action/2026-06-08-cold-copy",
+            "#action/2026-06-08-last-train",
+            "#action/2026-06-09-distractor-000259",
+            "#action/2026-06-09-distractor-000163"
+          ],
+          "metrics": {
+            "recall5": 1,
+            "recall10": 1,
+            "reciprocalRank": 1,
+            "ndcg10": 1
+          },
+          "latencyMs": [
+            66.82,
+            64.584,
+            65.307
+          ]
+        },
+        {
+          "id": "steady-mile-exact",
+          "category": "exact",
+          "query": "Steady mile",
+          "handles": [
+            "#project/2026-06-08-steady-mile",
+            "#entry/2026-06-08T09:06",
+            "#action/2026-06-08-steady-mile",
+            "#project/2026-06-08-doorstep",
+            "#project/2026-06-08-handrail",
+            "#action/2026-06-09-distractor-000115",
+            "#action/2026-06-09-distractor-000295",
+            "#action/2026-06-09-distractor-000259",
+            "#action/2026-06-09-distractor-000211",
+            "#action/2026-06-09-distractor-000271"
+          ],
+          "metrics": {
+            "recall5": 1,
+            "recall10": 1,
+            "reciprocalRank": 1,
+            "ndcg10": 0.7363636171343382
+          },
+          "latencyMs": [
+            64.386,
+            65.342,
+            63.851
+          ]
+        },
+        {
+          "id": "paper-trail-paraphrase",
+          "category": "paraphrase",
+          "query": "Where is the agreement about how long we keep customer information?",
+          "handles": [
+            "#entry/2026-06-08T09:07",
+            "#project/2026-06-08-paper-trail",
+            "#action/2026-06-08-paper-trail",
+            "#action/2026-06-09-distractor-000202",
+            "#action/2026-06-09-distractor-000226",
+            "#entry/2026-06-08T09:08",
+            "#action/2026-06-09-distractor-000250",
+            "#action/2026-06-09-distractor-000130",
+            "#action/2026-06-09-distractor-000190",
+            "#action/2026-06-09-distractor-000142"
+          ],
+          "metrics": {
+            "recall5": 1,
+            "recall10": 1,
+            "reciprocalRank": 1,
+            "ndcg10": 0.9721212198129313
+          },
+          "latencyMs": [
+            64.418,
+            62.844,
+            69.574
+          ]
+        },
+        {
+          "id": "paper-trail-exact",
+          "category": "exact",
+          "query": "Paper trail",
+          "handles": [
+            "#project/2026-06-08-paper-trail",
+            "#action/2026-06-08-paper-trail",
+            "#entry/2026-06-08T09:07",
+            "#project/2026-06-08-cold-copy",
+            "#action/2026-06-08-cold-copy",
+            "#action/2026-06-09-distractor-000256",
+            "#action/2026-06-09-distractor-000088",
+            "#action/2026-06-09-distractor-000220",
+            "#action/2026-06-09-distractor-000064",
+            "#entry/2026-06-08T09:00"
+          ],
+          "metrics": {
+            "recall5": 1,
+            "recall10": 1,
+            "reciprocalRank": 1,
+            "ndcg10": 0.6806060567602009
+          },
+          "latencyMs": [
+            66.964,
+            64.585,
+            68.076
+          ]
+        },
+        {
+          "id": "air-gap-paraphrase",
+          "category": "paraphrase",
+          "query": "Can I keep working on a plane when there is no internet?",
+          "handles": [
+            "#action/2026-06-08-air-gap",
+            "#entry/2026-06-08T09:10",
+            "#project/2026-06-08-air-gap",
+            "#entry/2026-06-08T09:08",
+            "#project/2026-06-08-last-train",
+            "#entry/2026-06-08T09:00",
+            "#action/2026-06-08-last-train",
+            "#project/2026-06-08-far-table",
+            "#action/2026-06-08-far-table",
+            "#project/2026-06-08-paper-trail"
+          ],
+          "metrics": {
+            "recall5": 1,
+            "recall10": 1,
+            "reciprocalRank": 1,
+            "ndcg10": 0.6935890634491111
+          },
+          "latencyMs": [
+            66.002,
+            65.732,
+            65.647
+          ]
+        },
+        {
+          "id": "air-gap-exact",
+          "category": "exact",
+          "query": "Air gap",
+          "handles": [
+            "#action/2026-06-08-air-gap",
+            "#project/2026-06-08-air-gap",
+            "#entry/2026-06-08T09:08",
+            "#project/2026-06-08-doorstep",
+            "#action/2026-06-09-distractor-000250",
+            "#action/2026-06-09-distractor-000130",
+            "#action/2026-06-09-distractor-000226",
+            "#action/2026-06-09-distractor-000202",
+            "#action/2026-06-09-distractor-000190",
+            "#project/2026-06-08-small-envelope"
+          ],
+          "metrics": {
+            "recall5": 1,
+            "recall10": 1,
+            "reciprocalRank": 1,
+            "ndcg10": 0.7591919243197319
+          },
+          "latencyMs": [
+            64.982,
+            64.441,
+            69.272
+          ]
+        },
+        {
+          "id": "small-envelope-paraphrase",
+          "category": "paraphrase",
+          "query": "How will we avoid spending too much on model requests this month?",
+          "handles": [
+            "#entry/2026-06-08T09:09",
+            "#action/2026-06-09-distractor-000250",
+            "#action/2026-06-09-distractor-000070",
+            "#action/2026-06-09-distractor-000130",
+            "#action/2026-06-09-distractor-000190",
+            "#action/2026-06-09-distractor-000214",
+            "#action/2026-06-09-distractor-000178",
+            "#action/2026-06-09-distractor-000166",
+            "#action/2026-06-09-distractor-000118",
+            "#action/2026-06-09-distractor-000154"
+          ],
+          "metrics": {
+            "recall5": 0.3333333333333333,
+            "recall10": 0.3333333333333333,
+            "reciprocalRank": 1,
+            "ndcg10": 0.7452525342261976
+          },
+          "latencyMs": [
+            65.788,
+            63.674,
+            61.588
+          ]
+        },
+        {
+          "id": "small-envelope-exact",
+          "category": "exact",
+          "query": "Small envelope",
+          "handles": [
+            "#project/2026-06-08-small-envelope",
+            "#action/2026-06-08-small-envelope",
+            "#entry/2026-06-08T09:09",
+            "#project/2026-06-08-paper-trail",
+            "#action/2026-06-09-distractor-000256",
+            "#action/2026-06-09-distractor-000100",
+            "#project/2026-06-08-doorstep",
+            "#action/2026-06-08-cold-copy",
+            "#action/2026-06-09-distractor-000220",
+            "#action/2026-06-09-distractor-000124"
+          ],
+          "metrics": {
+            "recall5": 1,
+            "recall10": 1,
+            "reciprocalRank": 1,
+            "ndcg10": 0.6806060567602009
+          },
+          "latencyMs": [
+            61.329,
+            63.931,
+            67.606
+          ]
+        },
+        {
+          "id": "last-train-paraphrase",
+          "category": "paraphrase",
+          "query": "What should I do if my evening connection is cancelled?",
+          "handles": [
+            "#project/2026-06-08-last-train",
+            "#entry/2026-06-08T09:10",
+            "#action/2026-06-08-air-gap",
+            "#project/2026-06-08-air-gap",
+            "#action/2026-06-09-distractor-000226",
+            "#action/2026-06-08-last-train",
+            "#action/2026-06-09-distractor-000250",
+            "#action/2026-06-09-distractor-000202",
+            "#action/2026-06-09-distractor-000130",
+            "#action/2026-06-09-distractor-000190"
+          ],
+          "metrics": {
+            "recall5": 0.6666666666666666,
+            "recall10": 1,
+            "reciprocalRank": 1,
+            "ndcg10": 0.6904370636152268
+          },
+          "latencyMs": [
+            67.391,
+            65.19,
+            65.195
+          ]
+        },
+        {
+          "id": "last-train-exact",
+          "category": "exact",
+          "query": "Last train",
+          "handles": [
+            "#project/2026-06-08-last-train",
+            "#entry/2026-06-08T09:10",
+            "#action/2026-06-08-last-train",
+            "#project/2026-06-08-handrail",
+            "#project/2026-06-08-long-hall",
+            "#entry/2026-06-08T09:01",
+            "#action/2026-06-08-paper-trail",
+            "#project/2026-06-08-paper-trail",
+            "#action/2026-06-09-distractor-000250",
+            "#action/2026-06-09-distractor-000202"
+          ],
+          "metrics": {
+            "recall5": 1,
+            "recall10": 1,
+            "reciprocalRank": 1,
+            "ndcg10": 0.7363636171343382
+          },
+          "latencyMs": [
+            65.534,
+            68.963,
+            67.896
+          ]
+        },
+        {
+          "id": "green-room-paraphrase",
+          "category": "paraphrase",
+          "query": "Why are the leaves turning yellow even though I water every day?",
+          "handles": [
+            "#entry/2026-06-08T09:11",
+            "#project/2026-06-08-green-room",
+            "#action/2026-06-08-green-room",
+            "#entry/2026-06-08T09:06",
+            "#project/2026-06-09-distractor-000087",
+            "#action/2026-06-08-steady-mile",
+            "#project/2026-06-09-distractor-000279",
+            "#project/2026-06-09-distractor-000075",
+            "#project/2026-06-09-distractor-000147",
+            "#project/2026-06-09-distractor-000207"
+          ],
+          "metrics": {
+            "recall5": 1,
+            "recall10": 1,
+            "reciprocalRank": 1,
+            "ndcg10": 0.9721212198129313
+          },
+          "latencyMs": [
+            67.386,
+            67.603,
+            66.023
+          ]
+        },
+        {
+          "id": "green-room-exact",
+          "category": "exact",
+          "query": "Green room",
+          "handles": [
+            "#project/2026-06-08-green-room",
+            "#action/2026-06-08-green-room",
+            "#entry/2026-06-08T09:11",
+            "#project/2026-06-08-long-hall",
+            "#project/2026-06-08-small-envelope",
+            "#action/2026-06-08-far-table",
+            "#project/2026-06-08-handrail",
+            "#action/2026-06-08-air-gap",
+            "#project/2026-06-08-doorstep",
+            "#project/2026-06-08-air-gap"
+          ],
+          "metrics": {
+            "recall5": 1,
+            "recall10": 1,
+            "reciprocalRank": 1,
+            "ndcg10": 0.6806060567602009
+          },
+          "latencyMs": [
+            65.972,
+            66.034,
+            64.473
+          ]
+        }
+      ],
+      "hybrid": {
+        "summary": {
+          "all": {
+            "queries": 24,
+            "recall5": 0.681,
+            "recall10": 0.764,
+            "mrr10": 0.798,
+            "ndcg10": 0.608,
+            "latency": {
+              "samples": 72,
+              "p50Ms": 67.002,
+              "p95Ms": 70.234
+            }
+          },
+          "paraphrase": {
+            "queries": 12,
+            "recall5": 0.361,
+            "recall10": 0.528,
+            "mrr10": 0.595,
+            "ndcg10": 0.489,
+            "latency": {
+              "samples": 36,
+              "p50Ms": 67.056,
+              "p95Ms": 69.976
+            }
+          },
+          "exact": {
+            "queries": 12,
+            "recall5": 1,
+            "recall10": 1,
+            "mrr10": 1,
+            "ndcg10": 0.726,
+            "latency": {
+              "samples": 36,
+              "p50Ms": 66.773,
+              "p95Ms": 70.323
+            }
+          }
+        },
+        "results": [
+          {
+            "id": "cold-copy-paraphrase",
+            "category": "paraphrase",
+            "query": "How can I recover my notes if my computer disappears?",
+            "handles": [
+              "#entry/2026-06-08T09:00",
+              "#project/2026-06-08-last-train",
+              "#entry/2026-06-08T09:10",
+              "#project/2026-06-08-cold-copy",
+              "#entry/2026-06-08T09:01",
+              "#project/2026-06-08-paper-trail",
+              "#entry/2026-06-08T09:04",
+              "#action/2026-06-08-cold-copy",
+              "#entry/2026-06-08T09:06",
+              "#action/2026-06-08-paper-trail"
+            ],
+            "metrics": {
+              "recall5": 0.6666666666666666,
+              "recall10": 1,
+              "reciprocalRank": 1,
+              "ndcg10": 0.8918619332244505
+            },
+            "latencyMs": [
+              67.002,
+              66.765,
+              67.87
+            ]
+          },
+          {
+            "id": "cold-copy-exact",
+            "category": "exact",
+            "query": "Cold copy",
+            "handles": [
+              "#action/2026-06-08-cold-copy",
+              "#project/2026-06-08-cold-copy",
+              "#entry/2026-06-08T09:00",
+              "#project/2026-06-08-paper-trail",
+              "#action/2026-06-08-paper-trail",
+              "#project/2026-06-08-small-envelope",
+              "#project/2026-06-08-air-gap",
+              "#action/2026-06-08-doorstep",
+              "#action/2026-06-09-distractor-000250",
+              "#action/2026-06-09-distractor-000202"
+            ],
+            "metrics": {
+              "recall5": 1,
+              "recall10": 1,
+              "reciprocalRank": 1,
+              "ndcg10": 0.7591919243197319
+            },
+            "latencyMs": [
+              65.987,
+              70.234,
+              68.954
+            ]
+          },
+          {
+            "id": "quiet-stage-paraphrase",
+            "category": "paraphrase",
+            "query": "What did we decide about the ending without any dialogue?",
+            "handles": [
+              "#entry/2026-06-08T09:01",
+              "#entry/2026-06-08T09:05",
+              "#artifact/2026-06-09-distractor-000122",
+              "#artifact/2026-06-09-distractor-000158",
+              "#artifact/2026-06-09-distractor-000218",
+              "#artifact/2026-06-09-distractor-000146",
+              "#artifact/2026-06-09-distractor-000230",
+              "#entry/2026-06-08T09:02",
+              "#artifact/2026-06-09-distractor-000290",
+              "#artifact/2026-06-09-distractor-000098"
+            ],
+            "metrics": {
+              "recall5": 0.3333333333333333,
+              "recall10": 0.3333333333333333,
+              "reciprocalRank": 1,
+              "ndcg10": 0.7452525342261976
+            },
+            "latencyMs": [
+              67.8,
+              68.216,
+              69.923
+            ]
+          },
+          {
+            "id": "quiet-stage-exact",
+            "category": "exact",
+            "query": "Quiet stage",
+            "handles": [
+              "#action/2026-06-08-quiet-stage",
+              "#project/2026-06-08-quiet-stage",
+              "#entry/2026-06-08T09:01",
+              "#action/2026-06-08-air-gap",
+              "#project/2026-06-08-handrail",
+              "#action/2026-06-09-distractor-000202",
+              "#entry/2026-06-08T09:05",
+              "#entry/2026-06-08T09:04",
+              "#project/2026-06-08-doorstep",
+              "#project/2026-06-08-paper-trail"
+            ],
+            "metrics": {
+              "recall5": 1,
+              "recall10": 1,
+              "reciprocalRank": 1,
+              "ndcg10": 0.7591919243197319
+            },
+            "latencyMs": [
+              67.649,
+              67.31,
+              66.209
+            ]
+          },
+          {
+            "id": "doorstep-paraphrase",
+            "category": "paraphrase",
+            "query": "Why were new users abandoning setup before they could try the app?",
+            "handles": [
+              "#entry/2026-06-08T09:04",
+              "#action/2026-06-09-distractor-000226",
+              "#action/2026-06-09-distractor-000070",
+              "#action/2026-06-09-distractor-000190",
+              "#action/2026-06-09-distractor-000130",
+              "#action/2026-06-09-distractor-000250",
+              "#action/2026-06-09-distractor-000256",
+              "#action/2026-06-09-distractor-000214",
+              "#action/2026-06-09-distractor-000118",
+              "#action/2026-06-09-distractor-000112"
+            ],
+            "metrics": {
+              "recall5": 0,
+              "recall10": 0,
+              "reciprocalRank": 0,
+              "ndcg10": 0
+            },
+            "latencyMs": [
+              64.803,
+              67.777,
+              69.488
+            ]
+          },
+          {
+            "id": "doorstep-exact",
+            "category": "exact",
+            "query": "Doorstep",
+            "handles": [
+              "#project/2026-06-08-doorstep",
+              "#action/2026-06-08-doorstep",
+              "#entry/2026-06-08T09:02",
+              "#project/2026-06-08-long-hall",
+              "#project/2026-06-08-handrail",
+              "#project/2026-06-08-green-room",
+              "#action/2026-06-08-handrail",
+              "#project/2026-06-08-small-envelope",
+              "#action/2026-06-09-distractor-000109",
+              "#action/2026-06-09-distractor-000205"
+            ],
+            "metrics": {
+              "recall5": 1,
+              "recall10": 1,
+              "reciprocalRank": 1,
+              "ndcg10": 0.6806060567602009
+            },
+            "latencyMs": [
+              67.323,
+              69.374,
+              70.323
+            ]
+          },
+          {
+            "id": "far-table-paraphrase",
+            "category": "paraphrase",
+            "query": "Which plan makes the team gathering work for people who cannot eat dairy?",
+            "handles": [
+              "#project/2026-06-08-far-table",
+              "#entry/2026-06-08T09:03",
+              "#project/2026-06-09-distractor-000045",
+              "#project/2026-06-09-distractor-000201",
+              "#project/2026-06-09-distractor-000237",
+              "#project/2026-06-09-distractor-000117",
+              "#project/2026-06-09-distractor-000225",
+              "#project/2026-06-09-distractor-000177",
+              "#project/2026-06-09-distractor-000261",
+              "#project/2026-06-09-distractor-000213"
+            ],
+            "metrics": {
+              "recall5": 0.6666666666666666,
+              "recall10": 0.6666666666666666,
+              "reciprocalRank": 1,
+              "ndcg10": 0.5766666455144387
+            },
+            "latencyMs": [
+              69.669,
+              64.045,
+              67.188
+            ]
+          },
+          {
+            "id": "far-table-exact",
+            "category": "exact",
+            "query": "Far table",
+            "handles": [
+              "#action/2026-06-08-far-table",
+              "#project/2026-06-08-far-table",
+              "#entry/2026-06-08T09:03",
+              "#project/2026-06-09-distractor-000045",
+              "#project/2026-06-09-distractor-000105",
+              "#project/2026-06-09-distractor-000093",
+              "#action/2026-06-08-long-hall",
+              "#project/2026-06-08-long-hall",
+              "#project/2026-06-09-distractor-000237",
+              "#project/2026-06-08-last-train"
+            ],
+            "metrics": {
+              "recall5": 1,
+              "recall10": 1,
+              "reciprocalRank": 1,
+              "ndcg10": 0.7591919243197319
+            },
+            "latencyMs": [
+              65.986,
+              68.873,
+              68.467
+            ]
+          },
+          {
+            "id": "handrail-paraphrase",
+            "category": "paraphrase",
+            "query": "How do we stop a failed rollout from taking the website down?",
+            "handles": [
+              "#entry/2026-06-08T09:02",
+              "#entry/2026-06-08T09:10",
+              "#entry/2026-06-08T09:01",
+              "#entry/2026-06-08T09:05",
+              "#project/2026-06-08-handrail",
+              "#entry/2026-06-08T09:06",
+              "#project/2026-06-08-last-train",
+              "#project/2026-06-08-doorstep",
+              "#entry/2026-06-08T09:08",
+              "#action/2026-06-08-handrail"
+            ],
+            "metrics": {
+              "recall5": 0.3333333333333333,
+              "recall10": 0.6666666666666666,
+              "reciprocalRank": 0.2,
+              "ndcg10": 0.1335117025816065
+            },
+            "latencyMs": [
+              67.894,
+              66.996,
+              69.976
+            ]
+          },
+          {
+            "id": "handrail-exact",
+            "category": "exact",
+            "query": "Handrail",
+            "handles": [
+              "#action/2026-06-08-handrail",
+              "#project/2026-06-08-handrail",
+              "#entry/2026-06-08T09:04",
+              "#project/2026-06-08-last-train",
+              "#project/2026-06-08-long-hall",
+              "#action/2026-06-08-last-train",
+              "#artifact/2026-06-09-distractor-000191",
+              "#project/2026-06-08-doorstep",
+              "#artifact/2026-06-09-distractor-000119",
+              "#entry/2026-06-08T09:10"
+            ],
+            "metrics": {
+              "recall5": 1,
+              "recall10": 1,
+              "reciprocalRank": 1,
+              "ndcg10": 0.7591919243197319
+            },
+            "latencyMs": [
+              70.183,
+              68.325,
+              66.512
+            ]
+          },
+          {
+            "id": "long-hall-paraphrase",
+            "category": "paraphrase",
+            "query": "What makes the meeting screen usable without touching a mouse?",
+            "handles": [
+              "#entry/2026-06-08T09:05",
+              "#project/2026-06-08-doorstep",
+              "#entry/2026-06-08T09:02",
+              "#project/2026-06-08-handrail",
+              "#entry/2026-06-08T09:08",
+              "#artifact/2026-06-09-distractor-000284",
+              "#artifact/2026-06-09-distractor-000044",
+              "#artifact/2026-06-09-distractor-000248",
+              "#artifact/2026-06-09-distractor-000128",
+              "#artifact/2026-06-09-distractor-000068"
+            ],
+            "metrics": {
+              "recall5": 0.3333333333333333,
+              "recall10": 0.3333333333333333,
+              "reciprocalRank": 1,
+              "ndcg10": 0.7452525342261976
+            },
+            "latencyMs": [
+              69.324,
+              67.584,
+              68.566
+            ]
+          },
+          {
+            "id": "long-hall-exact",
+            "category": "exact",
+            "query": "Long hall",
+            "handles": [
+              "#action/2026-06-08-long-hall",
+              "#project/2026-06-08-long-hall",
+              "#entry/2026-06-08T09:05",
+              "#entry/2026-06-08T09:09",
+              "#project/2026-06-08-green-room",
+              "#project/2026-06-08-handrail",
+              "#artifact/2026-06-09-distractor-000248",
+              "#artifact/2026-06-09-distractor-000176",
+              "#artifact/2026-06-09-distractor-000152",
+              "#action/2026-06-08-handrail"
+            ],
+            "metrics": {
+              "recall5": 1,
+              "recall10": 1,
+              "reciprocalRank": 1,
+              "ndcg10": 0.7591919243197319
+            },
+            "latencyMs": [
+              68.22,
+              68.474,
+              71.614
+            ]
+          },
+          {
+            "id": "steady-mile-paraphrase",
+            "category": "paraphrase",
+            "query": "What was the plan for getting back to running without hurting my leg again?",
+            "handles": [
+              "#entry/2026-06-08T09:00",
+              "#project/2026-06-08-far-table",
+              "#project/2026-06-08-steady-mile",
+              "#entry/2026-06-08T09:10",
+              "#project/2026-06-08-handrail",
+              "#entry/2026-06-08T09:06",
+              "#action/2026-06-08-steady-mile",
+              "#entry/2026-06-08T09:03",
+              "#entry/2026-06-08T09:11",
+              "#project/2026-06-08-last-train"
+            ],
+            "metrics": {
+              "recall5": 0.3333333333333333,
+              "recall10": 1,
+              "reciprocalRank": 0.3333333333333333,
+              "ndcg10": 0.42516128052173835
+            },
+            "latencyMs": [
+              70.987,
+              67.056,
+              66.779
+            ]
+          },
+          {
+            "id": "steady-mile-exact",
+            "category": "exact",
+            "query": "Steady mile",
+            "handles": [
+              "#project/2026-06-08-steady-mile",
+              "#action/2026-06-08-steady-mile",
+              "#entry/2026-06-08T09:06",
+              "#project/2026-06-08-doorstep",
+              "#project/2026-06-08-handrail",
+              "#action/2026-06-09-distractor-000115",
+              "#action/2026-06-09-distractor-000295",
+              "#action/2026-06-09-distractor-000259",
+              "#action/2026-06-09-distractor-000211",
+              "#action/2026-06-09-distractor-000271"
+            ],
+            "metrics": {
+              "recall5": 1,
+              "recall10": 1,
+              "reciprocalRank": 1,
+              "ndcg10": 0.6806060567602009
+            },
+            "latencyMs": [
+              69.12,
+              65.891,
+              69.148
+            ]
+          },
+          {
+            "id": "paper-trail-paraphrase",
+            "category": "paraphrase",
+            "query": "Where is the agreement about how long we keep customer information?",
+            "handles": [
+              "#project/2026-06-08-long-hall",
+              "#action/2026-06-08-long-hall",
+              "#entry/2026-06-08T09:05",
+              "#project/2026-06-08-air-gap",
+              "#entry/2026-06-08T09:10",
+              "#entry/2026-06-08T09:09",
+              "#entry/2026-06-08T09:02",
+              "#project/2026-06-08-cold-copy",
+              "#entry/2026-06-08T09:07",
+              "#project/2026-06-08-paper-trail"
+            ],
+            "metrics": {
+              "recall5": 0,
+              "recall10": 0.6666666666666666,
+              "reciprocalRank": 0.1111111111111111,
+              "ndcg10": 0.2551185520565492
+            },
+            "latencyMs": [
+              63.957,
+              63.548,
+              63.947
+            ]
+          },
+          {
+            "id": "paper-trail-exact",
+            "category": "exact",
+            "query": "Paper trail",
+            "handles": [
+              "#project/2026-06-08-paper-trail",
+              "#action/2026-06-08-paper-trail",
+              "#entry/2026-06-08T09:07",
+              "#project/2026-06-08-cold-copy",
+              "#action/2026-06-08-cold-copy",
+              "#action/2026-06-09-distractor-000256",
+              "#action/2026-06-09-distractor-000088",
+              "#action/2026-06-09-distractor-000220",
+              "#action/2026-06-09-distractor-000064",
+              "#entry/2026-06-08T09:00"
+            ],
+            "metrics": {
+              "recall5": 1,
+              "recall10": 1,
+              "reciprocalRank": 1,
+              "ndcg10": 0.6806060567602009
+            },
+            "latencyMs": [
+              65.364,
+              64.325,
+              66.773
+            ]
+          },
+          {
+            "id": "air-gap-paraphrase",
+            "category": "paraphrase",
+            "query": "Can I keep working on a plane when there is no internet?",
+            "handles": [
+              "#entry/2026-06-08T09:10",
+              "#entry/2026-06-08T09:08",
+              "#entry/2026-06-08T09:00",
+              "#action/2026-06-08-far-table",
+              "#action/2026-06-09-distractor-000205",
+              "#action/2026-06-09-distractor-000109",
+              "#action/2026-06-09-distractor-000133",
+              "#action/2026-06-09-distractor-000097",
+              "#action/2026-06-09-distractor-000085",
+              "#action/2026-06-09-distractor-000121"
+            ],
+            "metrics": {
+              "recall5": 0.3333333333333333,
+              "recall10": 0.3333333333333333,
+              "reciprocalRank": 0.5,
+              "ndcg10": 0.47020199776783905
+            },
+            "latencyMs": [
+              64.039,
+              65.542,
+              65.147
+            ]
+          },
+          {
+            "id": "air-gap-exact",
+            "category": "exact",
+            "query": "Air gap",
+            "handles": [
+              "#action/2026-06-08-air-gap",
+              "#project/2026-06-08-air-gap",
+              "#entry/2026-06-08T09:08",
+              "#project/2026-06-08-doorstep",
+              "#action/2026-06-09-distractor-000250",
+              "#action/2026-06-09-distractor-000130",
+              "#action/2026-06-09-distractor-000226",
+              "#action/2026-06-09-distractor-000202",
+              "#action/2026-06-09-distractor-000190",
+              "#project/2026-06-08-small-envelope"
+            ],
+            "metrics": {
+              "recall5": 1,
+              "recall10": 1,
+              "reciprocalRank": 1,
+              "ndcg10": 0.7591919243197319
+            },
+            "latencyMs": [
+              63.378,
+              63.768,
+              64.298
+            ]
+          },
+          {
+            "id": "small-envelope-paraphrase",
+            "category": "paraphrase",
+            "query": "How will we avoid spending too much on model requests this month?",
+            "handles": [
+              "#entry/2026-06-08T09:09",
+              "#project/2026-06-08-small-envelope",
+              "#project/2026-06-08-paper-trail",
+              "#entry/2026-06-08T09:07",
+              "#action/2026-06-09-distractor-000205",
+              "#action/2026-06-09-distractor-000253",
+              "#action/2026-06-09-distractor-000109",
+              "#action/2026-06-09-distractor-000250",
+              "#entry/2026-06-08T09:08",
+              "#action/2026-06-09-distractor-000070"
+            ],
+            "metrics": {
+              "recall5": 0.6666666666666666,
+              "recall10": 0.6666666666666666,
+              "reciprocalRank": 1,
+              "ndcg10": 0.8124242481930318
+            },
+            "latencyMs": [
+              68.636,
+              69.282,
+              67.64
+            ]
+          },
+          {
+            "id": "small-envelope-exact",
+            "category": "exact",
+            "query": "Small envelope",
+            "handles": [
+              "#project/2026-06-08-small-envelope",
+              "#action/2026-06-08-small-envelope",
+              "#entry/2026-06-08T09:09",
+              "#artifact/2026-06-09-distractor-000269",
+              "#artifact/2026-06-09-distractor-000065",
+              "#artifact/2026-06-09-distractor-000173",
+              "#artifact/2026-06-09-distractor-000197",
+              "#artifact/2026-06-09-distractor-000101",
+              "#artifact/2026-06-09-distractor-000125",
+              "#artifact/2026-06-09-distractor-000257"
+            ],
+            "metrics": {
+              "recall5": 1,
+              "recall10": 1,
+              "reciprocalRank": 1,
+              "ndcg10": 0.6806060567602009
+            },
+            "latencyMs": [
+              66.889,
+              68.239,
+              66.661
+            ]
+          },
+          {
+            "id": "last-train-paraphrase",
+            "category": "paraphrase",
+            "query": "What should I do if my evening connection is cancelled?",
+            "handles": [
+              "#entry/2026-06-08T09:10",
+              "#project/2026-06-08-last-train",
+              "#entry/2026-06-08T09:00",
+              "#action/2026-06-08-handrail",
+              "#entry/2026-06-08T09:06",
+              "#entry/2026-06-08T09:01",
+              "#entry/2026-06-08T09:04",
+              "#action/2026-06-08-air-gap",
+              "#project/2026-06-08-air-gap",
+              "#action/2026-06-09-distractor-000226"
+            ],
+            "metrics": {
+              "recall5": 0.6666666666666666,
+              "recall10": 0.6666666666666666,
+              "reciprocalRank": 1,
+              "ndcg10": 0.8124242481930318
+            },
+            "latencyMs": [
+              63.79,
+              65.248,
+              67.509
+            ]
+          },
+          {
+            "id": "last-train-exact",
+            "category": "exact",
+            "query": "Last train",
+            "handles": [
+              "#project/2026-06-08-last-train",
+              "#action/2026-06-08-last-train",
+              "#entry/2026-06-08T09:10",
+              "#entry/2026-06-08T09:01",
+              "#project/2026-06-08-handrail",
+              "#project/2026-06-08-long-hall",
+              "#action/2026-06-08-paper-trail",
+              "#project/2026-06-08-paper-trail",
+              "#action/2026-06-09-distractor-000250",
+              "#action/2026-06-09-distractor-000202"
+            ],
+            "metrics": {
+              "recall5": 1,
+              "recall10": 1,
+              "reciprocalRank": 1,
+              "ndcg10": 0.6806060567602009
+            },
+            "latencyMs": [
+              65.543,
+              65.141,
+              65.842
+            ]
+          },
+          {
+            "id": "green-room-paraphrase",
+            "category": "paraphrase",
+            "query": "Why are the leaves turning yellow even though I water every day?",
+            "handles": [
+              "#action/2026-06-08-steady-mile",
+              "#entry/2026-06-08T09:06",
+              "#entry/2026-06-08T09:05",
+              "#action/2026-06-08-paper-trail",
+              "#entry/2026-06-08T09:00",
+              "#artifact/2026-06-09-distractor-000107",
+              "#artifact/2026-06-09-distractor-000071",
+              "#artifact/2026-06-09-distractor-000047",
+              "#artifact/2026-06-09-distractor-000167",
+              "#artifact/2026-06-09-distractor-000083"
+            ],
+            "metrics": {
+              "recall5": 0,
+              "recall10": 0,
+              "reciprocalRank": 0,
+              "ndcg10": 0
+            },
+            "latencyMs": [
+              64.315,
+              65.289,
+              65.026
+            ]
+          },
+          {
+            "id": "green-room-exact",
+            "category": "exact",
+            "query": "Green room",
+            "handles": [
+              "#action/2026-06-08-green-room",
+              "#project/2026-06-08-green-room",
+              "#entry/2026-06-08T09:11",
+              "#project/2026-06-08-long-hall",
+              "#project/2026-06-08-small-envelope",
+              "#action/2026-06-08-far-table",
+              "#project/2026-06-08-handrail",
+              "#action/2026-06-08-air-gap",
+              "#project/2026-06-08-doorstep",
+              "#project/2026-06-08-air-gap"
+            ],
+            "metrics": {
+              "recall5": 1,
+              "recall10": 1,
+              "reciprocalRank": 1,
+              "ndcg10": 0.7591919243197319
+            },
+            "latencyMs": [
+              65.165,
+              64.833,
+              65.572
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "model": "bge-m3",
+      "identity": "bge-m3@7907646426070047a77226ac3e684fbbe8410524f7b4a74d02837e43f2146bab",
+      "dimension": 1024,
+      "modelWarmupMs": 15.762,
+      "indexedChunks": 300,
+      "firstSearchMs": 4648.078,
+      "initialEmbedding": {
+        "calls": 20,
+        "texts": 301,
+        "totalMs": 4397.232
+      },
+      "initialChunksPerSecond": 64.543,
+      "indexBytes": 1572546,
+      "memory": {
+        "startingNodeRssMiB": 183.205,
+        "peakNodeRssMiB": 186.111,
+        "finalNodeRssMiB": 178.346,
+        "ollamaReportedModelBytes": 689187061,
+        "ollamaReportedGpuBytes": 689187061
+      },
+      "restart": {
+        "ms": 64.082,
+        "embeddedTexts": 1,
+        "embeddingCalls": 1,
+        "note": "New service object and connection in the same Node process; persisted index reused. One query embedding is expected; not an OS process restart."
+      },
+      "incrementalEdit": {
+        "handle": "#action/2026-06-08-cold-copy",
+        "foundEditedRecord": true,
+        "ms": 86.491,
+        "embeddedTexts": 2,
+        "embeddingCalls": 2,
+        "note": "One short action body changed; includes one query embedding."
+      },
+      "summary": {
+        "all": {
+          "queries": 24,
+          "recall5": 0.833,
+          "recall10": 0.889,
+          "mrr10": 0.964,
+          "ndcg10": 0.736,
+          "latency": {
+            "samples": 72,
+            "p50Ms": 61.891,
+            "p95Ms": 66.639
+          }
+        },
+        "paraphrase": {
+          "queries": 12,
+          "recall5": 0.694,
+          "recall10": 0.806,
+          "mrr10": 0.929,
+          "ndcg10": 0.776,
+          "latency": {
+            "samples": 36,
+            "p50Ms": 63.27,
+            "p95Ms": 77.838
+          }
+        },
+        "exact": {
+          "queries": 12,
+          "recall5": 0.972,
+          "recall10": 0.972,
+          "mrr10": 1,
+          "ndcg10": 0.695,
+          "latency": {
+            "samples": 36,
+            "p50Ms": 61.007,
+            "p95Ms": 65.113
+          }
+        }
+      },
+      "results": [
+        {
+          "id": "cold-copy-paraphrase",
+          "category": "paraphrase",
+          "query": "How can I recover my notes if my computer disappears?",
+          "handles": [
+            "#entry/2026-06-08T09:00",
+            "#project/2026-06-08-cold-copy",
+            "#entry/2026-06-08T09:08",
+            "#entry/2026-06-08T09:07",
+            "#action/2026-06-08-air-gap",
+            "#action/2026-06-08-cold-copy",
+            "#project/2026-06-09-distractor-000102",
+            "#project/2026-06-09-distractor-000078",
+            "#project/2026-06-09-distractor-000090",
+            "#project/2026-06-09-distractor-000198"
+          ],
+          "metrics": {
+            "recall5": 0.6666666666666666,
+            "recall10": 1,
+            "reciprocalRank": 1,
+            "ndcg10": 0.9261946662938199
+          },
+          "latencyMs": [
+            89.762,
+            65.006,
+            59.624
+          ]
+        },
+        {
+          "id": "cold-copy-exact",
+          "category": "exact",
+          "query": "Cold copy",
+          "handles": [
+            "#action/2026-06-08-cold-copy",
+            "#project/2026-06-08-cold-copy",
+            "#entry/2026-06-08T09:00",
+            "#project/2026-06-08-air-gap",
+            "#entry/2026-06-08T09:08",
+            "#action/2026-06-08-air-gap",
+            "#artifact/2026-06-09-distractor-000125",
+            "#artifact/2026-06-09-distractor-000152",
+            "#artifact/2026-06-09-distractor-000065",
+            "#artifact/2026-06-09-distractor-000149"
+          ],
+          "metrics": {
+            "recall5": 1,
+            "recall10": 1,
+            "reciprocalRank": 1,
+            "ndcg10": 0.7591919243197319
+          },
+          "latencyMs": [
+            58.43,
+            60.747,
+            59.519
+          ]
+        },
+        {
+          "id": "quiet-stage-paraphrase",
+          "category": "paraphrase",
+          "query": "What did we decide about the ending without any dialogue?",
+          "handles": [
+            "#entry/2026-06-08T09:01",
+            "#entry/2026-06-08T09:05",
+            "#action/2026-06-08-quiet-stage",
+            "#entry/2026-06-08T09:03",
+            "#entry/2026-06-08T09:07",
+            "#project/2026-06-08-quiet-stage",
+            "#entry/2026-06-08T09:04",
+            "#action/2026-06-09-distractor-000082",
+            "#action/2026-06-09-distractor-000154",
+            "#entry/2026-06-08T09:02"
+          ],
+          "metrics": {
+            "recall5": 0.6666666666666666,
+            "recall10": 1,
+            "reciprocalRank": 1,
+            "ndcg10": 0.9428729785463599
+          },
+          "latencyMs": [
+            58.379,
+            61.341,
+            66.639
+          ]
+        },
+        {
+          "id": "quiet-stage-exact",
+          "category": "exact",
+          "query": "Quiet stage",
+          "handles": [
+            "#action/2026-06-08-quiet-stage",
+            "#project/2026-06-08-quiet-stage",
+            "#entry/2026-06-08T09:01",
+            "#action/2026-06-09-distractor-000055",
+            "#action/2026-06-09-distractor-000175",
+            "#action/2026-06-09-distractor-000283",
+            "#action/2026-06-09-distractor-000115",
+            "#action/2026-06-09-distractor-000271",
+            "#action/2026-06-09-distractor-000295",
+            "#action/2026-06-09-distractor-000163"
+          ],
+          "metrics": {
+            "recall5": 1,
+            "recall10": 1,
+            "reciprocalRank": 1,
+            "ndcg10": 0.7591919243197319
+          },
+          "latencyMs": [
+            56.718,
+            64.009,
+            58.653
+          ]
+        },
+        {
+          "id": "doorstep-paraphrase",
+          "category": "paraphrase",
+          "query": "Why were new users abandoning setup before they could try the app?",
+          "handles": [
+            "#entry/2026-06-08T09:02",
+            "#project/2026-06-08-doorstep",
+            "#entry/2026-06-08T09:04",
+            "#entry/2026-06-08T09:05",
+            "#action/2026-06-09-distractor-000166",
+            "#action/2026-06-09-distractor-000082",
+            "#action/2026-06-09-distractor-000106",
+            "#action/2026-06-09-distractor-000154",
+            "#action/2026-06-09-distractor-000286",
+            "#action/2026-06-09-distractor-000202"
+          ],
+          "metrics": {
+            "recall5": 0.6666666666666666,
+            "recall10": 0.6666666666666666,
+            "reciprocalRank": 1,
+            "ndcg10": 0.8124242481930318
+          },
+          "latencyMs": [
+            63.101,
+            77.838,
+            61.096
+          ]
+        },
+        {
+          "id": "doorstep-exact",
+          "category": "exact",
+          "query": "Doorstep",
+          "handles": [
+            "#action/2026-06-08-doorstep",
+            "#project/2026-06-08-doorstep",
+            "#entry/2026-06-08T09:02",
+            "#entry/2026-06-08T09:05",
+            "#entry/2026-06-08T09:00",
+            "#entry/2026-06-08T09:04",
+            "#action/2026-06-08-handrail",
+            "#project/2026-06-08-long-hall",
+            "#entry/2026-06-08T09:08",
+            "#artifact/2026-06-09-distractor-000062"
+          ],
+          "metrics": {
+            "recall5": 1,
+            "recall10": 1,
+            "reciprocalRank": 1,
+            "ndcg10": 0.7591919243197319
+          },
+          "latencyMs": [
+            61.106,
+            55.563,
+            57.015
+          ]
+        },
+        {
+          "id": "far-table-paraphrase",
+          "category": "paraphrase",
+          "query": "Which plan makes the team gathering work for people who cannot eat dairy?",
+          "handles": [
+            "#project/2026-06-08-far-table",
+            "#entry/2026-06-08T09:03",
+            "#action/2026-06-09-distractor-000181",
+            "#action/2026-06-09-distractor-000217",
+            "#action/2026-06-09-distractor-000037",
+            "#action/2026-06-09-distractor-000121",
+            "#action/2026-06-09-distractor-000157",
+            "#action/2026-06-09-distractor-000073",
+            "#action/2026-06-09-distractor-000085",
+            "#action/2026-06-09-distractor-000109"
+          ],
+          "metrics": {
+            "recall5": 0.6666666666666666,
+            "recall10": 0.6666666666666666,
+            "reciprocalRank": 1,
+            "ndcg10": 0.5766666455144387
+          },
+          "latencyMs": [
+            65.491,
+            62.464,
+            63.781
+          ]
+        },
+        {
+          "id": "far-table-exact",
+          "category": "exact",
+          "query": "Far table",
+          "handles": [
+            "#action/2026-06-08-far-table",
+            "#project/2026-06-08-far-table",
+            "#entry/2026-06-08T09:03",
+            "#action/2026-06-08-long-hall",
+            "#project/2026-06-08-long-hall",
+            "#entry/2026-06-08T09:05",
+            "#action/2026-06-08-last-train",
+            "#artifact/2026-06-09-distractor-000149",
+            "#project/2026-06-09-distractor-000258",
+            "#artifact/2026-06-09-distractor-000125"
+          ],
+          "metrics": {
+            "recall5": 1,
+            "recall10": 1,
+            "reciprocalRank": 1,
+            "ndcg10": 0.7591919243197319
+          },
+          "latencyMs": [
+            55.283,
+            56.216,
+            59.048
+          ]
+        },
+        {
+          "id": "handrail-paraphrase",
+          "category": "paraphrase",
+          "query": "How do we stop a failed rollout from taking the website down?",
+          "handles": [
+            "#action/2026-06-08-handrail",
+            "#entry/2026-06-08T09:04",
+            "#project/2026-06-08-air-gap",
+            "#action/2026-06-08-cold-copy",
+            "#entry/2026-06-08T09:00",
+            "#action/2026-06-09-distractor-000250",
+            "#action/2026-06-09-distractor-000166",
+            "#action/2026-06-09-distractor-000142",
+            "#action/2026-06-09-distractor-000214",
+            "#action/2026-06-09-distractor-000046"
+          ],
+          "metrics": {
+            "recall5": 0.6666666666666666,
+            "recall10": 0.6666666666666666,
+            "reciprocalRank": 1,
+            "ndcg10": 0.7895959410076381
+          },
+          "latencyMs": [
+            59.694,
+            60.682,
+            64.679
+          ]
+        },
+        {
+          "id": "handrail-exact",
+          "category": "exact",
+          "query": "Handrail",
+          "handles": [
+            "#project/2026-06-08-handrail",
+            "#action/2026-06-08-handrail",
+            "#entry/2026-06-08T09:04",
+            "#artifact/2026-06-09-distractor-000143",
+            "#artifact/2026-06-09-distractor-000059",
+            "#artifact/2026-06-09-distractor-000083",
+            "#artifact/2026-06-09-distractor-000179",
+            "#artifact/2026-06-09-distractor-000299",
+            "#artifact/2026-06-09-distractor-000239",
+            "#artifact/2026-06-09-distractor-000047"
+          ],
+          "metrics": {
+            "recall5": 1,
+            "recall10": 1,
+            "reciprocalRank": 1,
+            "ndcg10": 0.6806060567602009
+          },
+          "latencyMs": [
+            61.007,
+            64.055,
+            64.702
+          ]
+        },
+        {
+          "id": "long-hall-paraphrase",
+          "category": "paraphrase",
+          "query": "What makes the meeting screen usable without touching a mouse?",
+          "handles": [
+            "#entry/2026-06-08T09:05",
+            "#project/2026-06-08-long-hall",
+            "#entry/2026-06-08T09:03",
+            "#entry/2026-06-08T09:01",
+            "#entry/2026-06-08T09:02",
+            "#entry/2026-06-08T09:08",
+            "#project/2026-06-08-doorstep",
+            "#action/2026-06-08-far-table",
+            "#action/2026-06-08-quiet-stage",
+            "#project/2026-06-08-quiet-stage"
+          ],
+          "metrics": {
+            "recall5": 0.6666666666666666,
+            "recall10": 0.6666666666666666,
+            "reciprocalRank": 1,
+            "ndcg10": 0.8124242481930318
+          },
+          "latencyMs": [
+            66.323,
+            64.516,
+            59.516
+          ]
+        },
+        {
+          "id": "long-hall-exact",
+          "category": "exact",
+          "query": "Long hall",
+          "handles": [
+            "#project/2026-06-08-long-hall",
+            "#action/2026-06-08-long-hall",
+            "#entry/2026-06-08T09:05",
+            "#action/2026-06-08-far-table",
+            "#project/2026-06-08-far-table",
+            "#artifact/2026-06-09-distractor-000218",
+            "#artifact/2026-06-09-distractor-000260",
+            "#artifact/2026-06-09-distractor-000224",
+            "#artifact/2026-06-09-distractor-000200",
+            "#artifact/2026-06-09-distractor-000128"
+          ],
+          "metrics": {
+            "recall5": 1,
+            "recall10": 1,
+            "reciprocalRank": 1,
+            "ndcg10": 0.6806060567602009
+          },
+          "latencyMs": [
+            61.675,
+            60.939,
+            60.458
+          ]
+        },
+        {
+          "id": "steady-mile-paraphrase",
+          "category": "paraphrase",
+          "query": "What was the plan for getting back to running without hurting my leg again?",
+          "handles": [
+            "#project/2026-06-08-steady-mile",
+            "#entry/2026-06-08T09:06",
+            "#action/2026-06-08-steady-mile",
+            "#project/2026-06-08-handrail",
+            "#entry/2026-06-08T09:04",
+            "#entry/2026-06-08T09:00",
+            "#project/2026-06-08-last-train",
+            "#project/2026-06-08-doorstep",
+            "#action/2026-06-08-cold-copy",
+            "#artifact/2026-06-09-distractor-000047"
+          ],
+          "metrics": {
+            "recall5": 1,
+            "recall10": 1,
+            "reciprocalRank": 1,
+            "ndcg10": 0.7363636171343382
+          },
+          "latencyMs": [
+            63.27,
+            63.221,
+            61.891
+          ]
+        },
+        {
+          "id": "steady-mile-exact",
+          "category": "exact",
+          "query": "Steady mile",
+          "handles": [
+            "#project/2026-06-08-steady-mile",
+            "#action/2026-06-08-steady-mile",
+            "#entry/2026-06-08T09:06",
+            "#project/2026-06-08-handrail",
+            "#action/2026-06-08-handrail",
+            "#entry/2026-06-08T09:04",
+            "#action/2026-06-08-quiet-stage",
+            "#action/2026-06-09-distractor-000247",
+            "#project/2026-06-08-quiet-stage",
+            "#action/2026-06-09-distractor-000283"
+          ],
+          "metrics": {
+            "recall5": 1,
+            "recall10": 1,
+            "reciprocalRank": 1,
+            "ndcg10": 0.6806060567602009
+          },
+          "latencyMs": [
+            56.544,
+            55.515,
+            60.721
+          ]
+        },
+        {
+          "id": "paper-trail-paraphrase",
+          "category": "paraphrase",
+          "query": "Where is the agreement about how long we keep customer information?",
+          "handles": [
+            "#entry/2026-06-08T09:07",
+            "#entry/2026-06-08T09:08",
+            "#entry/2026-06-08T09:02",
+            "#entry/2026-06-08T09:00",
+            "#project/2026-06-08-paper-trail",
+            "#action/2026-06-09-distractor-000298",
+            "#action/2026-06-09-distractor-000046",
+            "#action/2026-06-09-distractor-000106",
+            "#action/2026-06-09-distractor-000178",
+            "#action/2026-06-09-distractor-000226"
+          ],
+          "metrics": {
+            "recall5": 0.6666666666666666,
+            "recall10": 0.6666666666666666,
+            "reciprocalRank": 1,
+            "ndcg10": 0.7864386820782063
+          },
+          "latencyMs": [
+            57.438,
+            63.343,
+            66.34
+          ]
+        },
+        {
+          "id": "paper-trail-exact",
+          "category": "exact",
+          "query": "Paper trail",
+          "handles": [
+            "#project/2026-06-08-paper-trail",
+            "#action/2026-06-08-paper-trail",
+            "#entry/2026-06-08T09:07",
+            "#entry/2026-06-08T09:00",
+            "#project/2026-06-08-long-hall",
+            "#action/2026-06-08-small-envelope",
+            "#artifact/2026-06-09-distractor-000098",
+            "#artifact/2026-06-09-distractor-000185",
+            "#entry/2026-06-08T09:05",
+            "#artifact/2026-06-09-distractor-000182"
+          ],
+          "metrics": {
+            "recall5": 1,
+            "recall10": 1,
+            "reciprocalRank": 1,
+            "ndcg10": 0.6806060567602009
+          },
+          "latencyMs": [
+            61.218,
+            59.658,
+            62.694
+          ]
+        },
+        {
+          "id": "air-gap-paraphrase",
+          "category": "paraphrase",
+          "query": "Can I keep working on a plane when there is no internet?",
+          "handles": [
+            "#entry/2026-06-08T09:08",
+            "#project/2026-06-08-air-gap",
+            "#action/2026-06-08-air-gap",
+            "#entry/2026-06-08T09:10",
+            "#action/2026-06-08-far-table",
+            "#entry/2026-06-08T09:03",
+            "#project/2026-06-08-last-train",
+            "#entry/2026-06-08T09:00",
+            "#entry/2026-06-08T09:04",
+            "#project/2026-06-08-long-hall"
+          ],
+          "metrics": {
+            "recall5": 1,
+            "recall10": 1,
+            "reciprocalRank": 1,
+            "ndcg10": 0.9721212198129313
+          },
+          "latencyMs": [
+            63.316,
+            62.619,
+            63.697
+          ]
+        },
+        {
+          "id": "air-gap-exact",
+          "category": "exact",
+          "query": "Air gap",
+          "handles": [
+            "#action/2026-06-08-air-gap",
+            "#project/2026-06-08-air-gap",
+            "#entry/2026-06-08T09:08",
+            "#action/2026-06-08-green-room",
+            "#entry/2026-06-08T09:05",
+            "#action/2026-06-08-paper-trail",
+            "#action/2026-06-08-small-envelope",
+            "#action/2026-06-08-handrail",
+            "#action/2026-06-08-doorstep",
+            "#action/2026-06-08-cold-copy"
+          ],
+          "metrics": {
+            "recall5": 1,
+            "recall10": 1,
+            "reciprocalRank": 1,
+            "ndcg10": 0.7591919243197319
+          },
+          "latencyMs": [
+            64.166,
+            61.25,
+            62.861
+          ]
+        },
+        {
+          "id": "small-envelope-paraphrase",
+          "category": "paraphrase",
+          "query": "How will we avoid spending too much on model requests this month?",
+          "handles": [
+            "#action/2026-06-09-distractor-000298",
+            "#action/2026-06-09-distractor-000154",
+            "#action/2026-06-09-distractor-000214",
+            "#action/2026-06-09-distractor-000166",
+            "#action/2026-06-09-distractor-000226",
+            "#action/2026-06-09-distractor-000238",
+            "#project/2026-06-08-small-envelope",
+            "#action/2026-06-09-distractor-000106",
+            "#action/2026-06-09-distractor-000130",
+            "#action/2026-06-09-distractor-000070"
+          ],
+          "metrics": {
+            "recall5": 0,
+            "recall10": 0.3333333333333333,
+            "reciprocalRank": 0.14285714285714285,
+            "ndcg10": 0.035488215915533215
+          },
+          "latencyMs": [
+            61.353,
+            60.735,
+            61.614
+          ]
+        },
+        {
+          "id": "small-envelope-exact",
+          "category": "exact",
+          "query": "Small envelope",
+          "handles": [
+            "#action/2026-06-08-small-envelope",
+            "#project/2026-06-08-small-envelope",
+            "#entry/2026-06-08T09:09",
+            "#artifact/2026-06-09-distractor-000281",
+            "#artifact/2026-06-09-distractor-000269",
+            "#action/2026-06-08-doorstep",
+            "#artifact/2026-06-09-distractor-000161",
+            "#artifact/2026-06-09-distractor-000293",
+            "#artifact/2026-06-09-distractor-000209",
+            "#artifact/2026-06-09-distractor-000257"
+          ],
+          "metrics": {
+            "recall5": 1,
+            "recall10": 1,
+            "reciprocalRank": 1,
+            "ndcg10": 0.7591919243197319
+          },
+          "latencyMs": [
+            61.503,
+            64.557,
+            62.91
+          ]
+        },
+        {
+          "id": "last-train-paraphrase",
+          "category": "paraphrase",
+          "query": "What should I do if my evening connection is cancelled?",
+          "handles": [
+            "#entry/2026-06-08T09:10",
+            "#project/2026-06-08-last-train",
+            "#project/2026-06-09-distractor-000213",
+            "#project/2026-06-09-distractor-000237",
+            "#action/2026-06-08-cold-copy",
+            "#action/2026-06-08-last-train",
+            "#project/2026-06-09-distractor-000297",
+            "#project/2026-06-09-distractor-000189",
+            "#project/2026-06-09-distractor-000273",
+            "#project/2026-06-09-distractor-000249"
+          ],
+          "metrics": {
+            "recall5": 0.6666666666666666,
+            "recall10": 1,
+            "reciprocalRank": 1,
+            "ndcg10": 0.9261946662938199
+          },
+          "latencyMs": [
+            62.961,
+            66.61,
+            66.427
+          ]
+        },
+        {
+          "id": "last-train-exact",
+          "category": "exact",
+          "query": "Last train",
+          "handles": [
+            "#action/2026-06-08-last-train",
+            "#project/2026-06-08-last-train",
+            "#entry/2026-06-08T09:10",
+            "#entry/2026-06-08T09:01",
+            "#action/2026-06-08-quiet-stage",
+            "#action/2026-06-08-handrail",
+            "#artifact/2026-06-09-distractor-000083",
+            "#artifact/2026-06-09-distractor-000179",
+            "#artifact/2026-06-09-distractor-000059",
+            "#artifact/2026-06-09-distractor-000167"
+          ],
+          "metrics": {
+            "recall5": 1,
+            "recall10": 1,
+            "reciprocalRank": 1,
+            "ndcg10": 0.7591919243197319
+          },
+          "latencyMs": [
+            60.836,
+            63.661,
+            61.266
+          ]
+        },
+        {
+          "id": "green-room-paraphrase",
+          "category": "paraphrase",
+          "query": "Why are the leaves turning yellow even though I water every day?",
+          "handles": [
+            "#entry/2026-06-08T09:11",
+            "#action/2026-06-08-green-room",
+            "#project/2026-06-08-green-room",
+            "#project/2026-06-09-distractor-000075",
+            "#entry/2026-06-08T09:00",
+            "#action/2026-06-08-steady-mile",
+            "#artifact/2026-06-09-distractor-000071",
+            "#artifact/2026-06-09-distractor-000275",
+            "#project/2026-06-09-distractor-000171",
+            "#project/2026-06-08-steady-mile"
+          ],
+          "metrics": {
+            "recall5": 1,
+            "recall10": 1,
+            "reciprocalRank": 1,
+            "ndcg10": 1
+          },
+          "latencyMs": [
+            63.464,
+            67.075,
+            65.122
+          ]
+        },
+        {
+          "id": "green-room-exact",
+          "category": "exact",
+          "query": "Green room",
+          "handles": [
+            "#project/2026-06-08-green-room",
+            "#action/2026-06-08-green-room",
+            "#project/2026-06-09-distractor-000105",
+            "#artifact/2026-06-09-distractor-000104",
+            "#action/2026-06-08-doorstep",
+            "#artifact/2026-06-09-distractor-000296",
+            "#artifact/2026-06-09-distractor-000260",
+            "#artifact/2026-06-09-distractor-000056",
+            "#project/2026-06-09-distractor-000285",
+            "#artifact/2026-06-09-distractor-000212"
+          ],
+          "metrics": {
+            "recall5": 0.6666666666666666,
+            "recall10": 0.6666666666666666,
+            "reciprocalRank": 1,
+            "ndcg10": 0.3079797896471021
+          },
+          "latencyMs": [
+            62.208,
+            65.113,
+            65.966
+          ]
+        }
+      ],
+      "hybrid": {
+        "summary": {
+          "all": {
+            "queries": 24,
+            "recall5": 0.653,
+            "recall10": 0.694,
+            "mrr10": 0.813,
+            "ndcg10": 0.599,
+            "latency": {
+              "samples": 72,
+              "p50Ms": 62.326,
+              "p95Ms": 70.082
+            }
+          },
+          "paraphrase": {
+            "queries": 12,
+            "recall5": 0.306,
+            "recall10": 0.389,
+            "mrr10": 0.626,
+            "ndcg10": 0.445,
+            "latency": {
+              "samples": 36,
+              "p50Ms": 63.162,
+              "p95Ms": 73.978
+            }
+          },
+          "exact": {
+            "queries": 12,
+            "recall5": 1,
+            "recall10": 1,
+            "mrr10": 1,
+            "ndcg10": 0.753,
+            "latency": {
+              "samples": 36,
+              "p50Ms": 61.542,
+              "p95Ms": 64.924
+            }
+          }
+        },
+        "results": [
+          {
+            "id": "cold-copy-paraphrase",
+            "category": "paraphrase",
+            "query": "How can I recover my notes if my computer disappears?",
+            "handles": [
+              "#entry/2026-06-08T09:00",
+              "#entry/2026-06-08T09:10",
+              "#project/2026-06-08-last-train",
+              "#project/2026-06-09-distractor-000093",
+              "#project/2026-06-09-distractor-000105",
+              "#project/2026-06-09-distractor-000237",
+              "#project/2026-06-09-distractor-000297",
+              "#project/2026-06-09-distractor-000177",
+              "#project/2026-06-09-distractor-000045",
+              "#project/2026-06-09-distractor-000153"
+            ],
+            "metrics": {
+              "recall5": 0.3333333333333333,
+              "recall10": 0.3333333333333333,
+              "reciprocalRank": 1,
+              "ndcg10": 0.7452525342261976
+            },
+            "latencyMs": [
+              61.826,
+              65.461,
+              66.06
+            ]
+          },
+          {
+            "id": "cold-copy-exact",
+            "category": "exact",
+            "query": "Cold copy",
+            "handles": [
+              "#action/2026-06-08-cold-copy",
+              "#project/2026-06-08-cold-copy",
+              "#entry/2026-06-08T09:00",
+              "#project/2026-06-08-air-gap",
+              "#entry/2026-06-08T09:08",
+              "#action/2026-06-08-air-gap",
+              "#artifact/2026-06-09-distractor-000125",
+              "#artifact/2026-06-09-distractor-000152",
+              "#artifact/2026-06-09-distractor-000065",
+              "#artifact/2026-06-09-distractor-000149"
+            ],
+            "metrics": {
+              "recall5": 1,
+              "recall10": 1,
+              "reciprocalRank": 1,
+              "ndcg10": 0.7591919243197319
+            },
+            "latencyMs": [
+              62.836,
+              61.255,
+              64.851
+            ]
+          },
+          {
+            "id": "quiet-stage-paraphrase",
+            "category": "paraphrase",
+            "query": "What did we decide about the ending without any dialogue?",
+            "handles": [
+              "#entry/2026-06-08T09:01",
+              "#entry/2026-06-08T09:03",
+              "#entry/2026-06-08T09:05",
+              "#entry/2026-06-08T09:02",
+              "#entry/2026-06-08T09:10",
+              "#artifact/2026-06-09-distractor-000098",
+              "#artifact/2026-06-09-distractor-000122",
+              "#artifact/2026-06-09-distractor-000290",
+              "#artifact/2026-06-09-distractor-000218",
+              "#artifact/2026-06-09-distractor-000062"
+            ],
+            "metrics": {
+              "recall5": 0.3333333333333333,
+              "recall10": 0.3333333333333333,
+              "reciprocalRank": 1,
+              "ndcg10": 0.7452525342261976
+            },
+            "latencyMs": [
+              73.978,
+              60.672,
+              64.511
+            ]
+          },
+          {
+            "id": "quiet-stage-exact",
+            "category": "exact",
+            "query": "Quiet stage",
+            "handles": [
+              "#action/2026-06-08-quiet-stage",
+              "#project/2026-06-08-quiet-stage",
+              "#entry/2026-06-08T09:01",
+              "#action/2026-06-09-distractor-000055",
+              "#action/2026-06-09-distractor-000175",
+              "#action/2026-06-09-distractor-000283",
+              "#action/2026-06-09-distractor-000115",
+              "#action/2026-06-09-distractor-000271",
+              "#action/2026-06-09-distractor-000295",
+              "#action/2026-06-09-distractor-000163"
+            ],
+            "metrics": {
+              "recall5": 1,
+              "recall10": 1,
+              "reciprocalRank": 1,
+              "ndcg10": 0.7591919243197319
+            },
+            "latencyMs": [
+              59.32,
+              64.924,
+              62.043
+            ]
+          },
+          {
+            "id": "doorstep-paraphrase",
+            "category": "paraphrase",
+            "query": "Why were new users abandoning setup before they could try the app?",
+            "handles": [
+              "#entry/2026-06-08T09:04",
+              "#action/2026-06-09-distractor-000154",
+              "#action/2026-06-09-distractor-000202",
+              "#action/2026-06-09-distractor-000106",
+              "#action/2026-06-09-distractor-000166",
+              "#action/2026-06-09-distractor-000082",
+              "#action/2026-06-09-distractor-000058",
+              "#action/2026-06-09-distractor-000178",
+              "#action/2026-06-09-distractor-000286",
+              "#action/2026-06-09-distractor-000298"
+            ],
+            "metrics": {
+              "recall5": 0,
+              "recall10": 0,
+              "reciprocalRank": 0,
+              "ndcg10": 0
+            },
+            "latencyMs": [
+              60.641,
+              60.577,
+              61.688
+            ]
+          },
+          {
+            "id": "doorstep-exact",
+            "category": "exact",
+            "query": "Doorstep",
+            "handles": [
+              "#action/2026-06-08-doorstep",
+              "#project/2026-06-08-doorstep",
+              "#entry/2026-06-08T09:02",
+              "#entry/2026-06-08T09:05",
+              "#entry/2026-06-08T09:00",
+              "#entry/2026-06-08T09:04",
+              "#action/2026-06-08-handrail",
+              "#project/2026-06-08-long-hall",
+              "#entry/2026-06-08T09:08",
+              "#artifact/2026-06-09-distractor-000062"
+            ],
+            "metrics": {
+              "recall5": 1,
+              "recall10": 1,
+              "reciprocalRank": 1,
+              "ndcg10": 0.7591919243197319
+            },
+            "latencyMs": [
+              62.184,
+              58.893,
+              63.388
+            ]
+          },
+          {
+            "id": "far-table-paraphrase",
+            "category": "paraphrase",
+            "query": "Which plan makes the team gathering work for people who cannot eat dairy?",
+            "handles": [
+              "#project/2026-06-08-far-table",
+              "#entry/2026-06-08T09:03",
+              "#project/2026-06-09-distractor-000237",
+              "#project/2026-06-09-distractor-000117",
+              "#project/2026-06-09-distractor-000093",
+              "#project/2026-06-09-distractor-000105",
+              "#project/2026-06-09-distractor-000153",
+              "#project/2026-06-09-distractor-000045",
+              "#project/2026-06-09-distractor-000177",
+              "#project/2026-06-09-distractor-000141"
+            ],
+            "metrics": {
+              "recall5": 0.6666666666666666,
+              "recall10": 0.6666666666666666,
+              "reciprocalRank": 1,
+              "ndcg10": 0.5766666455144387
+            },
+            "latencyMs": [
+              74.456,
+              71.668,
+              68.716
+            ]
+          },
+          {
+            "id": "far-table-exact",
+            "category": "exact",
+            "query": "Far table",
+            "handles": [
+              "#action/2026-06-08-far-table",
+              "#project/2026-06-08-far-table",
+              "#entry/2026-06-08T09:03",
+              "#project/2026-06-09-distractor-000093",
+              "#action/2026-06-08-long-hall",
+              "#project/2026-06-09-distractor-000045",
+              "#project/2026-06-08-long-hall",
+              "#project/2026-06-09-distractor-000237",
+              "#entry/2026-06-08T09:05",
+              "#project/2026-06-09-distractor-000117"
+            ],
+            "metrics": {
+              "recall5": 1,
+              "recall10": 1,
+              "reciprocalRank": 1,
+              "ndcg10": 0.7591919243197319
+            },
+            "latencyMs": [
+              60.012,
+              62.628,
+              61.634
+            ]
+          },
+          {
+            "id": "handrail-paraphrase",
+            "category": "paraphrase",
+            "query": "How do we stop a failed rollout from taking the website down?",
+            "handles": [
+              "#entry/2026-06-08T09:02",
+              "#entry/2026-06-08T09:10",
+              "#project/2026-06-08-last-train",
+              "#entry/2026-06-08T09:08",
+              "#project/2026-06-08-doorstep",
+              "#project/2026-06-08-handrail",
+              "#project/2026-06-09-distractor-000297",
+              "#project/2026-06-09-distractor-000225",
+              "#project/2026-06-09-distractor-000237",
+              "#project/2026-06-09-distractor-000273"
+            ],
+            "metrics": {
+              "recall5": 0,
+              "recall10": 0.3333333333333333,
+              "reciprocalRank": 0.16666666666666666,
+              "ndcg10": 0.037923472700262695
+            },
+            "latencyMs": [
+              63.48,
+              62.717,
+              62.326
+            ]
+          },
+          {
+            "id": "handrail-exact",
+            "category": "exact",
+            "query": "Handrail",
+            "handles": [
+              "#action/2026-06-08-handrail",
+              "#project/2026-06-08-handrail",
+              "#entry/2026-06-08T09:04",
+              "#artifact/2026-06-09-distractor-000143",
+              "#artifact/2026-06-09-distractor-000059",
+              "#artifact/2026-06-09-distractor-000083",
+              "#artifact/2026-06-09-distractor-000179",
+              "#artifact/2026-06-09-distractor-000299",
+              "#artifact/2026-06-09-distractor-000239",
+              "#artifact/2026-06-09-distractor-000047"
+            ],
+            "metrics": {
+              "recall5": 1,
+              "recall10": 1,
+              "reciprocalRank": 1,
+              "ndcg10": 0.7591919243197319
+            },
+            "latencyMs": [
+              59.904,
+              63.57,
+              61.012
+            ]
+          },
+          {
+            "id": "long-hall-paraphrase",
+            "category": "paraphrase",
+            "query": "What makes the meeting screen usable without touching a mouse?",
+            "handles": [
+              "#entry/2026-06-08T09:05",
+              "#entry/2026-06-08T09:03",
+              "#entry/2026-06-08T09:08",
+              "#entry/2026-06-08T09:02",
+              "#project/2026-06-08-doorstep",
+              "#project/2026-06-08-quiet-stage",
+              "#artifact/2026-06-09-distractor-000080",
+              "#artifact/2026-06-09-distractor-000092",
+              "#artifact/2026-06-09-distractor-000296",
+              "#artifact/2026-06-09-distractor-000056"
+            ],
+            "metrics": {
+              "recall5": 0.3333333333333333,
+              "recall10": 0.3333333333333333,
+              "reciprocalRank": 1,
+              "ndcg10": 0.7452525342261976
+            },
+            "latencyMs": [
+              60.814,
+              61.751,
+              60.815
+            ]
+          },
+          {
+            "id": "long-hall-exact",
+            "category": "exact",
+            "query": "Long hall",
+            "handles": [
+              "#action/2026-06-08-long-hall",
+              "#project/2026-06-08-long-hall",
+              "#entry/2026-06-08T09:05",
+              "#action/2026-06-08-far-table",
+              "#entry/2026-06-08T09:09",
+              "#project/2026-06-08-far-table",
+              "#artifact/2026-06-09-distractor-000218",
+              "#artifact/2026-06-09-distractor-000260",
+              "#artifact/2026-06-09-distractor-000224",
+              "#artifact/2026-06-09-distractor-000200"
+            ],
+            "metrics": {
+              "recall5": 1,
+              "recall10": 1,
+              "reciprocalRank": 1,
+              "ndcg10": 0.7591919243197319
+            },
+            "latencyMs": [
+              60.883,
+              63.427,
+              60.301
+            ]
+          },
+          {
+            "id": "steady-mile-paraphrase",
+            "category": "paraphrase",
+            "query": "What was the plan for getting back to running without hurting my leg again?",
+            "handles": [
+              "#entry/2026-06-08T09:00",
+              "#entry/2026-06-08T09:04",
+              "#entry/2026-06-08T09:03",
+              "#project/2026-06-08-steady-mile",
+              "#project/2026-06-08-handrail",
+              "#project/2026-06-09-distractor-000051",
+              "#project/2026-06-08-far-table",
+              "#entry/2026-06-08T09:10",
+              "#project/2026-06-09-distractor-000039",
+              "#project/2026-06-09-distractor-000171"
+            ],
+            "metrics": {
+              "recall5": 0.3333333333333333,
+              "recall10": 0.3333333333333333,
+              "reciprocalRank": 0.25,
+              "ndcg10": 0.045851828048001766
+            },
+            "latencyMs": [
+              70.082,
+              68.841,
+              68.863
+            ]
+          },
+          {
+            "id": "steady-mile-exact",
+            "category": "exact",
+            "query": "Steady mile",
+            "handles": [
+              "#action/2026-06-08-steady-mile",
+              "#project/2026-06-08-steady-mile",
+              "#entry/2026-06-08T09:06",
+              "#project/2026-06-08-handrail",
+              "#action/2026-06-08-handrail",
+              "#entry/2026-06-08T09:04",
+              "#action/2026-06-08-quiet-stage",
+              "#action/2026-06-09-distractor-000247",
+              "#project/2026-06-08-quiet-stage",
+              "#action/2026-06-09-distractor-000283"
+            ],
+            "metrics": {
+              "recall5": 1,
+              "recall10": 1,
+              "reciprocalRank": 1,
+              "ndcg10": 0.7591919243197319
+            },
+            "latencyMs": [
+              63.717,
+              60.969,
+              62.642
+            ]
+          },
+          {
+            "id": "paper-trail-paraphrase",
+            "category": "paraphrase",
+            "query": "Where is the agreement about how long we keep customer information?",
+            "handles": [
+              "#entry/2026-06-08T09:05",
+              "#entry/2026-06-08T09:02",
+              "#action/2026-06-08-long-hall",
+              "#entry/2026-06-08T09:10",
+              "#entry/2026-06-08T09:01",
+              "#project/2026-06-08-air-gap",
+              "#project/2026-06-08-cold-copy",
+              "#entry/2026-06-08T09:09",
+              "#entry/2026-06-08T09:03",
+              "#entry/2026-06-08T09:07"
+            ],
+            "metrics": {
+              "recall5": 0,
+              "recall10": 0.3333333333333333,
+              "reciprocalRank": 0.1,
+              "ndcg10": 0.21542629436906158
+            },
+            "latencyMs": [
+              63.104,
+              65.217,
+              66.75
+            ]
+          },
+          {
+            "id": "paper-trail-exact",
+            "category": "exact",
+            "query": "Paper trail",
+            "handles": [
+              "#project/2026-06-08-paper-trail",
+              "#action/2026-06-08-paper-trail",
+              "#entry/2026-06-08T09:07",
+              "#entry/2026-06-08T09:00",
+              "#project/2026-06-08-long-hall",
+              "#action/2026-06-08-small-envelope",
+              "#artifact/2026-06-09-distractor-000098",
+              "#artifact/2026-06-09-distractor-000185",
+              "#entry/2026-06-08T09:05",
+              "#artifact/2026-06-09-distractor-000182"
+            ],
+            "metrics": {
+              "recall5": 1,
+              "recall10": 1,
+              "reciprocalRank": 1,
+              "ndcg10": 0.6806060567602009
+            },
+            "latencyMs": [
+              60.753,
+              58.441,
+              60.224
+            ]
+          },
+          {
+            "id": "air-gap-paraphrase",
+            "category": "paraphrase",
+            "query": "Can I keep working on a plane when there is no internet?",
+            "handles": [
+              "#entry/2026-06-08T09:08",
+              "#entry/2026-06-08T09:10",
+              "#entry/2026-06-08T09:03",
+              "#action/2026-06-08-far-table",
+              "#action/2026-06-08-handrail",
+              "#entry/2026-06-08T09:00",
+              "#entry/2026-06-08T09:06",
+              "#entry/2026-06-08T09:01",
+              "#action/2026-06-09-distractor-000217",
+              "#action/2026-06-09-distractor-000277"
+            ],
+            "metrics": {
+              "recall5": 0.3333333333333333,
+              "recall10": 0.3333333333333333,
+              "reciprocalRank": 1,
+              "ndcg10": 0.7452525342261976
+            },
+            "latencyMs": [
+              64.082,
+              64.542,
+              64.955
+            ]
+          },
+          {
+            "id": "air-gap-exact",
+            "category": "exact",
+            "query": "Air gap",
+            "handles": [
+              "#action/2026-06-08-air-gap",
+              "#project/2026-06-08-air-gap",
+              "#entry/2026-06-08T09:08",
+              "#action/2026-06-08-green-room",
+              "#entry/2026-06-08T09:05",
+              "#action/2026-06-08-paper-trail",
+              "#action/2026-06-08-small-envelope",
+              "#action/2026-06-08-handrail",
+              "#action/2026-06-08-doorstep",
+              "#action/2026-06-08-cold-copy"
+            ],
+            "metrics": {
+              "recall5": 1,
+              "recall10": 1,
+              "reciprocalRank": 1,
+              "ndcg10": 0.7591919243197319
+            },
+            "latencyMs": [
+              61.755,
+              64.831,
+              63.754
+            ]
+          },
+          {
+            "id": "small-envelope-paraphrase",
+            "category": "paraphrase",
+            "query": "How will we avoid spending too much on model requests this month?",
+            "handles": [
+              "#project/2026-06-08-small-envelope",
+              "#entry/2026-06-08T09:09",
+              "#entry/2026-06-08T09:08",
+              "#entry/2026-06-08T09:02",
+              "#project/2026-06-08-paper-trail",
+              "#action/2026-06-09-distractor-000298",
+              "#action/2026-06-09-distractor-000154",
+              "#action/2026-06-09-distractor-000214",
+              "#entry/2026-06-08T09:07",
+              "#action/2026-06-09-distractor-000166"
+            ],
+            "metrics": {
+              "recall5": 0.6666666666666666,
+              "recall10": 0.6666666666666666,
+              "reciprocalRank": 1,
+              "ndcg10": 0.5766666455144387
+            },
+            "latencyMs": [
+              63.338,
+              63.162,
+              63.995
+            ]
+          },
+          {
+            "id": "small-envelope-exact",
+            "category": "exact",
+            "query": "Small envelope",
+            "handles": [
+              "#action/2026-06-08-small-envelope",
+              "#project/2026-06-08-small-envelope",
+              "#entry/2026-06-08T09:09",
+              "#artifact/2026-06-09-distractor-000269",
+              "#artifact/2026-06-09-distractor-000293",
+              "#artifact/2026-06-09-distractor-000197",
+              "#artifact/2026-06-09-distractor-000161",
+              "#artifact/2026-06-09-distractor-000149",
+              "#artifact/2026-06-09-distractor-000281",
+              "#artifact/2026-06-09-distractor-000101"
+            ],
+            "metrics": {
+              "recall5": 1,
+              "recall10": 1,
+              "reciprocalRank": 1,
+              "ndcg10": 0.7591919243197319
+            },
+            "latencyMs": [
+              65.542,
+              61.053,
+              57.751
+            ]
+          },
+          {
+            "id": "last-train-paraphrase",
+            "category": "paraphrase",
+            "query": "What should I do if my evening connection is cancelled?",
+            "handles": [
+              "#entry/2026-06-08T09:10",
+              "#project/2026-06-08-last-train",
+              "#entry/2026-06-08T09:00",
+              "#action/2026-06-08-handrail",
+              "#project/2026-06-09-distractor-000213",
+              "#project/2026-06-09-distractor-000237",
+              "#entry/2026-06-08T09:01",
+              "#action/2026-06-08-cold-copy",
+              "#entry/2026-06-08T09:04",
+              "#action/2026-06-08-last-train"
+            ],
+            "metrics": {
+              "recall5": 0.6666666666666666,
+              "recall10": 1,
+              "reciprocalRank": 1,
+              "ndcg10": 0.9047498029226296
+            },
+            "latencyMs": [
+              59.44,
+              62.795,
+              62.921
+            ]
+          },
+          {
+            "id": "last-train-exact",
+            "category": "exact",
+            "query": "Last train",
+            "handles": [
+              "#action/2026-06-08-last-train",
+              "#project/2026-06-08-last-train",
+              "#entry/2026-06-08T09:10",
+              "#entry/2026-06-08T09:01",
+              "#action/2026-06-08-quiet-stage",
+              "#action/2026-06-08-handrail",
+              "#artifact/2026-06-09-distractor-000083",
+              "#artifact/2026-06-09-distractor-000179",
+              "#artifact/2026-06-09-distractor-000059",
+              "#artifact/2026-06-09-distractor-000167"
+            ],
+            "metrics": {
+              "recall5": 1,
+              "recall10": 1,
+              "reciprocalRank": 1,
+              "ndcg10": 0.7591919243197319
+            },
+            "latencyMs": [
+              56.884,
+              60.745,
+              61.542
+            ]
+          },
+          {
+            "id": "green-room-paraphrase",
+            "category": "paraphrase",
+            "query": "Why are the leaves turning yellow even though I water every day?",
+            "handles": [
+              "#action/2026-06-08-steady-mile",
+              "#entry/2026-06-08T09:00",
+              "#entry/2026-06-08T09:06",
+              "#action/2026-06-08-paper-trail",
+              "#entry/2026-06-08T09:07",
+              "#artifact/2026-06-09-distractor-000071",
+              "#entry/2026-06-08T09:05",
+              "#artifact/2026-06-09-distractor-000215",
+              "#artifact/2026-06-09-distractor-000275",
+              "#artifact/2026-06-09-distractor-000287"
+            ],
+            "metrics": {
+              "recall5": 0,
+              "recall10": 0,
+              "reciprocalRank": 0,
+              "ndcg10": 0
+            },
+            "latencyMs": [
+              63.134,
+              62.099,
+              62.161
+            ]
+          },
+          {
+            "id": "green-room-exact",
+            "category": "exact",
+            "query": "Green room",
+            "handles": [
+              "#action/2026-06-08-green-room",
+              "#project/2026-06-08-green-room",
+              "#entry/2026-06-08T09:11",
+              "#project/2026-06-09-distractor-000105",
+              "#artifact/2026-06-09-distractor-000104",
+              "#action/2026-06-08-doorstep",
+              "#artifact/2026-06-09-distractor-000296",
+              "#artifact/2026-06-09-distractor-000260",
+              "#artifact/2026-06-09-distractor-000056",
+              "#project/2026-06-09-distractor-000285"
+            ],
+            "metrics": {
+              "recall5": 1,
+              "recall10": 1,
+              "reciprocalRank": 1,
+              "ndcg10": 0.7591919243197319
+            },
+            "latencyMs": [
+              59.844,
+              61.715,
+              62.28
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "model": "all-minilm",
+      "identity": "all-minilm@1b226e2802dbb772b5fc32a58f103ca1804ef7501331012de126ab22f67475ef",
+      "dimension": 384,
+      "modelWarmupMs": 3342.754,
+      "indexedChunks": 300,
+      "firstSearchMs": 1555.901,
+      "initialEmbedding": {
+        "calls": 20,
+        "texts": 301,
+        "totalMs": 1318.11
+      },
+      "initialChunksPerSecond": 192.814,
+      "indexBytes": 801922,
+      "memory": {
+        "startingNodeRssMiB": 164.768,
+        "peakNodeRssMiB": 167.409,
+        "finalNodeRssMiB": 158.346,
+        "ollamaReportedModelBytes": 26046627,
+        "ollamaReportedGpuBytes": 26046627
+      },
+      "restart": {
+        "ms": 59.989,
+        "embeddedTexts": 1,
+        "embeddingCalls": 1,
+        "note": "New service object and connection in the same Node process; persisted index reused. One query embedding is expected; not an OS process restart."
+      },
+      "incrementalEdit": {
+        "handle": "#action/2026-06-08-cold-copy",
+        "foundEditedRecord": true,
+        "ms": 72.124,
+        "embeddedTexts": 2,
+        "embeddingCalls": 2,
+        "note": "One short action body changed; includes one query embedding."
+      },
+      "summary": {
+        "all": {
+          "queries": 24,
+          "recall5": 0.875,
+          "recall10": 0.917,
+          "mrr10": 1,
+          "ndcg10": 0.748,
+          "latency": {
+            "samples": 72,
+            "p50Ms": 56.221,
+            "p95Ms": 60.18
+          }
+        },
+        "paraphrase": {
+          "queries": 12,
+          "recall5": 0.75,
+          "recall10": 0.833,
+          "mrr10": 1,
+          "ndcg10": 0.762,
+          "latency": {
+            "samples": 36,
+            "p50Ms": 56.395,
+            "p95Ms": 59.931
+          }
+        },
+        "exact": {
+          "queries": 12,
+          "recall5": 1,
+          "recall10": 1,
+          "mrr10": 1,
+          "ndcg10": 0.734,
+          "latency": {
+            "samples": 36,
+            "p50Ms": 55.888,
+            "p95Ms": 60.571
+          }
+        }
+      },
+      "results": [
+        {
+          "id": "cold-copy-paraphrase",
+          "category": "paraphrase",
+          "query": "How can I recover my notes if my computer disappears?",
+          "handles": [
+            "#entry/2026-06-08T09:00",
+            "#project/2026-06-08-cold-copy",
+            "#entry/2026-06-08T09:07",
+            "#project/2026-06-08-paper-trail",
+            "#entry/2026-06-08T09:08",
+            "#action/2026-06-08-air-gap",
+            "#action/2026-06-08-cold-copy",
+            "#entry/2026-06-08T09:02",
+            "#project/2026-06-09-distractor-000102",
+            "#project/2026-06-09-distractor-000234"
+          ],
+          "metrics": {
+            "recall5": 0.6666666666666666,
+            "recall10": 1,
+            "reciprocalRank": 1,
+            "ndcg10": 0.9188888959396315
+          },
+          "latencyMs": [
+            59.931,
+            55.329,
+            57.34
+          ]
+        },
+        {
+          "id": "cold-copy-exact",
+          "category": "exact",
+          "query": "Cold copy",
+          "handles": [
+            "#action/2026-06-08-cold-copy",
+            "#project/2026-06-08-cold-copy",
+            "#entry/2026-06-08T09:00",
+            "#entry/2026-06-08T09:08",
+            "#action/2026-06-08-air-gap",
+            "#project/2026-06-08-air-gap",
+            "#action/2026-06-09-distractor-000079",
+            "#action/2026-06-09-distractor-000139",
+            "#project/2026-06-09-distractor-000045",
+            "#action/2026-06-09-distractor-000247"
+          ],
+          "metrics": {
+            "recall5": 1,
+            "recall10": 1,
+            "reciprocalRank": 1,
+            "ndcg10": 0.7591919243197319
+          },
+          "latencyMs": [
+            99.91,
+            57.004,
+            56.593
+          ]
+        },
+        {
+          "id": "quiet-stage-paraphrase",
+          "category": "paraphrase",
+          "query": "What did we decide about the ending without any dialogue?",
+          "handles": [
+            "#entry/2026-06-08T09:01",
+            "#action/2026-06-08-quiet-stage",
+            "#action/2026-06-09-distractor-000202",
+            "#action/2026-06-09-distractor-000154",
+            "#action/2026-06-09-distractor-000238",
+            "#action/2026-06-09-distractor-000046",
+            "#action/2026-06-09-distractor-000106",
+            "#artifact/2026-06-09-distractor-000194",
+            "#action/2026-06-09-distractor-000142",
+            "#action/2026-06-09-distractor-000118"
+          ],
+          "metrics": {
+            "recall5": 0.6666666666666666,
+            "recall10": 0.6666666666666666,
+            "reciprocalRank": 1,
+            "ndcg10": 0.9467676761267002
+          },
+          "latencyMs": [
+            54.381,
+            55.229,
+            58.741
+          ]
+        },
+        {
+          "id": "quiet-stage-exact",
+          "category": "exact",
+          "query": "Quiet stage",
+          "handles": [
+            "#project/2026-06-08-quiet-stage",
+            "#entry/2026-06-08T09:01",
+            "#action/2026-06-08-quiet-stage",
+            "#action/2026-06-09-distractor-000175",
+            "#action/2026-06-09-distractor-000055",
+            "#action/2026-06-09-distractor-000211",
+            "#action/2026-06-09-distractor-000223",
+            "#action/2026-06-09-distractor-000283",
+            "#action/2026-06-09-distractor-000103",
+            "#action/2026-06-09-distractor-000259"
+          ],
+          "metrics": {
+            "recall5": 1,
+            "recall10": 1,
+            "reciprocalRank": 1,
+            "ndcg10": 0.7363636171343382
+          },
+          "latencyMs": [
+            53.435,
+            55.709,
+            54.937
+          ]
+        },
+        {
+          "id": "doorstep-paraphrase",
+          "category": "paraphrase",
+          "query": "Why were new users abandoning setup before they could try the app?",
+          "handles": [
+            "#entry/2026-06-08T09:02",
+            "#project/2026-06-08-doorstep",
+            "#entry/2026-06-08T09:04",
+            "#project/2026-06-08-paper-trail",
+            "#entry/2026-06-08T09:07",
+            "#entry/2026-06-08T09:08",
+            "#action/2026-06-08-air-gap",
+            "#project/2026-06-08-handrail",
+            "#action/2026-06-08-doorstep",
+            "#action/2026-06-09-distractor-000238"
+          ],
+          "metrics": {
+            "recall5": 0.6666666666666666,
+            "recall10": 1,
+            "reciprocalRank": 1,
+            "ndcg10": 0.9085714055416104
+          },
+          "latencyMs": [
+            56.395,
+            55.239,
+            56.221
+          ]
+        },
+        {
+          "id": "doorstep-exact",
+          "category": "exact",
+          "query": "Doorstep",
+          "handles": [
+            "#project/2026-06-08-doorstep",
+            "#action/2026-06-08-doorstep",
+            "#entry/2026-06-08T09:02",
+            "#action/2026-06-09-distractor-000049",
+            "#action/2026-06-09-distractor-000073",
+            "#action/2026-06-09-distractor-000061",
+            "#project/2026-06-08-small-envelope",
+            "#action/2026-06-09-distractor-000193",
+            "#action/2026-06-09-distractor-000217",
+            "#action/2026-06-08-small-envelope"
+          ],
+          "metrics": {
+            "recall5": 1,
+            "recall10": 1,
+            "reciprocalRank": 1,
+            "ndcg10": 0.6806060567602009
+          },
+          "latencyMs": [
+            55.888,
+            54.294,
+            54.773
+          ]
+        },
+        {
+          "id": "far-table-paraphrase",
+          "category": "paraphrase",
+          "query": "Which plan makes the team gathering work for people who cannot eat dairy?",
+          "handles": [
+            "#project/2026-06-08-far-table",
+            "#entry/2026-06-08T09:03",
+            "#action/2026-06-08-far-table",
+            "#action/2026-06-09-distractor-000037",
+            "#action/2026-06-09-distractor-000085",
+            "#action/2026-06-09-distractor-000145",
+            "#action/2026-06-09-distractor-000205",
+            "#action/2026-06-09-distractor-000169",
+            "#action/2026-06-09-distractor-000049",
+            "#action/2026-06-09-distractor-000061"
+          ],
+          "metrics": {
+            "recall5": 1,
+            "recall10": 1,
+            "reciprocalRank": 1,
+            "ndcg10": 0.7363636171343382
+          },
+          "latencyMs": [
+            54.892,
+            55.937,
+            59.849
+          ]
+        },
+        {
+          "id": "far-table-exact",
+          "category": "exact",
+          "query": "Far table",
+          "handles": [
+            "#project/2026-06-08-far-table",
+            "#action/2026-06-08-far-table",
+            "#entry/2026-06-08T09:03",
+            "#project/2026-06-08-long-hall",
+            "#action/2026-06-08-long-hall",
+            "#project/2026-06-09-distractor-000267",
+            "#project/2026-06-09-distractor-000165",
+            "#project/2026-06-09-distractor-000141",
+            "#action/2026-06-09-distractor-000193",
+            "#action/2026-06-09-distractor-000145"
+          ],
+          "metrics": {
+            "recall5": 1,
+            "recall10": 1,
+            "reciprocalRank": 1,
+            "ndcg10": 0.6806060567602009
+          },
+          "latencyMs": [
+            59.79,
+            55.555,
+            54.443
+          ]
+        },
+        {
+          "id": "handrail-paraphrase",
+          "category": "paraphrase",
+          "query": "How do we stop a failed rollout from taking the website down?",
+          "handles": [
+            "#action/2026-06-08-handrail",
+            "#action/2026-06-09-distractor-000274",
+            "#action/2026-06-09-distractor-000070",
+            "#action/2026-06-09-distractor-000262",
+            "#action/2026-06-09-distractor-000082",
+            "#action/2026-06-09-distractor-000190",
+            "#action/2026-06-09-distractor-000166",
+            "#action/2026-06-09-distractor-000142",
+            "#action/2026-06-09-distractor-000130",
+            "#action/2026-06-09-distractor-000094"
+          ],
+          "metrics": {
+            "recall5": 0.3333333333333333,
+            "recall10": 0.3333333333333333,
+            "reciprocalRank": 1,
+            "ndcg10": 0.31939394323979897
+          },
+          "latencyMs": [
+            54.779,
+            58.817,
+            57.508
+          ]
+        },
+        {
+          "id": "handrail-exact",
+          "category": "exact",
+          "query": "Handrail",
+          "handles": [
+            "#project/2026-06-08-handrail",
+            "#entry/2026-06-08T09:04",
+            "#action/2026-06-08-handrail",
+            "#project/2026-06-08-last-train",
+            "#project/2026-06-08-long-hall",
+            "#project/2026-06-09-distractor-000156",
+            "#project/2026-06-09-distractor-000096",
+            "#project/2026-06-09-distractor-000048",
+            "#project/2026-06-09-distractor-000168",
+            "#project/2026-06-09-distractor-000060"
+          ],
+          "metrics": {
+            "recall5": 1,
+            "recall10": 1,
+            "reciprocalRank": 1,
+            "ndcg10": 0.7363636171343382
+          },
+          "latencyMs": [
+            60.48,
+            59.555,
+            57.247
+          ]
+        },
+        {
+          "id": "long-hall-paraphrase",
+          "category": "paraphrase",
+          "query": "What makes the meeting screen usable without touching a mouse?",
+          "handles": [
+            "#project/2026-06-08-long-hall",
+            "#entry/2026-06-08T09:05",
+            "#project/2026-06-08-doorstep",
+            "#entry/2026-06-08T09:02",
+            "#project/2026-06-09-distractor-000216",
+            "#action/2026-06-08-air-gap",
+            "#project/2026-06-09-distractor-000036",
+            "#project/2026-06-09-distractor-000288",
+            "#project/2026-06-08-far-table",
+            "#project/2026-06-09-distractor-000108"
+          ],
+          "metrics": {
+            "recall5": 0.6666666666666666,
+            "recall10": 0.6666666666666666,
+            "reciprocalRank": 1,
+            "ndcg10": 0.5766666455144387
+          },
+          "latencyMs": [
+            55.352,
+            52.77,
+            59.485
+          ]
+        },
+        {
+          "id": "long-hall-exact",
+          "category": "exact",
+          "query": "Long hall",
+          "handles": [
+            "#project/2026-06-08-long-hall",
+            "#action/2026-06-08-long-hall",
+            "#entry/2026-06-08T09:05",
+            "#artifact/2026-06-09-distractor-000104",
+            "#artifact/2026-06-09-distractor-000224",
+            "#artifact/2026-06-09-distractor-000128",
+            "#artifact/2026-06-09-distractor-000044",
+            "#project/2026-06-08-far-table",
+            "#artifact/2026-06-09-distractor-000296",
+            "#artifact/2026-06-09-distractor-000056"
+          ],
+          "metrics": {
+            "recall5": 1,
+            "recall10": 1,
+            "reciprocalRank": 1,
+            "ndcg10": 0.6806060567602009
+          },
+          "latencyMs": [
+            58.504,
+            58.559,
+            56.207
+          ]
+        },
+        {
+          "id": "steady-mile-paraphrase",
+          "category": "paraphrase",
+          "query": "What was the plan for getting back to running without hurting my leg again?",
+          "handles": [
+            "#entry/2026-06-08T09:06",
+            "#project/2026-06-08-steady-mile",
+            "#action/2026-06-08-steady-mile",
+            "#project/2026-06-08-last-train",
+            "#entry/2026-06-08T09:00",
+            "#action/2026-06-08-last-train",
+            "#action/2026-06-08-handrail",
+            "#project/2026-06-08-handrail",
+            "#action/2026-06-08-paper-trail",
+            "#entry/2026-06-08T09:04"
+          ],
+          "metrics": {
+            "recall5": 1,
+            "recall10": 1,
+            "reciprocalRank": 1,
+            "ndcg10": 0.9721212198129313
+          },
+          "latencyMs": [
+            57.945,
+            57.406,
+            60.18
+          ]
+        },
+        {
+          "id": "steady-mile-exact",
+          "category": "exact",
+          "query": "Steady mile",
+          "handles": [
+            "#action/2026-06-08-steady-mile",
+            "#project/2026-06-08-steady-mile",
+            "#entry/2026-06-08T09:06",
+            "#project/2026-06-08-handrail",
+            "#action/2026-06-08-last-train",
+            "#action/2026-06-08-handrail",
+            "#project/2026-06-08-doorstep",
+            "#action/2026-06-08-quiet-stage",
+            "#artifact/2026-06-09-distractor-000215",
+            "#entry/2026-06-08T09:04"
+          ],
+          "metrics": {
+            "recall5": 1,
+            "recall10": 1,
+            "reciprocalRank": 1,
+            "ndcg10": 0.7591919243197319
+          },
+          "latencyMs": [
+            60.571,
+            54.794,
+            55.68
+          ]
+        },
+        {
+          "id": "paper-trail-paraphrase",
+          "category": "paraphrase",
+          "query": "Where is the agreement about how long we keep customer information?",
+          "handles": [
+            "#project/2026-06-08-paper-trail",
+            "#entry/2026-06-08T09:07",
+            "#action/2026-06-09-distractor-000238",
+            "#action/2026-06-09-distractor-000070",
+            "#entry/2026-06-08T09:02",
+            "#action/2026-06-09-distractor-000106",
+            "#action/2026-06-09-distractor-000058",
+            "#action/2026-06-09-distractor-000142",
+            "#action/2026-06-09-distractor-000094",
+            "#action/2026-06-09-distractor-000154"
+          ],
+          "metrics": {
+            "recall5": 0.6666666666666666,
+            "recall10": 0.6666666666666666,
+            "reciprocalRank": 1,
+            "ndcg10": 0.5766666455144387
+          },
+          "latencyMs": [
+            58.798,
+            58.15,
+            54.492
+          ]
+        },
+        {
+          "id": "paper-trail-exact",
+          "category": "exact",
+          "query": "Paper trail",
+          "handles": [
+            "#project/2026-06-08-paper-trail",
+            "#action/2026-06-08-paper-trail",
+            "#entry/2026-06-08T09:07",
+            "#artifact/2026-06-09-distractor-000173",
+            "#artifact/2026-06-09-distractor-000281",
+            "#artifact/2026-06-09-distractor-000293",
+            "#artifact/2026-06-09-distractor-000221",
+            "#artifact/2026-06-09-distractor-000233",
+            "#artifact/2026-06-09-distractor-000149",
+            "#action/2026-06-08-steady-mile"
+          ],
+          "metrics": {
+            "recall5": 1,
+            "recall10": 1,
+            "reciprocalRank": 1,
+            "ndcg10": 0.6806060567602009
+          },
+          "latencyMs": [
+            57.039,
+            53.979,
+            53.357
+          ]
+        },
+        {
+          "id": "air-gap-paraphrase",
+          "category": "paraphrase",
+          "query": "Can I keep working on a plane when there is no internet?",
+          "handles": [
+            "#project/2026-06-08-air-gap",
+            "#entry/2026-06-08T09:08",
+            "#action/2026-06-08-air-gap",
+            "#project/2026-06-08-last-train",
+            "#entry/2026-06-08T09:10",
+            "#project/2026-06-08-handrail",
+            "#project/2026-06-08-cold-copy",
+            "#project/2026-06-08-paper-trail",
+            "#project/2026-06-08-steady-mile",
+            "#project/2026-06-08-small-envelope"
+          ],
+          "metrics": {
+            "recall5": 1,
+            "recall10": 1,
+            "reciprocalRank": 1,
+            "ndcg10": 0.7363636171343382
+          },
+          "latencyMs": [
+            54.824,
+            56.75,
+            58.323
+          ]
+        },
+        {
+          "id": "air-gap-exact",
+          "category": "exact",
+          "query": "Air gap",
+          "handles": [
+            "#project/2026-06-08-air-gap",
+            "#action/2026-06-08-air-gap",
+            "#entry/2026-06-08T09:08",
+            "#project/2026-06-09-distractor-000288",
+            "#project/2026-06-09-distractor-000156",
+            "#project/2026-06-09-distractor-000048",
+            "#project/2026-06-09-distractor-000036",
+            "#action/2026-06-08-quiet-stage",
+            "#project/2026-06-09-distractor-000084",
+            "#project/2026-06-09-distractor-000276"
+          ],
+          "metrics": {
+            "recall5": 1,
+            "recall10": 1,
+            "reciprocalRank": 1,
+            "ndcg10": 0.6806060567602009
+          },
+          "latencyMs": [
+            58.099,
+            54.197,
+            54.213
+          ]
+        },
+        {
+          "id": "small-envelope-paraphrase",
+          "category": "paraphrase",
+          "query": "How will we avoid spending too much on model requests this month?",
+          "handles": [
+            "#entry/2026-06-08T09:09",
+            "#project/2026-06-08-small-envelope",
+            "#entry/2026-06-08T09:02",
+            "#project/2026-06-08-paper-trail",
+            "#action/2026-06-09-distractor-000202",
+            "#project/2026-06-08-doorstep",
+            "#action/2026-06-09-distractor-000106",
+            "#action/2026-06-08-small-envelope",
+            "#entry/2026-06-08T09:04",
+            "#action/2026-06-09-distractor-000070"
+          ],
+          "metrics": {
+            "recall5": 0.6666666666666666,
+            "recall10": 1,
+            "reciprocalRank": 1,
+            "ndcg10": 0.9131818191432831
+          },
+          "latencyMs": [
+            54.48,
+            53.78,
+            55.67
+          ]
+        },
+        {
+          "id": "small-envelope-exact",
+          "category": "exact",
+          "query": "Small envelope",
+          "handles": [
+            "#action/2026-06-08-small-envelope",
+            "#project/2026-06-08-small-envelope",
+            "#entry/2026-06-08T09:09",
+            "#artifact/2026-06-09-distractor-000233",
+            "#artifact/2026-06-09-distractor-000269",
+            "#artifact/2026-06-09-distractor-000161",
+            "#artifact/2026-06-09-distractor-000293",
+            "#artifact/2026-06-09-distractor-000125",
+            "#artifact/2026-06-09-distractor-000149",
+            "#artifact/2026-06-09-distractor-000257"
+          ],
+          "metrics": {
+            "recall5": 1,
+            "recall10": 1,
+            "reciprocalRank": 1,
+            "ndcg10": 0.7591919243197319
+          },
+          "latencyMs": [
+            57.311,
+            57.871,
+            58.053
+          ]
+        },
+        {
+          "id": "last-train-paraphrase",
+          "category": "paraphrase",
+          "query": "What should I do if my evening connection is cancelled?",
+          "handles": [
+            "#entry/2026-06-08T09:10",
+            "#project/2026-06-08-air-gap",
+            "#project/2026-06-08-last-train",
+            "#action/2026-06-09-distractor-000274",
+            "#action/2026-06-09-distractor-000058",
+            "#action/2026-06-09-distractor-000142",
+            "#action/2026-06-09-distractor-000226",
+            "#action/2026-06-09-distractor-000082",
+            "#action/2026-06-09-distractor-000262",
+            "#action/2026-06-09-distractor-000286"
+          ],
+          "metrics": {
+            "recall5": 0.6666666666666666,
+            "recall10": 0.6666666666666666,
+            "reciprocalRank": 1,
+            "ndcg10": 0.7984848580994974
+          },
+          "latencyMs": [
+            56.895,
+            57.805,
+            59.842
+          ]
+        },
+        {
+          "id": "last-train-exact",
+          "category": "exact",
+          "query": "Last train",
+          "handles": [
+            "#entry/2026-06-08T09:10",
+            "#project/2026-06-08-last-train",
+            "#action/2026-06-08-last-train",
+            "#entry/2026-06-08T09:01",
+            "#entry/2026-06-08T09:04",
+            "#action/2026-06-09-distractor-000139",
+            "#action/2026-06-08-steady-mile",
+            "#action/2026-06-09-distractor-000103",
+            "#action/2026-06-09-distractor-000091",
+            "#action/2026-06-08-quiet-stage"
+          ],
+          "metrics": {
+            "recall5": 1,
+            "recall10": 1,
+            "reciprocalRank": 1,
+            "ndcg10": 0.9721212198129313
+          },
+          "latencyMs": [
+            55.796,
+            57.801,
+            57.816
+          ]
+        },
+        {
+          "id": "green-room-paraphrase",
+          "category": "paraphrase",
+          "query": "Why are the leaves turning yellow even though I water every day?",
+          "handles": [
+            "#project/2026-06-08-green-room",
+            "#entry/2026-06-08T09:11",
+            "#action/2026-06-08-green-room",
+            "#project/2026-06-09-distractor-000075",
+            "#project/2026-06-09-distractor-000105",
+            "#artifact/2026-06-09-distractor-000251",
+            "#project/2026-06-09-distractor-000255",
+            "#action/2026-06-08-doorstep",
+            "#project/2026-06-09-distractor-000141",
+            "#action/2026-06-09-distractor-000049"
+          ],
+          "metrics": {
+            "recall5": 1,
+            "recall10": 1,
+            "reciprocalRank": 1,
+            "ndcg10": 0.7363636171343382
+          },
+          "latencyMs": [
+            56.039,
+            56.541,
+            55.064
+          ]
+        },
+        {
+          "id": "green-room-exact",
+          "category": "exact",
+          "query": "Green room",
+          "handles": [
+            "#project/2026-06-08-green-room",
+            "#action/2026-06-08-green-room",
+            "#entry/2026-06-08T09:11",
+            "#action/2026-06-08-quiet-stage",
+            "#entry/2026-06-08T09:01",
+            "#project/2026-06-08-long-hall",
+            "#entry/2026-06-08T09:05",
+            "#project/2026-06-08-quiet-stage",
+            "#artifact/2026-06-09-distractor-000230",
+            "#action/2026-06-08-long-hall"
+          ],
+          "metrics": {
+            "recall5": 1,
+            "recall10": 1,
+            "reciprocalRank": 1,
+            "ndcg10": 0.6806060567602009
+          },
+          "latencyMs": [
+            55.834,
+            54.461,
+            54.468
+          ]
+        }
+      ],
+      "hybrid": {
+        "summary": {
+          "all": {
+            "queries": 24,
+            "recall5": 0.653,
+            "recall10": 0.653,
+            "mrr10": 0.781,
+            "ndcg10": 0.576,
+            "latency": {
+              "samples": 72,
+              "p50Ms": 58.987,
+              "p95Ms": 80.161
+            }
+          },
+          "paraphrase": {
+            "queries": 12,
+            "recall5": 0.306,
+            "recall10": 0.306,
+            "mrr10": 0.563,
+            "ndcg10": 0.405,
+            "latency": {
+              "samples": 36,
+              "p50Ms": 59.204,
+              "p95Ms": 69.393
+            }
+          },
+          "exact": {
+            "queries": 12,
+            "recall5": 1,
+            "recall10": 1,
+            "mrr10": 1,
+            "ndcg10": 0.747,
+            "latency": {
+              "samples": 36,
+              "p50Ms": 58.562,
+              "p95Ms": 81.304
+            }
+          }
+        },
+        "results": [
+          {
+            "id": "cold-copy-paraphrase",
+            "category": "paraphrase",
+            "query": "How can I recover my notes if my computer disappears?",
+            "handles": [
+              "#entry/2026-06-08T09:00",
+              "#project/2026-06-08-last-train",
+              "#project/2026-06-09-distractor-000153",
+              "#project/2026-06-09-distractor-000117",
+              "#project/2026-06-09-distractor-000237",
+              "#project/2026-06-09-distractor-000141",
+              "#project/2026-06-09-distractor-000297",
+              "#entry/2026-06-08T09:10",
+              "#project/2026-06-09-distractor-000129",
+              "#project/2026-06-09-distractor-000105"
+            ],
+            "metrics": {
+              "recall5": 0.3333333333333333,
+              "recall10": 0.3333333333333333,
+              "reciprocalRank": 1,
+              "ndcg10": 0.7452525342261976
+            },
+            "latencyMs": [
+              55.444,
+              59.071,
+              57.277
+            ]
+          },
+          {
+            "id": "cold-copy-exact",
+            "category": "exact",
+            "query": "Cold copy",
+            "handles": [
+              "#action/2026-06-08-cold-copy",
+              "#project/2026-06-08-cold-copy",
+              "#entry/2026-06-08T09:00",
+              "#entry/2026-06-08T09:08",
+              "#action/2026-06-08-air-gap",
+              "#project/2026-06-08-air-gap",
+              "#action/2026-06-09-distractor-000079",
+              "#action/2026-06-09-distractor-000139",
+              "#project/2026-06-09-distractor-000045",
+              "#action/2026-06-09-distractor-000247"
+            ],
+            "metrics": {
+              "recall5": 1,
+              "recall10": 1,
+              "reciprocalRank": 1,
+              "ndcg10": 0.7591919243197319
+            },
+            "latencyMs": [
+              56.881,
+              58.117,
+              57.557
+            ]
+          },
+          {
+            "id": "quiet-stage-paraphrase",
+            "category": "paraphrase",
+            "query": "What did we decide about the ending without any dialogue?",
+            "handles": [
+              "#entry/2026-06-08T09:01",
+              "#artifact/2026-06-09-distractor-000122",
+              "#artifact/2026-06-09-distractor-000218",
+              "#artifact/2026-06-09-distractor-000194",
+              "#artifact/2026-06-09-distractor-000134",
+              "#entry/2026-06-08T09:05",
+              "#artifact/2026-06-09-distractor-000242",
+              "#artifact/2026-06-09-distractor-000290",
+              "#artifact/2026-06-09-distractor-000098",
+              "#artifact/2026-06-09-distractor-000038"
+            ],
+            "metrics": {
+              "recall5": 0.3333333333333333,
+              "recall10": 0.3333333333333333,
+              "reciprocalRank": 1,
+              "ndcg10": 0.7452525342261976
+            },
+            "latencyMs": [
+              59.795,
+              59.798,
+              80.932
+            ]
+          },
+          {
+            "id": "quiet-stage-exact",
+            "category": "exact",
+            "query": "Quiet stage",
+            "handles": [
+              "#project/2026-06-08-quiet-stage",
+              "#action/2026-06-08-quiet-stage",
+              "#entry/2026-06-08T09:01",
+              "#action/2026-06-09-distractor-000175",
+              "#action/2026-06-09-distractor-000055",
+              "#action/2026-06-09-distractor-000211",
+              "#action/2026-06-09-distractor-000223",
+              "#action/2026-06-09-distractor-000283",
+              "#action/2026-06-09-distractor-000103",
+              "#action/2026-06-09-distractor-000259"
+            ],
+            "metrics": {
+              "recall5": 1,
+              "recall10": 1,
+              "reciprocalRank": 1,
+              "ndcg10": 0.6806060567602009
+            },
+            "latencyMs": [
+              57.806,
+              62.286,
+              64.999
+            ]
+          },
+          {
+            "id": "doorstep-paraphrase",
+            "category": "paraphrase",
+            "query": "Why were new users abandoning setup before they could try the app?",
+            "handles": [
+              "#entry/2026-06-08T09:04",
+              "#action/2026-06-09-distractor-000070",
+              "#action/2026-06-09-distractor-000169",
+              "#action/2026-06-09-distractor-000181",
+              "#action/2026-06-09-distractor-000238",
+              "#action/2026-06-09-distractor-000178",
+              "#action/2026-06-09-distractor-000217",
+              "#action/2026-06-09-distractor-000286",
+              "#action/2026-06-09-distractor-000130",
+              "#action/2026-06-09-distractor-000154"
+            ],
+            "metrics": {
+              "recall5": 0,
+              "recall10": 0,
+              "reciprocalRank": 0,
+              "ndcg10": 0
+            },
+            "latencyMs": [
+              65.834,
+              60.071,
+              58.534
+            ]
+          },
+          {
+            "id": "doorstep-exact",
+            "category": "exact",
+            "query": "Doorstep",
+            "handles": [
+              "#project/2026-06-08-doorstep",
+              "#action/2026-06-08-doorstep",
+              "#entry/2026-06-08T09:02",
+              "#action/2026-06-09-distractor-000049",
+              "#action/2026-06-09-distractor-000073",
+              "#action/2026-06-09-distractor-000061",
+              "#project/2026-06-08-small-envelope",
+              "#action/2026-06-09-distractor-000193",
+              "#action/2026-06-09-distractor-000217",
+              "#action/2026-06-08-small-envelope"
+            ],
+            "metrics": {
+              "recall5": 1,
+              "recall10": 1,
+              "reciprocalRank": 1,
+              "ndcg10": 0.6806060567602009
+            },
+            "latencyMs": [
+              57.291,
+              56.284,
+              61.032
+            ]
+          },
+          {
+            "id": "far-table-paraphrase",
+            "category": "paraphrase",
+            "query": "Which plan makes the team gathering work for people who cannot eat dairy?",
+            "handles": [
+              "#project/2026-06-08-far-table",
+              "#entry/2026-06-08T09:03",
+              "#project/2026-06-09-distractor-000045",
+              "#project/2026-06-09-distractor-000153",
+              "#project/2026-06-09-distractor-000105",
+              "#project/2026-06-09-distractor-000117",
+              "#project/2026-06-09-distractor-000237",
+              "#project/2026-06-09-distractor-000093",
+              "#project/2026-06-09-distractor-000225",
+              "#project/2026-06-09-distractor-000201"
+            ],
+            "metrics": {
+              "recall5": 0.6666666666666666,
+              "recall10": 0.6666666666666666,
+              "reciprocalRank": 1,
+              "ndcg10": 0.5766666455144387
+            },
+            "latencyMs": [
+              64.965,
+              58.889,
+              69.393
+            ]
+          },
+          {
+            "id": "far-table-exact",
+            "category": "exact",
+            "query": "Far table",
+            "handles": [
+              "#action/2026-06-08-far-table",
+              "#project/2026-06-08-far-table",
+              "#entry/2026-06-08T09:03",
+              "#project/2026-06-09-distractor-000141",
+              "#project/2026-06-09-distractor-000129",
+              "#project/2026-06-09-distractor-000165",
+              "#project/2026-06-09-distractor-000105",
+              "#project/2026-06-09-distractor-000297",
+              "#project/2026-06-09-distractor-000273",
+              "#project/2026-06-09-distractor-000045"
+            ],
+            "metrics": {
+              "recall5": 1,
+              "recall10": 1,
+              "reciprocalRank": 1,
+              "ndcg10": 0.7591919243197319
+            },
+            "latencyMs": [
+              58.562,
+              64.26,
+              62.189
+            ]
+          },
+          {
+            "id": "handrail-paraphrase",
+            "category": "paraphrase",
+            "query": "How do we stop a failed rollout from taking the website down?",
+            "handles": [
+              "#entry/2026-06-08T09:02",
+              "#project/2026-06-09-distractor-000051",
+              "#project/2026-06-09-distractor-000075",
+              "#project/2026-06-09-distractor-000171",
+              "#project/2026-06-09-distractor-000267",
+              "#project/2026-06-09-distractor-000123",
+              "#project/2026-06-09-distractor-000183",
+              "#project/2026-06-09-distractor-000135",
+              "#project/2026-06-09-distractor-000159",
+              "#project/2026-06-09-distractor-000087"
+            ],
+            "metrics": {
+              "recall5": 0,
+              "recall10": 0,
+              "reciprocalRank": 0,
+              "ndcg10": 0
+            },
+            "latencyMs": [
+              58.728,
+              59.247,
+              61.613
+            ]
+          },
+          {
+            "id": "handrail-exact",
+            "category": "exact",
+            "query": "Handrail",
+            "handles": [
+              "#project/2026-06-08-handrail",
+              "#action/2026-06-08-handrail",
+              "#entry/2026-06-08T09:04",
+              "#project/2026-06-08-last-train",
+              "#project/2026-06-08-long-hall",
+              "#project/2026-06-09-distractor-000156",
+              "#project/2026-06-09-distractor-000096",
+              "#project/2026-06-09-distractor-000048",
+              "#project/2026-06-09-distractor-000168",
+              "#project/2026-06-09-distractor-000060"
+            ],
+            "metrics": {
+              "recall5": 1,
+              "recall10": 1,
+              "reciprocalRank": 1,
+              "ndcg10": 0.6806060567602009
+            },
+            "latencyMs": [
+              57.591,
+              59.371,
+              58.653
+            ]
+          },
+          {
+            "id": "long-hall-paraphrase",
+            "category": "paraphrase",
+            "query": "What makes the meeting screen usable without touching a mouse?",
+            "handles": [
+              "#entry/2026-06-08T09:05",
+              "#project/2026-06-08-doorstep",
+              "#entry/2026-06-08T09:02",
+              "#project/2026-06-08-quiet-stage",
+              "#entry/2026-06-08T09:08",
+              "#entry/2026-06-08T09:03",
+              "#artifact/2026-06-09-distractor-000044",
+              "#project/2026-06-08-handrail",
+              "#artifact/2026-06-09-distractor-000296",
+              "#artifact/2026-06-09-distractor-000248"
+            ],
+            "metrics": {
+              "recall5": 0.3333333333333333,
+              "recall10": 0.3333333333333333,
+              "reciprocalRank": 1,
+              "ndcg10": 0.7452525342261976
+            },
+            "latencyMs": [
+              58.339,
+              59.753,
+              58.522
+            ]
+          },
+          {
+            "id": "long-hall-exact",
+            "category": "exact",
+            "query": "Long hall",
+            "handles": [
+              "#action/2026-06-08-long-hall",
+              "#project/2026-06-08-long-hall",
+              "#entry/2026-06-08T09:05",
+              "#entry/2026-06-08T09:09",
+              "#artifact/2026-06-09-distractor-000104",
+              "#artifact/2026-06-09-distractor-000224",
+              "#artifact/2026-06-09-distractor-000128",
+              "#artifact/2026-06-09-distractor-000044",
+              "#project/2026-06-08-far-table",
+              "#artifact/2026-06-09-distractor-000296"
+            ],
+            "metrics": {
+              "recall5": 1,
+              "recall10": 1,
+              "reciprocalRank": 1,
+              "ndcg10": 0.7591919243197319
+            },
+            "latencyMs": [
+              60.783,
+              80.161,
+              57.716
+            ]
+          },
+          {
+            "id": "steady-mile-paraphrase",
+            "category": "paraphrase",
+            "query": "What was the plan for getting back to running without hurting my leg again?",
+            "handles": [
+              "#entry/2026-06-08T09:00",
+              "#entry/2026-06-08T09:04",
+              "#project/2026-06-08-far-table",
+              "#project/2026-06-08-steady-mile",
+              "#project/2026-06-09-distractor-000171",
+              "#project/2026-06-09-distractor-000123",
+              "#project/2026-06-09-distractor-000075",
+              "#project/2026-06-09-distractor-000039",
+              "#project/2026-06-09-distractor-000195",
+              "#project/2026-06-08-handrail"
+            ],
+            "metrics": {
+              "recall5": 0.3333333333333333,
+              "recall10": 0.3333333333333333,
+              "reciprocalRank": 0.25,
+              "ndcg10": 0.045851828048001766
+            },
+            "latencyMs": [
+              62.372,
+              60.534,
+              68.465
+            ]
+          },
+          {
+            "id": "steady-mile-exact",
+            "category": "exact",
+            "query": "Steady mile",
+            "handles": [
+              "#action/2026-06-08-steady-mile",
+              "#project/2026-06-08-steady-mile",
+              "#entry/2026-06-08T09:06",
+              "#project/2026-06-08-handrail",
+              "#action/2026-06-08-last-train",
+              "#action/2026-06-08-handrail",
+              "#project/2026-06-08-doorstep",
+              "#action/2026-06-08-quiet-stage",
+              "#artifact/2026-06-09-distractor-000215",
+              "#entry/2026-06-08T09:04"
+            ],
+            "metrics": {
+              "recall5": 1,
+              "recall10": 1,
+              "reciprocalRank": 1,
+              "ndcg10": 0.7591919243197319
+            },
+            "latencyMs": [
+              59.97,
+              91.885,
+              61.249
+            ]
+          },
+          {
+            "id": "paper-trail-paraphrase",
+            "category": "paraphrase",
+            "query": "Where is the agreement about how long we keep customer information?",
+            "handles": [
+              "#entry/2026-06-08T09:02",
+              "#action/2026-06-08-long-hall",
+              "#entry/2026-06-08T09:05",
+              "#entry/2026-06-08T09:10",
+              "#artifact/2026-06-09-distractor-000134",
+              "#entry/2026-06-08T09:09",
+              "#artifact/2026-06-09-distractor-000290",
+              "#artifact/2026-06-09-distractor-000230",
+              "#artifact/2026-06-09-distractor-000038",
+              "#artifact/2026-06-09-distractor-000215"
+            ],
+            "metrics": {
+              "recall5": 0,
+              "recall10": 0,
+              "reciprocalRank": 0,
+              "ndcg10": 0
+            },
+            "latencyMs": [
+              61.359,
+              62.707,
+              57.226
+            ]
+          },
+          {
+            "id": "paper-trail-exact",
+            "category": "exact",
+            "query": "Paper trail",
+            "handles": [
+              "#project/2026-06-08-paper-trail",
+              "#action/2026-06-08-paper-trail",
+              "#entry/2026-06-08T09:07",
+              "#artifact/2026-06-09-distractor-000173",
+              "#artifact/2026-06-09-distractor-000281",
+              "#artifact/2026-06-09-distractor-000293",
+              "#artifact/2026-06-09-distractor-000221",
+              "#artifact/2026-06-09-distractor-000233",
+              "#artifact/2026-06-09-distractor-000149",
+              "#action/2026-06-08-steady-mile"
+            ],
+            "metrics": {
+              "recall5": 1,
+              "recall10": 1,
+              "reciprocalRank": 1,
+              "ndcg10": 0.6806060567602009
+            },
+            "latencyMs": [
+              60.124,
+              58.297,
+              59.469
+            ]
+          },
+          {
+            "id": "air-gap-paraphrase",
+            "category": "paraphrase",
+            "query": "Can I keep working on a plane when there is no internet?",
+            "handles": [
+              "#entry/2026-06-08T09:08",
+              "#entry/2026-06-08T09:10",
+              "#entry/2026-06-08T09:00",
+              "#entry/2026-06-08T09:06",
+              "#entry/2026-06-08T09:11",
+              "#project/2026-06-09-distractor-000093",
+              "#project/2026-06-09-distractor-000273",
+              "#project/2026-06-09-distractor-000117",
+              "#project/2026-06-09-distractor-000237",
+              "#project/2026-06-09-distractor-000081"
+            ],
+            "metrics": {
+              "recall5": 0.3333333333333333,
+              "recall10": 0.3333333333333333,
+              "reciprocalRank": 1,
+              "ndcg10": 0.7452525342261976
+            },
+            "latencyMs": [
+              64.819,
+              59.204,
+              66.874
+            ]
+          },
+          {
+            "id": "air-gap-exact",
+            "category": "exact",
+            "query": "Air gap",
+            "handles": [
+              "#project/2026-06-08-air-gap",
+              "#action/2026-06-08-air-gap",
+              "#entry/2026-06-08T09:08",
+              "#project/2026-06-09-distractor-000288",
+              "#project/2026-06-09-distractor-000156",
+              "#project/2026-06-09-distractor-000048",
+              "#project/2026-06-09-distractor-000036",
+              "#action/2026-06-08-quiet-stage",
+              "#project/2026-06-09-distractor-000084",
+              "#project/2026-06-09-distractor-000276"
+            ],
+            "metrics": {
+              "recall5": 1,
+              "recall10": 1,
+              "reciprocalRank": 1,
+              "ndcg10": 0.6806060567602009
+            },
+            "latencyMs": [
+              70.277,
+              81.304,
+              64.138
+            ]
+          },
+          {
+            "id": "small-envelope-paraphrase",
+            "category": "paraphrase",
+            "query": "How will we avoid spending too much on model requests this month?",
+            "handles": [
+              "#project/2026-06-08-paper-trail",
+              "#project/2026-06-08-small-envelope",
+              "#entry/2026-06-08T09:09",
+              "#entry/2026-06-08T09:02",
+              "#entry/2026-06-08T09:08",
+              "#entry/2026-06-08T09:07",
+              "#action/2026-06-09-distractor-000217",
+              "#action/2026-06-09-distractor-000133",
+              "#action/2026-06-09-distractor-000109",
+              "#entry/2026-06-08T09:03"
+            ],
+            "metrics": {
+              "recall5": 0.6666666666666666,
+              "recall10": 0.6666666666666666,
+              "reciprocalRank": 0.5,
+              "ndcg10": 0.439797981079933
+            },
+            "latencyMs": [
+              63.597,
+              56.546,
+              56.07
+            ]
+          },
+          {
+            "id": "small-envelope-exact",
+            "category": "exact",
+            "query": "Small envelope",
+            "handles": [
+              "#action/2026-06-08-small-envelope",
+              "#project/2026-06-08-small-envelope",
+              "#entry/2026-06-08T09:09",
+              "#artifact/2026-06-09-distractor-000269",
+              "#artifact/2026-06-09-distractor-000293",
+              "#artifact/2026-06-09-distractor-000197",
+              "#artifact/2026-06-09-distractor-000161",
+              "#artifact/2026-06-09-distractor-000149",
+              "#artifact/2026-06-09-distractor-000233",
+              "#artifact/2026-06-09-distractor-000173"
+            ],
+            "metrics": {
+              "recall5": 1,
+              "recall10": 1,
+              "reciprocalRank": 1,
+              "ndcg10": 0.7591919243197319
+            },
+            "latencyMs": [
+              53.711,
+              57.173,
+              58.508
+            ]
+          },
+          {
+            "id": "last-train-paraphrase",
+            "category": "paraphrase",
+            "query": "What should I do if my evening connection is cancelled?",
+            "handles": [
+              "#entry/2026-06-08T09:10",
+              "#project/2026-06-08-last-train",
+              "#project/2026-06-08-air-gap",
+              "#action/2026-06-08-handrail",
+              "#entry/2026-06-08T09:01",
+              "#action/2026-06-09-distractor-000274",
+              "#action/2026-06-09-distractor-000058",
+              "#entry/2026-06-08T09:00",
+              "#entry/2026-06-08T09:04",
+              "#action/2026-06-09-distractor-000142"
+            ],
+            "metrics": {
+              "recall5": 0.6666666666666666,
+              "recall10": 0.6666666666666666,
+              "reciprocalRank": 1,
+              "ndcg10": 0.8124242481930318
+            },
+            "latencyMs": [
+              57.299,
+              57.524,
+              54.522
+            ]
+          },
+          {
+            "id": "last-train-exact",
+            "category": "exact",
+            "query": "Last train",
+            "handles": [
+              "#entry/2026-06-08T09:10",
+              "#action/2026-06-08-last-train",
+              "#project/2026-06-08-last-train",
+              "#entry/2026-06-08T09:01",
+              "#entry/2026-06-08T09:04",
+              "#action/2026-06-09-distractor-000139",
+              "#action/2026-06-08-steady-mile",
+              "#action/2026-06-09-distractor-000103",
+              "#action/2026-06-09-distractor-000091",
+              "#action/2026-06-08-quiet-stage"
+            ],
+            "metrics": {
+              "recall5": 1,
+              "recall10": 1,
+              "reciprocalRank": 1,
+              "ndcg10": 1
+            },
+            "latencyMs": [
+              54.812,
+              58.987,
+              56.202
+            ]
+          },
+          {
+            "id": "green-room-paraphrase",
+            "category": "paraphrase",
+            "query": "Why are the leaves turning yellow even though I water every day?",
+            "handles": [
+              "#action/2026-06-08-steady-mile",
+              "#artifact/2026-06-09-distractor-000251",
+              "#entry/2026-06-08T09:10",
+              "#artifact/2026-06-09-distractor-000071",
+              "#project/2026-06-09-distractor-000246",
+              "#artifact/2026-06-09-distractor-000275",
+              "#project/2026-06-09-distractor-000237",
+              "#project/2026-06-09-distractor-000117",
+              "#project/2026-06-09-distractor-000282",
+              "#project/2026-06-09-distractor-000252"
+            ],
+            "metrics": {
+              "recall5": 0,
+              "recall10": 0,
+              "reciprocalRank": 0,
+              "ndcg10": 0
+            },
+            "latencyMs": [
+              57.86,
+              58,
+              56.09
+            ]
+          },
+          {
+            "id": "green-room-exact",
+            "category": "exact",
+            "query": "Green room",
+            "handles": [
+              "#action/2026-06-08-green-room",
+              "#project/2026-06-08-green-room",
+              "#entry/2026-06-08T09:11",
+              "#action/2026-06-08-quiet-stage",
+              "#entry/2026-06-08T09:01",
+              "#project/2026-06-08-long-hall",
+              "#entry/2026-06-08T09:05",
+              "#project/2026-06-08-quiet-stage",
+              "#artifact/2026-06-09-distractor-000230",
+              "#action/2026-06-08-long-hall"
+            ],
+            "metrics": {
+              "recall5": 1,
+              "recall10": 1,
+              "reciprocalRank": 1,
+              "ndcg10": 0.7591919243197319
+            },
+            "latencyMs": [
+              55.039,
+              58.284,
+              57.695
+            ]
+          }
+        ]
+      }
+    }
+  ],
+  "regex": {
+    "summary": {
+      "all": {
+        "queries": 24,
+        "recall5": 0.583,
+        "recall10": 0.583,
+        "mrr10": 0.708,
+        "ndcg10": 0.64,
+        "latency": {
+          "samples": 72,
+          "p50Ms": 0.183,
+          "p95Ms": 0.254
+        }
+      },
+      "paraphrase": {
+        "queries": 12,
+        "recall5": 0.167,
+        "recall10": 0.167,
+        "mrr10": 0.417,
+        "ndcg10": 0.281,
+        "latency": {
+          "samples": 36,
+          "p50Ms": 0.202,
+          "p95Ms": 0.32
+        }
+      },
+      "exact": {
+        "queries": 12,
+        "recall5": 1,
+        "recall10": 1,
+        "mrr10": 1,
+        "ndcg10": 1,
+        "latency": {
+          "samples": 36,
+          "p50Ms": 0.169,
+          "p95Ms": 0.237
+        }
+      }
+    },
+    "results": [
+      {
+        "id": "cold-copy-paraphrase",
+        "category": "paraphrase",
+        "query": "How can I recover my notes if my computer disappears?",
+        "regex": "recover|notes|computer|disappears",
+        "handles": [
+          "#entry/2026-06-08T09:00",
+          "#project/2026-06-08-cold-copy",
+          "#project/2026-06-08-steady-mile"
+        ],
+        "metrics": {
+          "recall5": 0.6666666666666666,
+          "recall10": 0.6666666666666666,
+          "reciprocalRank": 1,
+          "ndcg10": 0.8124242481930318
+        },
+        "latencyMs": [
+          0.455,
+          0.32,
+          0.252
+        ]
+      },
+      {
+        "id": "cold-copy-exact",
+        "category": "exact",
+        "query": "Cold copy",
+        "regex": "Cold copy",
+        "handles": [
+          "#entry/2026-06-08T09:00",
+          "#action/2026-06-08-cold-copy",
+          "#project/2026-06-08-cold-copy"
+        ],
+        "metrics": {
+          "recall5": 1,
+          "recall10": 1,
+          "reciprocalRank": 1,
+          "ndcg10": 1
+        },
+        "latencyMs": [
+          0.237,
+          0.246,
+          0.209
+        ]
+      },
+      {
+        "id": "quiet-stage-paraphrase",
+        "category": "paraphrase",
+        "query": "What did we decide about the ending without any dialogue?",
+        "regex": "ending|dialogue",
+        "handles": [],
+        "metrics": {
+          "recall5": 0,
+          "recall10": 0,
+          "reciprocalRank": 0,
+          "ndcg10": 0
+        },
+        "latencyMs": [
+          0.236,
+          0.204,
+          0.224
+        ]
+      },
+      {
+        "id": "quiet-stage-exact",
+        "category": "exact",
+        "query": "Quiet stage",
+        "regex": "Quiet stage",
+        "handles": [
+          "#entry/2026-06-08T09:01",
+          "#action/2026-06-08-quiet-stage",
+          "#project/2026-06-08-quiet-stage"
+        ],
+        "metrics": {
+          "recall5": 1,
+          "recall10": 1,
+          "reciprocalRank": 1,
+          "ndcg10": 1
+        },
+        "latencyMs": [
+          0.205,
+          0.17,
+          0.169
+        ]
+      },
+      {
+        "id": "doorstep-paraphrase",
+        "category": "paraphrase",
+        "query": "Why were new users abandoning setup before they could try the app?",
+        "regex": "new users|abandon|setup",
+        "handles": [],
+        "metrics": {
+          "recall5": 0,
+          "recall10": 0,
+          "reciprocalRank": 0,
+          "ndcg10": 0
+        },
+        "latencyMs": [
+          0.252,
+          0.214,
+          0.217
+        ]
+      },
+      {
+        "id": "doorstep-exact",
+        "category": "exact",
+        "query": "Doorstep",
+        "regex": "Doorstep",
+        "handles": [
+          "#entry/2026-06-08T09:02",
+          "#action/2026-06-08-doorstep",
+          "#project/2026-06-08-doorstep"
+        ],
+        "metrics": {
+          "recall5": 1,
+          "recall10": 1,
+          "reciprocalRank": 1,
+          "ndcg10": 1
+        },
+        "latencyMs": [
+          0.215,
+          0.161,
+          0.157
+        ]
+      },
+      {
+        "id": "far-table-paraphrase",
+        "category": "paraphrase",
+        "query": "Which plan makes the team gathering work for people who cannot eat dairy?",
+        "regex": "team gathering|dairy",
+        "handles": [],
+        "metrics": {
+          "recall5": 0,
+          "recall10": 0,
+          "reciprocalRank": 0,
+          "ndcg10": 0
+        },
+        "latencyMs": [
+          0.195,
+          0.168,
+          0.166
+        ]
+      },
+      {
+        "id": "far-table-exact",
+        "category": "exact",
+        "query": "Far table",
+        "regex": "Far table",
+        "handles": [
+          "#entry/2026-06-08T09:03",
+          "#action/2026-06-08-far-table",
+          "#project/2026-06-08-far-table"
+        ],
+        "metrics": {
+          "recall5": 1,
+          "recall10": 1,
+          "reciprocalRank": 1,
+          "ndcg10": 1
+        },
+        "latencyMs": [
+          0.227,
+          0.183,
+          0.148
+        ]
+      },
+      {
+        "id": "handrail-paraphrase",
+        "category": "paraphrase",
+        "query": "How do we stop a failed rollout from taking the website down?",
+        "regex": "failed|rollout|website",
+        "handles": [],
+        "metrics": {
+          "recall5": 0,
+          "recall10": 0,
+          "reciprocalRank": 0,
+          "ndcg10": 0
+        },
+        "latencyMs": [
+          0.224,
+          0.191,
+          0.196
+        ]
+      },
+      {
+        "id": "handrail-exact",
+        "category": "exact",
+        "query": "Handrail",
+        "regex": "Handrail",
+        "handles": [
+          "#entry/2026-06-08T09:04",
+          "#action/2026-06-08-handrail",
+          "#project/2026-06-08-handrail"
+        ],
+        "metrics": {
+          "recall5": 1,
+          "recall10": 1,
+          "reciprocalRank": 1,
+          "ndcg10": 1
+        },
+        "latencyMs": [
+          0.188,
+          0.158,
+          0.145
+        ]
+      },
+      {
+        "id": "long-hall-paraphrase",
+        "category": "paraphrase",
+        "query": "What makes the meeting screen usable without touching a mouse?",
+        "regex": "meeting|screen|mouse",
+        "handles": [
+          "#entry/2026-06-08T09:05",
+          "#project/2026-06-09-distractor-000036",
+          "#project/2026-06-09-distractor-000048",
+          "#project/2026-06-09-distractor-000060",
+          "#project/2026-06-09-distractor-000072",
+          "#project/2026-06-09-distractor-000084",
+          "#project/2026-06-09-distractor-000096",
+          "#project/2026-06-09-distractor-000108",
+          "#project/2026-06-09-distractor-000120",
+          "#project/2026-06-09-distractor-000132"
+        ],
+        "metrics": {
+          "recall5": 0.3333333333333333,
+          "recall10": 0.3333333333333333,
+          "reciprocalRank": 1,
+          "ndcg10": 0.7452525342261976
+        },
+        "latencyMs": [
+          0.224,
+          0.194,
+          0.177
+        ]
+      },
+      {
+        "id": "long-hall-exact",
+        "category": "exact",
+        "query": "Long hall",
+        "regex": "Long hall",
+        "handles": [
+          "#entry/2026-06-08T09:05",
+          "#action/2026-06-08-long-hall",
+          "#project/2026-06-08-long-hall"
+        ],
+        "metrics": {
+          "recall5": 1,
+          "recall10": 1,
+          "reciprocalRank": 1,
+          "ndcg10": 1
+        },
+        "latencyMs": [
+          0.173,
+          0.15,
+          0.149
+        ]
+      },
+      {
+        "id": "steady-mile-paraphrase",
+        "category": "paraphrase",
+        "query": "What was the plan for getting back to running without hurting my leg again?",
+        "regex": "running|leg|hurting",
+        "handles": [],
+        "metrics": {
+          "recall5": 0,
+          "recall10": 0,
+          "reciprocalRank": 0,
+          "ndcg10": 0
+        },
+        "latencyMs": [
+          0.227,
+          0.19,
+          0.196
+        ]
+      },
+      {
+        "id": "steady-mile-exact",
+        "category": "exact",
+        "query": "Steady mile",
+        "regex": "Steady mile",
+        "handles": [
+          "#entry/2026-06-08T09:06",
+          "#action/2026-06-08-steady-mile",
+          "#project/2026-06-08-steady-mile"
+        ],
+        "metrics": {
+          "recall5": 1,
+          "recall10": 1,
+          "reciprocalRank": 1,
+          "ndcg10": 1
+        },
+        "latencyMs": [
+          0.178,
+          0.145,
+          0.144
+        ]
+      },
+      {
+        "id": "paper-trail-paraphrase",
+        "category": "paraphrase",
+        "query": "Where is the agreement about how long we keep customer information?",
+        "regex": "agreement|customer information|keep",
+        "handles": [
+          "#entry/2026-06-08T09:03",
+          "#entry/2026-06-08T09:01",
+          "#artifact/2026-06-09-distractor-000038",
+          "#artifact/2026-06-09-distractor-000041",
+          "#artifact/2026-06-09-distractor-000044",
+          "#artifact/2026-06-09-distractor-000047",
+          "#artifact/2026-06-09-distractor-000050",
+          "#artifact/2026-06-09-distractor-000053",
+          "#artifact/2026-06-09-distractor-000056",
+          "#artifact/2026-06-09-distractor-000059"
+        ],
+        "metrics": {
+          "recall5": 0,
+          "recall10": 0,
+          "reciprocalRank": 0,
+          "ndcg10": 0
+        },
+        "latencyMs": [
+          0.202,
+          0.158,
+          0.164
+        ]
+      },
+      {
+        "id": "paper-trail-exact",
+        "category": "exact",
+        "query": "Paper trail",
+        "regex": "Paper trail",
+        "handles": [
+          "#entry/2026-06-08T09:07",
+          "#action/2026-06-08-paper-trail",
+          "#project/2026-06-08-paper-trail"
+        ],
+        "metrics": {
+          "recall5": 1,
+          "recall10": 1,
+          "reciprocalRank": 1,
+          "ndcg10": 1
+        },
+        "latencyMs": [
+          0.171,
+          0.143,
+          0.14
+        ]
+      },
+      {
+        "id": "air-gap-paraphrase",
+        "category": "paraphrase",
+        "query": "Can I keep working on a plane when there is no internet?",
+        "regex": "plane|internet|working",
+        "handles": [
+          "#action/2026-06-08-air-gap"
+        ],
+        "metrics": {
+          "recall5": 0.3333333333333333,
+          "recall10": 0.3333333333333333,
+          "reciprocalRank": 1,
+          "ndcg10": 0.31939394323979897
+        },
+        "latencyMs": [
+          0.189,
+          0.156,
+          0.161
+        ]
+      },
+      {
+        "id": "air-gap-exact",
+        "category": "exact",
+        "query": "Air gap",
+        "regex": "Air gap",
+        "handles": [
+          "#entry/2026-06-08T09:08",
+          "#action/2026-06-08-air-gap",
+          "#project/2026-06-08-air-gap"
+        ],
+        "metrics": {
+          "recall5": 1,
+          "recall10": 1,
+          "reciprocalRank": 1,
+          "ndcg10": 1
+        },
+        "latencyMs": [
+          0.176,
+          0.146,
+          0.139
+        ]
+      },
+      {
+        "id": "small-envelope-paraphrase",
+        "category": "paraphrase",
+        "query": "How will we avoid spending too much on model requests this month?",
+        "regex": "spending|model requests|month",
+        "handles": [
+          "#entry/2026-06-08T09:09"
+        ],
+        "metrics": {
+          "recall5": 0.3333333333333333,
+          "recall10": 0.3333333333333333,
+          "reciprocalRank": 1,
+          "ndcg10": 0.7452525342261976
+        },
+        "latencyMs": [
+          0.199,
+          0.152,
+          0.159
+        ]
+      },
+      {
+        "id": "small-envelope-exact",
+        "category": "exact",
+        "query": "Small envelope",
+        "regex": "Small envelope",
+        "handles": [
+          "#entry/2026-06-08T09:09",
+          "#action/2026-06-08-small-envelope",
+          "#project/2026-06-08-small-envelope"
+        ],
+        "metrics": {
+          "recall5": 1,
+          "recall10": 1,
+          "reciprocalRank": 1,
+          "ndcg10": 1
+        },
+        "latencyMs": [
+          0.191,
+          0.154,
+          0.152
+        ]
+      },
+      {
+        "id": "last-train-paraphrase",
+        "category": "paraphrase",
+        "query": "What should I do if my evening connection is cancelled?",
+        "regex": "connection|cancelled|evening",
+        "handles": [
+          "#project/2026-06-08-air-gap"
+        ],
+        "metrics": {
+          "recall5": 0,
+          "recall10": 0,
+          "reciprocalRank": 0,
+          "ndcg10": 0
+        },
+        "latencyMs": [
+          0.233,
+          0.213,
+          0.209
+        ]
+      },
+      {
+        "id": "last-train-exact",
+        "category": "exact",
+        "query": "Last train",
+        "regex": "Last train",
+        "handles": [
+          "#entry/2026-06-08T09:10",
+          "#action/2026-06-08-last-train",
+          "#project/2026-06-08-last-train"
+        ],
+        "metrics": {
+          "recall5": 1,
+          "recall10": 1,
+          "reciprocalRank": 1,
+          "ndcg10": 1
+        },
+        "latencyMs": [
+          0.178,
+          0.169,
+          0.173
+        ]
+      },
+      {
+        "id": "green-room-paraphrase",
+        "category": "paraphrase",
+        "query": "Why are the leaves turning yellow even though I water every day?",
+        "regex": "leaves|yellow|water",
+        "handles": [
+          "#entry/2026-06-08T09:11"
+        ],
+        "metrics": {
+          "recall5": 0.3333333333333333,
+          "recall10": 0.3333333333333333,
+          "reciprocalRank": 1,
+          "ndcg10": 0.7452525342261976
+        },
+        "latencyMs": [
+          0.275,
+          0.221,
+          0.254
+        ]
+      },
+      {
+        "id": "green-room-exact",
+        "category": "exact",
+        "query": "Green room",
+        "regex": "Green room",
+        "handles": [
+          "#entry/2026-06-08T09:11",
+          "#action/2026-06-08-green-room",
+          "#project/2026-06-08-green-room"
+        ],
+        "metrics": {
+          "recall5": 1,
+          "recall10": 1,
+          "reciprocalRank": 1,
+          "ndcg10": 1
+        },
+        "latencyMs": [
+          0.201,
+          0.171,
+          0.143
+        ]
+      }
+    ]
+  }
+}

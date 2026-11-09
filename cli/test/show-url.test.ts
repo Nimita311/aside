@@ -1,7 +1,7 @@
 import { expect, it, vi } from 'vitest';
 import { mkdtempSync, readFileSync, realpathSync, rmSync, statSync } from 'node:fs';
 import { join } from 'node:path';
-import { init } from '../src/commands/init.js';
+import { init } from '../src/source/bootstrap.js';
 import { Daemon } from '../src/daemon/daemon.js';
 import { DaemonClient } from '../src/daemon/client.js';
 import { InstanceHost } from '../src/daemon/host.js';

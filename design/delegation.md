@@ -34,8 +34,8 @@ must be selectable in the action's instance. Ordinary edits preserve saved
 unavailable selections without querying vendors.
 
 Creation omits delegation when absent. Updates omit to preserve, supply a complete
-declaration to replace, or use null to clear. Legacy action authoring accepts the
-same frontmatter declaration with a direct prompt handle.
+declaration to replace, or use null to clear. Frontmatter stores the declaration
+with a direct prompt handle.
 
 ## Dispatch
 
@@ -46,7 +46,7 @@ cancelled actions never dispatch automatically; marking an action done disarms
 pending work and cannot launch a delegation.
 
 Templates supply delegation to every unsaved projected occurrence. The worker
-seeks recurrence rules directly, independently of `recurrenceLookaheadDays`,
+seeks recurrence rules directly, independently of collection ranges,
 respecting COUNT, UNTIL, gaps, and folds. Launch leaves the occurrence projected;
 its first edit materializes it. Saved occurrences use their own schedule and
 declaration; clearing delegation on a saved occurrence suppresses it. Template
@@ -114,7 +114,7 @@ timestamps, dispatch lateness,
 model, launched prompt, cwd, command/args, PID, exit code/signal, metadata and log
 paths, and bounded UTF-8 `output` paging. Counts exclude pruned history.
 `AutomationRun.action` resolves the current saved action
-or projected occurrence by immutable identity, independently of query lookahead.
+or projected occurrence by immutable identity, independently of collection ranges.
 `AutomationRun.automation` resolves the current declaration, which may differ
 from the launch configuration or be null after clearing delegation.
 Output, launched prompts, and process outcomes use automation's retained storage

@@ -3,7 +3,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { parse } from 'yaml';
 import { splitFrontMatter } from '../src/core/parser.js';
-import { Store } from '../src/mcp/store.js';
+import { Store } from '../src/source/store.js';
 import { handleUpdateInstance } from '../src/mcp/tools/instance.js';
 
 describe('manifest extension preservation', () => {
@@ -18,7 +18,7 @@ describe('manifest extension preservation', () => {
 
   it.each([
     { label: 'automation clearing', patch: { automations: null }, eol: '\n' },
-    { label: 'lookahead editing with CRLF', patch: { recurrenceLookaheadDays: 14 }, eol: '\r\n' },
+    { label: 'prefix editing with CRLF', patch: { scheduledEventTitlePrefix: 'Plan ' }, eol: '\r\n' },
   ])('retains significant custom block-scalar whitespace during $label', ({ patch, eol }) => {
     directory = mkdtempSync('/private/tmp/aside-manifest-preservation-');
     const file = join(directory, 'aside.md');
@@ -50,7 +50,7 @@ describe('manifest extension preservation', () => {
     expect(metadata(after.yaml).custom).toBe(custom);
     expect(after.body).toBe(before.body);
     if (patch.automations === null) expect(metadata(after.yaml)).not.toHaveProperty('automations');
-    else expect(metadata(after.yaml).config.recurrenceLookaheadDays).toBe(14);
+    else expect(metadata(after.yaml).config.scheduledEventTitlePrefix).toBe('Plan ');
   });
 
   it('preserves exact custom large integers and their aliases during a manifest edit', () => {
@@ -59,14 +59,14 @@ describe('manifest extension preservation', () => {
     writeFileSync(file, '---\nid: manifest-preservation\nname: Fixture\ncustom: &details {ticket: 9007199254740993, negative: -9007199254740995}\ncustom_copy: *details\n---\n\nInstance instructions.\n');
     store = new Store(directory);
 
-    handleUpdateInstance(store, { recurrenceLookaheadDays: 14 });
+    handleUpdateInstance(store, { scheduledEventTitlePrefix: 'Plan ' });
 
     const saved = splitFrontMatter(readFileSync(file, 'utf8'));
     const metadata = parse(saved.yaml, { intAsBigInt: true });
     expect(metadata.custom).toEqual({ ticket: 9007199254740993n, negative: -9007199254740995n });
     expect(metadata.custom_copy).toEqual(metadata.custom);
-    expect(metadata.config.recurrenceLookaheadDays).toBe(14n);
-    expect(store.getManifest().config?.recurrenceLookaheadDays).toBe(14);
+    expect(metadata.config.scheduledEventTitlePrefix).toBe('Plan ');
+    expect(store.getManifest().config?.scheduledEventTitlePrefix).toBe('Plan ');
     expect(saved.body).toBe('\nInstance instructions.\n');
   });
 });

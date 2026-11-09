@@ -2,13 +2,15 @@ import { isAsideDir } from '../core/instance.js';
 import type { Status } from '../daemon/protocol.js';
 import type { Job } from '../daemon/launchd.js';
 import type { DaemonPaths } from '../daemon/paths.js';
-import { availableInstances } from '../web/catalogue.js';
+import {availableInstances} from '../source/instance-admission.js';
+import {type AvailableInstance} from '../core/catalogue.js';
 import { renderReport, type Report } from './output.js';
 import { instanceIdClashChecks } from './instance-checks.js';
 
 interface Snapshot {
   paths: DaemonPaths;
   running?: Status;
+  instances: AvailableInstance[];
   unavailable: boolean;
   known: string[];
   job: Job | null;
@@ -17,16 +19,19 @@ interface Snapshot {
 
 export function formatDaemonStatus(snapshot: Snapshot, json = false): { output: string; errors: boolean } {
   const { paths, unavailable, job, jobFileExists } = snapshot;
-  const known = snapshot.known.filter(isAsideDir);
+  if (!snapshot.instances) throw new Error('Daemon instance catalogue is unavailable.');
+  const published = snapshot.instances;
+  const eligible = new Set(published.map(instance => instance.path));
+  const known = (snapshot.running?.known ?? snapshot.known).filter(path => eligible.has(path));
   const running = snapshot.running ? { pid: snapshot.running.pid, build: snapshot.running.build,
     connections: snapshot.running.connections, tabs: snapshot.running.tabs,
-    known: snapshot.running.known.filter(isAsideDir), loaded: snapshot.running.loaded.filter(isAsideDir),
-    sessions: snapshot.running.sessions ? Object.fromEntries(Object.entries(snapshot.running.sessions).filter(([path]) => isAsideDir(path))) : undefined,
+    known, loaded: snapshot.running.loaded.filter(path => eligible.has(path)),
+    sessions: snapshot.running.sessions ? Object.fromEntries(Object.entries(snapshot.running.sessions).filter(([path]) => eligible.has(path))) : undefined,
     graphqlLogging: snapshot.running.graphqlLogging,
   } : undefined;
   const loaded = new Set(running?.loaded ?? []);
-  const listed = [...new Set([...known, ...loaded])].filter(isAsideDir);
-  const catalogue = new Map(availableInstances(listed).map(instance => [instance.path, instance]));
+  const listed = [...new Set([...known, ...loaded])];
+  const catalogue = new Map(published.map(instance => [instance.path, instance]));
   const instances = listed.map(path => {
     const instance = catalogue.get(path);
     return { path, id: instance?.id ?? '', name: instance?.name ?? instance?.id ?? 'Instance',
@@ -53,6 +58,11 @@ export function formatDaemonStatus(snapshot: Snapshot, json = false): { output: 
     passed: !unavailable, ...(unavailable ? { problems: ['Lifetime lock held, but the daemon does not answer.'], fixes: ['Inspect the log and retry aside daemon status.'] } : {}) });
   if (jobFileExists) report.checks.push({ code: 'login_job', label: 'Login job file', passed: !!job,
     ...(!job ? { problems: ['The saved job could not be read or recognized.'], fixes: ['aside daemon install'] } : {}) });
-  report.checks.push(...instanceIdClashChecks(instances));
+  report.checks.push(...instanceIdClashChecks([...catalogue.values()]));
   return { output: renderReport(report, 'daemon status', json), errors: report.checks.some(check => !check.passed) };
+}
+
+/** Explicit stopped/unreachable-daemon diagnostics have no live owner. */
+export function readOfflineDaemonInstances(known: string[]): AvailableInstance[] {
+  return availableInstances(known.filter(isAsideDir));
 }

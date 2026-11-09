@@ -279,6 +279,11 @@ export class DataCore {
       this.diagnostics.set(path, diagnostic);
     }
   }
+  upsertInstance(value: InstanceRecord): void {
+    this.instance = value;
+    // Fence an in-flight snapshot without rebuilding the unchanged record graph.
+    this.relationRevision++;
+  }
   upsertEntity<K extends EntityKind>(kind: K, id: string, value: EntityRecord[K]): void {
     this.cacheEntity(kind, id, value);
     this.relationsCache = null;
@@ -437,7 +442,7 @@ export class DataCore {
       const raw = await this.readTracked(path);
       if (raw === null) { this.recordReadFailure(path, 'Record file is missing'); return; }
       const { kind, id } = record;
-      this.cacheEntity(kind, id, this.parseResult(ENTITY_PARSERS[kind](raw), path));
+      this.cacheEntity(kind, id, this.parseResult<EntityRecord[EntityKind]>(ENTITY_PARSERS[kind](raw), path));
       this.entityWriteRevisions.set(path, (this.entityWriteRevisions.get(path) ?? 0) + 1);
       this.relationRevision++; this.relationsCache = null;
       return;
@@ -482,7 +487,7 @@ export class DataCore {
 
   async getPlanningActions(project?: string, after?: string): Promise<PlanningPage> {
     const relations = await this.getRelations();
-    return planningActions(this.entities.action, { projectionsOnly: true, templates: project ? relations.actionsByProject.get(project) ?? [] : undefined, after, lookaheadDays: this.getInstance()?.manifest.config?.recurrenceLookaheadDays });
+    return planningActions(this.entities.action, { projectionsOnly: true, templates: project ? relations.actionsByProject.get(project) ?? [] : undefined, after });
   }
 
   getCachedArtifact(id: string): Artifact | undefined {
@@ -836,7 +841,7 @@ export class DataCore {
       if (result === 'unchanged' && !(missingFiles.has(path) && (pending || this.entityLoads.has(path)))) return;
       const selected = result === 'unchanged' ? null : result;
       const readRevision = checkedReadRevisions.get(path)!;
-      stageEntity(kind, id, { value: selected && parseResult(ENTITY_PARSERS[kind](selected.text), path), version: selected && selected.version, readRevision });
+      stageEntity(kind, id, { value: selected && parseResult<EntityRecord[EntityKind]>(ENTITY_PARSERS[kind](selected.text), path), version: selected && selected.version, readRevision });
     });
 
     await mapLimit([...assetsToCheck], 6, async (path) => {

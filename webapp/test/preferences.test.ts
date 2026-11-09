@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { animationSpeed, dateFormat, timeStyle, timeFormat } from '../src/preferences';
+import { animationSpeed, dateFormat, timeStyle, timeFormat, weekStartsOn } from '../src/preferences';
 
 describe('animation preferences', () => {
   it('retains supported speeds including Off and normalizes unsupported persisted values', () => {
@@ -22,5 +22,11 @@ describe('date and time preferences', () => {
     expect(dateFormat('broken')).toBe('medium');
     expect(timeStyle('broken')).toBe('short');
     expect(timeFormat('broken')).toBe('locale');
+  });
+  it('retains all seven week-start choices and defaults unsupported saved values to Monday', () => {
+    for (let day = 0; day < 7; day++) expect(weekStartsOn(String(day))).toBe(day);
+    for (const value of [null, '', ' ', '7', '-1', '5.5', 'Monday', 'NaN', 'Infinity']) {
+      expect(weekStartsOn(value)).toBe(1);
+    }
   });
 });

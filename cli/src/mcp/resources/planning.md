@@ -6,12 +6,31 @@ Review backlog, deadlines, and slipped work. Propose priorities, rescheduling,
 or resolution.
 
 A recurring action is a template. An unedited occurrence is computed from that
-template's recurrence and appears as an action within the instance lookahead.
-Use `Query.actions` or a project's `Project.actions` for all work, including
-future projections within the instance lookahead. Templates are also included
-in unfiltered lists. A template has `Action.recurrence` set to a schedule list,
-including `[]` for a dormant template, and `Action.status: null`. It defines
-repetition rather than unfinished work to resolve.
+template's recurrence. Use `Query.actions` or a project's `Project.actions` for
+saved and projected work. Unfiltered lists also include templates, whose
+`Action.recurrence` is a schedule list, including `[]` when dormant, and whose
+`Action.status` is null. Templates define repetition rather than work to resolve.
+
+### Choose a schedule range
+
+Without schedule dates, action lists include all past projections and project
+through one calendar year from today. With `scheduledFrom` alone, the projection
+end is one calendar year after that date or today, whichever is later. Set
+`scheduledTo` to choose the end explicitly; dates can cover past or far-future
+occurrences. The implicit end applies only to unsaved projections, so saved work
+remains eligible at every date. Explicit schedule predicates apply to all rows
+and exclude undated work unless an `or` branch includes it.
+
+Check `extensions.defaultProjectionRanges` for implicit ends that affect templates.
+Each entry gives the response path, `scheduledTo`, and affected `templates`.
+Set `scheduledFrom` and `scheduledTo` to choose the period you need; an empty
+array means no template was limited by an implicit end. A range exceeding the
+query work budget fails with guidance to narrow it.
+
+Use `scheduledFrom` with `SCHEDULED_ASC` for upcoming work, and set `scheduledTo`
+when reviewing deadlines. Use `Query.search` for unrestricted saved-record
+lookups. Unsaved occurrences have null `created`, do not match created filters,
+and sort after saved rows in both created orders.
 
 | Action shape | Recurrence | Occurrence | Lifecycle |
 | --- | --- | --- | --- |
@@ -37,7 +56,7 @@ The saved occurrence retains the same template ID and `original` identity, even
 if its current scheduled time changes. Reading alone never performs that
 conversion. Projections follow the current
 template's values, schedule, and context and can disappear when its recurrence
-or the lookahead changes; a saved occurrence keeps its own edits.
+or the query range changes; a saved occurrence keeps its own edits.
 
 | View | Schema reference |
 | --- | --- |
@@ -85,12 +104,13 @@ query Templates {
 and `occurrence: {projected: false}` matches saved occurrences. Use `not` with
 the projected predicate to exclude projections while keeping ordinary actions
 and templates. `template` narrows occurrences to one saved template ID.
-Projection failures appear in response diagnostics and make `extensions.complete`
+Malformed recurrence appears in response diagnostics and makes `extensions.complete`
 false; check it before claiming full coverage or absence.
 
 ## Create or change work
 
-- For a scheduled action with a target calendar, its body becomes event notes; include references useful when performing the work.
+- For a scheduled action with a target calendar, its deadline, description, and body become event notes; include references useful when performing the work.
+- Set its primary location with `location`, one bare `#location/?` handle. It synchronizes to Calendar only; clearing it clears the event location, and Calendar location edits are not imported.
 - Create new actions or templates in entry context. Find a fitting open project; clarify uncertain fit or leave the entry untagged.
 - Routine edits need no entry. Offer to capture a meaningful check-in or decision separately.
 
@@ -119,7 +139,7 @@ a dormant template. Omit `scheduled` and other irrelevant optional creation
 fields rather than using null as an update-style clear.
 
 This creates a weekly template. Supply an all-day Friday date for `$start`; the
-returned status is null, and occurrences appear separately within the lookahead.
+returned status is null, and occurrences appear separately in action lists.
 Use `recurrence: []` instead to create a dormant template.
 
 ```graphql
@@ -160,12 +180,7 @@ than convert the template back into an ordinary action.
 - Copy selectors from stored metadata using `RecurrenceScheduleSelectorInput`.
 - Retained starts, patterns, and zones cannot be patched in place. Schedule changes can remove future projections; already saved occurrences remain.
 - To stop repetition, end the active rule and remove queued future rules. Retain the template for saved occurrences; use a new template when the work changes meaning.
-- Preview with `Query.actions`. Set lookahead through `Mutation.updateInstance` and `UpdateInstanceInput.settings.recurrenceLookaheadDays`; the default is documented at `InstanceSettings.recurrenceLookaheadDays`.
-
-All-day projections include today through the horizon date; timed projections
-are strictly after the current minute through the horizon. There are no unsaved
-past projections, and schedules outside the horizon do not add an extra
-occurrence. Date filters narrow that finite set without expanding it.
+- Preview with `Query.actions`, choosing schedule dates as described above.
 
 ## Change one occurrence
 
@@ -188,8 +203,8 @@ state. Occurrences inherit their template's live project associations:
 `Action.projects`. Projections also inherit the template's artifact context
 without creating persistent entry tags or artifact backlinks.
 
-Projected IDs resolve only within the current lookahead and their handles are
-transient. Copy the returned occurrence identity for an explicit occurrence edit;
+Exact projected IDs resolve independently of collection ranges and their handles
+are transient. Copy the returned occurrence identity for an explicit occurrence edit;
 use the resulting saved action handle for durable links.
 
 ## Calendar behavior and status
@@ -201,14 +216,17 @@ authorization handoff and examples.
 
 Edit Aside actions; their Calendar-bound writes start synchronization without a
 separate sync call.
-Call `Mutation.calendarInfo` for permission handling and status:
+Read `SystemInfo.calendar` through `Query.systemInfo` for integration status.
+This query never requests Calendar permission. Use `Mutation.requestCalendarAccess`
+when permission should be requested, and `Instance.calendarSync` for action sync
+observations:
 
 | Check | Schema field |
 | --- | --- |
-| Permission and calendars | `CalendarInfoPayload.authorization`, `CalendarInfoPayload.calendars` |
-| Instance sync state | `CalendarInfoPayload.syncStates` |
-| Problems and recovery | `CalendarInfoPayload.diagnostics`, `CalendarDiagnostic.recovery` |
-| Outstanding action failures | `CalendarInfoPayload.failures` |
+| Permission and calendars | `SystemCalendarInfo.authorization`, `SystemCalendarInfo.calendars` |
+| Instance sync state | `CalendarSyncInfo.syncStates` |
+| Problems and recovery | `SystemCalendarInfo.diagnostics`, `CalendarDiagnostic.recovery` |
+| Outstanding action failures | `CalendarSyncInfo.failures` |
 
 - By default, linked Git worktrees do not perform Calendar writes. The primary checkout's `.aside` can set `worktreeDetection: false` to restore independent-instance behavior; duplicate or unverifiable identities can still pause synchronization.
 - Moving, resizing, or changing the timezone of an unresolved action's event updates its schedule, duration, or timezone. Changing the destination updates calendar routing. Deleting an unresolved action's event clears its schedule and returns it to backlog.

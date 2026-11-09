@@ -4,7 +4,9 @@ import { assertRecurrence, assertOccurrence } from './recurrence.js';
 import { assertAttachmentFilename } from './artifact-reference.js';
 import { isInstanceId, INSTANCE_ID_RULE } from './identity.js';
 import { isWallMinute } from './scheduling.js';
+import { assertLocationHandle } from './location-reference.js';
 import { weekFileId } from './record-reference.js';
+import { assertWebappSidebar } from './webapp-config.js';
 import type {
   Entry,
   EntryMeta,
@@ -179,6 +181,13 @@ export function parseActionFile(content: string): ParseResult<Action> {
     log.warn('wrong_value', `Field "resolution" should be "done" or "cancelled" but found "${resolution}"`, 'resolution');
   }
   copy(['timezone', 'duration', 'calendar', 'calendar_account']);
+  if (data.location !== undefined) {
+    // Keep invalid authored values available for repair. In particular, an
+    // invalid value must not turn into an absent Calendar location on read.
+    frontMatter.location = data.location as string;
+    try { assertLocationHandle(data.location); }
+    catch (error) { log.error('invalid_location', (error as Error).message, 'location'); }
+  }
   for (const key of ['recurrence', 'occurrence'] as const) if (data[key] !== undefined) {
     try {
       if (key === 'recurrence') frontMatter.recurrence = assertRecurrence(data[key]);
@@ -241,20 +250,27 @@ function parseInstanceConfig(value: unknown, log: IssueLog): InstanceConfig | un
   if (value == null) return undefined;
   const data = asRecord(value, log);
   const config: InstanceConfig = {};
-  if (data.recurrenceLookaheadDays !== undefined) {
-    if (typeof data.recurrenceLookaheadDays === 'number' && Number.isSafeInteger(data.recurrenceLookaheadDays) && data.recurrenceLookaheadDays >= 0) config.recurrenceLookaheadDays = data.recurrenceLookaheadDays;
-    else log.error('invalid_recurrence_lookahead', 'recurrenceLookaheadDays must be a nonnegative integer.', 'config.recurrenceLookaheadDays');
-  }
   for (const key of ['scheduledEventTitlePrefix', 'doneEventTitlePrefix'] as const) {
     const v = data[key];
     if (v == null) continue;
     if (typeof v === 'string') config[key] = v;
     else log.warn('wrong_type', `Field "config.${key}" should be text`, `config.${key}`);
   }
+  if (data.webapp !== undefined) {
+    if (!data.webapp || typeof data.webapp !== 'object' || Array.isArray(data.webapp)) {
+      log.error('invalid_webapp_config', 'config.webapp must be a mapping.', 'config.webapp');
+    } else {
+      const webapp = data.webapp as Record<string, unknown>;
+      if (webapp.sidebar !== undefined) {
+        try { config.webapp = { sidebar: assertWebappSidebar(webapp.sidebar) }; }
+        catch (error) { log.error('invalid_webapp_sidebar', error instanceof Error ? error.message : String(error), 'config.webapp.sidebar'); }
+      }
+    }
+  }
   // Flag an unrecognized key rather than silently ignoring it — a misspelled
   // `doneEventTitlePrefix` would otherwise apply nothing with no feedback.
   for (const key of Object.keys(data)) {
-    if (key !== 'scheduledEventTitlePrefix' && key !== 'doneEventTitlePrefix' && key !== 'recurrenceLookaheadDays') {
+    if (key !== 'scheduledEventTitlePrefix' && key !== 'doneEventTitlePrefix' && key !== 'recurrenceLookaheadDays' && key !== 'webapp') {
       log.warn('unknown_field', `Unknown config field "${key}"`, `config.${key}`);
     }
   }

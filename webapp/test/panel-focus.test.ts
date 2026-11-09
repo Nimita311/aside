@@ -23,14 +23,12 @@ const source: DataSource = {
 
 interface PanelView { scrollTop: number; expanded: string[] }
 interface App {
-  state: { store: Store | null; instanceId: string | null; filter: EntityRef | null; panelCollapsed: boolean };
+  state: { store: Store | null; instanceId: string | null; filter: EntityRef | null };
   showSidePanel(view?: PanelView | null, userInitiated?: boolean): Promise<void>;
   panelSnapshot(): PanelView | null;
-  collapsePanel(): void;
   setupModals(): void;
   dismissActionToast(): void;
   settingsModal: ModalController;
-  readerModal: ModalController;
 }
 
 function deferred<T>() {
@@ -49,13 +47,12 @@ describe('panel content focus', () => {
     localStorage.clear();
     history.replaceState({}, '', '/work/');
     document.body.innerHTML = '<h1 class="app-title"><a href="/">Aside</a></h1><input id="other">' +
-      '<aside id="side-panel"><button id="btn-side-panel-collapse">Retract panel</button><div id="side-panel-body"></div></aside><div id="filter-pill" hidden></div>' +
-      '<dialog id="doc-backdrop" hidden><button>Close document</button><div id="doc-body"></div></dialog>' +
+      '<aside id="side-panel"><div id="side-panel-body"></div></aside>' +
       '<dialog id="modal-backdrop" hidden><button>Close settings</button></dialog>';
     const store = new Store(source); await store.init();
-    const api = await loadApp<App>('state, showSidePanel, panelSnapshot, collapsePanel, setupModals, dismissActionToast, settingsModal, readerModal');
-    api.state.store = store; api.state.instanceId = 'work'; api.state.panelCollapsed = false;
-    dismissToasts.push(api.dismissActionToast); api.setupModals(); modals.push(api.settingsModal, api.readerModal);
+    const api = await loadApp<App>('state, showSidePanel, panelSnapshot, setupModals, dismissActionToast, settingsModal');
+    api.state.store = store; api.state.instanceId = 'work';
+    dismissToasts.push(api.dismissActionToast); api.setupModals(); modals.push(api.settingsModal);
     await api.showSidePanel();
     const body = document.getElementById('side-panel-body')!;
     const projectLink = () => body.querySelector<HTMLAnchorElement>('.tag-project')!;
@@ -204,16 +201,23 @@ describe('panel content focus', () => {
     expect(document.getElementById('modal-backdrop')?.contains(document.activeElement)).toBe(true);
   });
 
-  it('leaves focus on the collapsed panel control if loading finishes after retraction', async () => {
-    const { api, projectLink, delayRelations } = await setup();
+  it('finishes loading the retained summary without reopening a retracted panel or stealing focus', async () => {
+    const { api, body, projectLink, delayRelations } = await setup();
     const pending = await delayRelations();
     projectLink().focus();
     api.state.filter = { type: 'project', id: ids[0] };
     const loading = api.showSidePanel();
-    api.collapsePanel();
-    const expand = document.querySelector('.filter-pill-label');
-    expect(document.activeElement).toBe(expand);
+    const panel = document.getElementById('side-panel')!;
+    panel.hidden = true;
+    panel.inert = true;
+    const summary = document.createElement('button');
+    summary.textContent = 'Summary';
+    document.body.append(summary);
+    summary.focus();
     pending.finish(); await loading;
-    expect(document.activeElement).toBe(expand);
+    expect(document.activeElement).toBe(summary);
+    expect(panel.hidden).toBe(true);
+    expect(panel.inert).toBe(true);
+    expect(body.querySelector('.entity-title')?.textContent).toContain('Project 0');
   });
 });

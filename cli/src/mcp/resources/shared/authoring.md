@@ -14,6 +14,13 @@
 - Prepare local drafts and read source files for MCP inputs as needed.
 - Import supporting files when they provide lasting context or reference material:
   screenshots, diagrams, PDFs, or recordings.
+- Geocode postal-only locations whenever possible using `Query.geocodeAddress`;
+  pass address or place text in `query`. Compare names and addresses, refine or
+  retry when not found, and save the chosen `geo`. Preserve postal and optional
+  display labels; labels affect display only. If unresolved, keep the address and tell
+  the user it cannot be geographically filtered. The daemon never geocodes automatically.
+- Reuse the existing `postal` spelling and component order for the same confirmed
+  address whenever possible.
 
 | Reference | Format or example |
 | --- | --- |
@@ -21,6 +28,13 @@
 | Attachment | `#artifact/id/filename` |
 | Image | `![Diagram](#artifact/id/diagram.png)` |
 | Webpage | `<iframe src="#artifact/id/index.html" title="Dashboard" height="600"></iframe>` |
+| Location | `#location/?geo=51.5034,-0.1276&postal=10%20Downing%20Street/London/` |
+
+Locations accept `geo`, `postal`, or both. `geo` is the RFC 5870 coordinate payload
+without `geo:`; `postal` contains URI-escaped, slash-separated address components.
+Optional `[label](#location/?...)` text is display only.
+An action's `location` field takes one bare handle for its primary location,
+independently of body mentions; quote the handle in YAML.
 
 Prefer date smart elements whenever possible in authored Markdown.
 

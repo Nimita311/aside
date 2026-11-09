@@ -2,8 +2,8 @@
 set -euo pipefail
 
 # Build everything a local install needs: the CLI bundle (the MCP
-# server entry point), the webapp bundle, and — on macOS with a Swift
-# toolchain — the aside-cal calendar helper. Link the aside CLI to this
+# server entry point), the webapp bundle, and — on macOS — the universal
+# aside-native helper through the CLI build. Link the aside CLI to this
 # checkout with npm link. Run again after `git pull`.
 
 here="$(cd "$(dirname "$0")" && pwd)"
@@ -20,14 +20,15 @@ echo "==> cli"
 echo "==> webapp"
 (cd "$here/webapp" && npm install && npm run build)
 
-echo "==> aside-cal"
-if [[ "$(uname)" == "Darwin" ]] && command -v swiftc >/dev/null; then
-	bash "$here/cli/native/build.sh"
-else
-	echo "skipped: calendar sync needs macOS 14+ with the Xcode Command Line Tools (xcode-select --install)"
-fi
-
 echo "==> link aside CLI"
 (cd "$here/cli" && npm link)
 
 echo "done"
+
+if ! command -v ollama >/dev/null 2>&1; then
+	printf '%s\n' '' \
+		'Optional semantic search requires Ollama 0.40 or newer running locally.' \
+		'Install Ollama: https://ollama.com' \
+		'Then start Ollama and download the embedding model:' \
+		'  ollama pull qwen3-embedding:0.6b'
+fi

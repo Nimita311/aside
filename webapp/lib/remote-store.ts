@@ -10,12 +10,23 @@ export interface SnapshotSource extends Pick<DataSource, 'read' | 'revalidate' |
   snapshot(version?: string, refresh?: boolean): Promise<{ value: DataSnapshot; version: string } | 'unchanged'>;
 }
 
+// Sidebar edits update navigation without changing native reading content.
+// Keep other instance settings and the authored body in the reading diff.
+function readingInstance(instance: DataSnapshot['instance']): DataSnapshot['instance'] {
+  if (!instance?.manifest.config) return instance;
+  const { sidebar: _sidebar, ...webapp } = instance.manifest.config.webapp ?? {};
+  const { webapp: _webapp, ...config } = instance.manifest.config;
+  const { config: _config, ...manifest } = instance.manifest;
+  const settings = { ...config, ...(Object.keys(webapp).length ? { webapp } : {}) };
+  return { ...instance, manifest: { ...manifest, ...(Object.keys(settings).length ? { config: settings } : {}) } };
+}
+
 export class RemoteStore implements StoreView {
   private data!: DataSnapshot;
   private version?: string;
   private revision = 0;
   private appliedRevision = 0;
-  private checking = false;
+  private pendingCheck: Promise<PendingUpdate | null> | undefined;
   private weeks = new Map<string, Entry[]>();
   private projects = new Map<string, Project>();
   private actions = new Map<string, Action>();
@@ -76,7 +87,7 @@ export class RemoteStore implements StoreView {
   getCachedAction(id: string) { return this.actions.get(id) ?? resolveProjection(this.actions, id); }
   async getPlanningActions(project?: string, after?: string): Promise<PlanningPage> {
     const relations = await this.getRelations();
-    return planningActions(this.actions, { projectionsOnly: true, templates: project ? relations.actionsByProject.get(project) ?? [] : undefined, after, lookaheadDays: this.getInstance()?.manifest.config?.recurrenceLookaheadDays });
+    return planningActions(this.actions, { projectionsOnly: true, templates: project ? relations.actionsByProject.get(project) ?? [] : undefined, after });
   }
 
   getCachedArtifact(id: string) { return this.artifacts.get(id); }
@@ -115,78 +126,87 @@ export class RemoteStore implements StoreView {
     } else await this.refresh();
   }
 
-  async check(scope: CheckScope, hot: HotSet, changedPaths: string[] = []): Promise<PendingUpdate | null> {
-    if (this.checking) return null;
-    this.checking = true;
-    try {
-      const revision = ++this.revision;
-      const result = await this.source.snapshot(this.version, scope === 'full' || changedPaths.length > 0);
-      const summary: UpdateSummary = { weeks: new Set(), entities: new Set(), assets: new Set(), indexesChanged: false };
-      if (result !== 'unchanged') {
-        summary.indexesChanged = JSON.stringify(result.value.indexes) !== JSON.stringify(this.data.indexes) || JSON.stringify(result.value.instance) !== JSON.stringify(this.data.instance);
-        const diff = <T>(previous: [string, T][], next: [string, T][], changed: Set<string>, prefix = '') => {
-          const before = new Map(previous), after = new Map(next);
-          for (const id of new Set([...before.keys(), ...after.keys()])) {
-            if (JSON.stringify(before.get(id)) !== JSON.stringify(after.get(id))) changed.add(prefix + id);
+  check(scope: CheckScope, hot: HotSet, changedPaths: string[] = []): Promise<PendingUpdate | null> {
+    const previous = this.pendingCheck;
+    const pending = (async () => {
+      // A user-requested refresh must not be mistaken for an unchanged result
+      // merely because a background check is still reading its snapshot.
+      if (previous) await previous.catch(() => {});
+      return this.performCheck(scope, hot, changedPaths);
+    })();
+    this.pendingCheck = pending;
+    return pending.finally(() => { if (this.pendingCheck === pending) this.pendingCheck = undefined; });
+  }
+
+  private async performCheck(scope: CheckScope, hot: HotSet, changedPaths: string[]): Promise<PendingUpdate | null> {
+    const revision = ++this.revision;
+    const result = await this.source.snapshot(this.version, scope === 'full' || changedPaths.length > 0);
+    const summary: UpdateSummary = { weeks: new Set(), entities: new Set(), assets: new Set(), indexesChanged: false };
+    if (result !== 'unchanged') {
+      summary.indexesChanged = JSON.stringify(result.value.indexes) !== JSON.stringify(this.data.indexes)
+        || JSON.stringify(readingInstance(result.value.instance)) !== JSON.stringify(readingInstance(this.data.instance));
+      const diff = <T>(previous: [string, T][], next: [string, T][], changed: Set<string>, prefix = '') => {
+        const before = new Map(previous), after = new Map(next);
+        for (const id of new Set([...before.keys(), ...after.keys()])) {
+          if (JSON.stringify(before.get(id)) !== JSON.stringify(after.get(id))) changed.add(prefix + id);
+        }
+      };
+      diff(this.data.weeks, result.value.weeks, summary.weeks);
+      diff(this.data.projects, result.value.projects, summary.entities, '#project/');
+      diff(this.data.actions, result.value.actions, summary.entities, '#action/');
+      diff(this.data.artifacts, result.value.artifacts, summary.entities, '#artifact/');
+      // Supporting Markdown can change the graph while records stay identical.
+      summary.indexesChanged ||= JSON.stringify(result.value.relations) !== JSON.stringify(this.data.relations);
+    }
+    const assetStages = new Map<string, { text: string; version: string } | null>();
+    const mediaStages = new Map<string, string | null | undefined>();
+    const assetBases = new Map<string, number>();
+    const clearedErrors = new Set<string>();
+    const paths = new Set([...(scope === 'full' ? [...this.assets.keys(), ...this.assetLoads.keys(), ...this.media.keys(), ...this.assetErrors.keys()] : hot.assets), ...changedPaths.filter(path => this.assets.has(path) || this.assetLoads.has(path) || this.media.has(path) || this.assetErrors.has(path))]);
+    await mapLimit([...paths], 6, async path => {
+      assetBases.set(path, this.assetReads.get(path) ?? 0);
+      const cached = this.assets.get(path);
+      try {
+        if (cached || this.assetLoads.has(path) || (!this.media.has(path) && this.assetErrors.has(path))) {
+          const value = cached ? await this.source.revalidate(path, cached.version) : await this.source.read(path);
+          if (value !== 'unchanged') { assetStages.set(path, value); summary.assets.add(path); }
+        } else if (this.media.has(path)) {
+          const value = await this.source.assetVersion?.(path);
+          if (value === undefined) {
+            if (changedPaths.includes(path)) { mediaStages.set(path, value); summary.assets.add(path); }
+            return;
           }
-        };
-        diff(this.data.weeks, result.value.weeks, summary.weeks);
-        diff(this.data.projects, result.value.projects, summary.entities, '#project/');
-        diff(this.data.actions, result.value.actions, summary.entities, '#action/');
-        diff(this.data.artifacts, result.value.artifacts, summary.entities, '#artifact/');
-        // Supporting Markdown can change the graph while records stay identical.
-        summary.indexesChanged ||= JSON.stringify(result.value.relations) !== JSON.stringify(this.data.relations);
+          if (value !== this.media.get(path) || changedPaths.includes(path)) { mediaStages.set(path, value); summary.assets.add(path); }
+        } else return;
+        if (this.assetErrors.has(path)) { clearedErrors.add(path); summary.assets.add(path); }
+      } catch (error) {
+        if (revision >= this.appliedRevision && (this.assetReads.get(path) ?? 0) === assetBases.get(path)) this.reportAssetFailure(path, error instanceof Error ? error : new Error(String(error)));
       }
-      const assetStages = new Map<string, { text: string; version: string } | null>();
-      const mediaStages = new Map<string, string | null | undefined>();
-      const assetBases = new Map<string, number>();
-      const clearedErrors = new Set<string>();
-      const paths = new Set([...(scope === 'full' ? [...this.assets.keys(), ...this.assetLoads.keys(), ...this.media.keys(), ...this.assetErrors.keys()] : hot.assets), ...changedPaths.filter(path => this.assets.has(path) || this.assetLoads.has(path) || this.media.has(path) || this.assetErrors.has(path))]);
-      await mapLimit([...paths], 6, async path => {
-        assetBases.set(path, this.assetReads.get(path) ?? 0);
-        const cached = this.assets.get(path);
-        try {
-          if (cached || this.assetLoads.has(path) || (!this.media.has(path) && this.assetErrors.has(path))) {
-            const value = cached ? await this.source.revalidate(path, cached.version) : await this.source.read(path);
-            if (value !== 'unchanged') { assetStages.set(path, value); summary.assets.add(path); }
-          } else if (this.media.has(path)) {
-            const value = await this.source.assetVersion?.(path);
-            if (value === undefined) {
-              if (changedPaths.includes(path)) { mediaStages.set(path, value); summary.assets.add(path); }
-              return;
-            }
-            if (value !== this.media.get(path) || changedPaths.includes(path)) { mediaStages.set(path, value); summary.assets.add(path); }
-          } else return;
-          if (this.assetErrors.has(path)) { clearedErrors.add(path); summary.assets.add(path); }
-        } catch (error) {
-          if (revision >= this.appliedRevision && (this.assetReads.get(path) ?? 0) === assetBases.get(path)) this.reportAssetFailure(path, error instanceof Error ? error : new Error(String(error)));
-        }
-      });
-      if (result === 'unchanged' && !summary.assets.size && !clearedErrors.size) return null;
-      return { summary, apply: () => {
-        if (revision < this.appliedRevision) return;
-        if (result !== 'unchanged') this.install(result.value, result.version, revision, false);
-        this.appliedRevision = revision;
-        for (const path of clearedErrors) {
-          if ((this.assetReads.get(path) ?? 0) === assetBases.get(path)) this.clearAssetFailure(path);
-        }
-        for (const [path, value] of assetStages) {
-          if ((this.assetReads.get(path) ?? 0) !== assetBases.get(path)) continue;
-          this.assetReads.set(path, (this.assetReads.get(path) ?? 0) + 1);
-          if (value) this.assets.set(path, value); else this.assets.delete(path);
-          this.clearAssetFailure(path);
-        }
-        for (const [path, value] of mediaStages) {
-          if ((this.assetReads.get(path) ?? 0) !== assetBases.get(path)) continue;
-          this.assetReads.set(path, (this.assetReads.get(path) ?? 0) + 1);
-          this.media.set(path, value);
-          this.assetRevisions.set(path, (this.assetRevisions.get(path) ?? 0) + 1);
-          if (value === null) this.setAssetFailure(path, 'Media file is missing');
-          else if (value !== undefined) this.clearAssetFailure(path);
-        }
-        this.publish();
-      } };
-    } finally { this.checking = false; }
+    });
+    if (result === 'unchanged' && !summary.assets.size && !clearedErrors.size) return null;
+    return { summary, apply: () => {
+      if (revision < this.appliedRevision) return;
+      if (result !== 'unchanged') this.install(result.value, result.version, revision, false);
+      this.appliedRevision = revision;
+      for (const path of clearedErrors) {
+        if ((this.assetReads.get(path) ?? 0) === assetBases.get(path)) this.clearAssetFailure(path);
+      }
+      for (const [path, value] of assetStages) {
+        if ((this.assetReads.get(path) ?? 0) !== assetBases.get(path)) continue;
+        this.assetReads.set(path, (this.assetReads.get(path) ?? 0) + 1);
+        if (value) this.assets.set(path, value); else this.assets.delete(path);
+        this.clearAssetFailure(path);
+      }
+      for (const [path, value] of mediaStages) {
+        if ((this.assetReads.get(path) ?? 0) !== assetBases.get(path)) continue;
+        this.assetReads.set(path, (this.assetReads.get(path) ?? 0) + 1);
+        this.media.set(path, value);
+        this.assetRevisions.set(path, (this.assetRevisions.get(path) ?? 0) + 1);
+        if (value === null) this.setAssetFailure(path, 'Media file is missing');
+        else if (value !== undefined) this.clearAssetFailure(path);
+      }
+      this.publish();
+    } };
   }
 
   getAsset(path: string): Promise<string> { return this.readAsset(path); }

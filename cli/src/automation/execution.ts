@@ -1,41 +1,17 @@
 import { AUTOMATION_PROMPT_MAX_BYTES, AUTOMATION_OUTPUT_MAX_BYTES, AUTOMATION_TERMINATE_TIMEOUT_MS } from '../core/system-config.js';
 import { spawn, type ChildProcess } from 'node:child_process';
-import { closeSync, constants, createWriteStream, fstatSync, openSync, readFileSync } from 'node:fs';
+import { createWriteStream } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { Transform } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
-import { parseArtifactFile } from '../core/parser.js';
-import { artifactFilePath, artifactAttachmentPath, artifactContentFilename, parseArtifactHandle } from '../core/artifact.js';
-import { assertManagedPath } from '../core/managed-path.js';
 import { assertArtifactPrompt, automationName, timeoutMs, type ResolvedModel } from '../core/automation.js';
-import { builtinModel, executablePath, readExecutionContext } from './models.js';
+import { builtinModel, executablePath } from './models.js';
+import {assertExecutionCwd} from '../runtime/execution-cwd.js';
+import {resolveExecutionContext} from '../core/execution-context.js';
 import type { ScheduledJob } from './scheduler.js';
 import { RunStorage, type RunRecord } from './storage.js';
 
-function readText(root: string, path: string): string {
-  const checked = assertManagedPath(root, path, 'file');
-  const fd = openSync(checked, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
-  try {
-    const stat = fstatSync(fd);
-    if (!stat.isFile() || stat.size > AUTOMATION_PROMPT_MAX_BYTES) throw new Error(`Prompt must be a regular UTF-8 file of at most ${AUTOMATION_PROMPT_MAX_BYTES} bytes: ${path}`);
-    return new TextDecoder('utf8', { fatal: true }).decode(readFileSync(fd));
-  } finally { closeSync(fd); }
-}
-export function resolvePrompt(root: string, prompt: string): string {
-  assertArtifactPrompt(prompt);
-  root = resolve(root);
-  const ref = parseArtifactHandle(prompt)!;
-  const file = artifactFilePath(root, ref.id);
-  const artifact = parseArtifactFile(readText(root, file));
-  if (artifact.issues.some(issue => issue.severity === 'error')) throw new Error(`Invalid prompt artifact: ${prompt}`);
-  const filename = artifactContentFilename(artifact.value);
-  if (filename !== undefined) {
-    const attachment = artifactAttachmentPath(root, ref.id, filename);
-    return readText(root, attachment);
-  }
-  return artifact.value.body;
-}
 export function wrapPrompt(job: ScheduledJob, prompt: string): string {
   assertArtifactPrompt(prompt);
   const context = job.delegation
@@ -91,8 +67,8 @@ export class AutomationRunner {
   }
   private async runObserved(job: ScheduledJob, run: RunRecord, outputDir: string): Promise<RunRecord> {
     try {
-      // No ancestor search or session cwd. Only the owning instance root config.
-      const { config, cwd } = readExecutionContext(job.root);
+      const { config, cwd } = resolveExecutionContext(job.executionContext);
+      assertExecutionCwd(cwd);
       run.cwd = cwd;
       let command: string, args: string[], prompt: string | undefined;
       if ('script' in job.definition.run) {

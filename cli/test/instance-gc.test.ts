@@ -1,8 +1,9 @@
+import {sourceFileAccessGuard as access} from './support/source-file-access-guard.js';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
-import { init } from '../src/commands/init.js';
+import { init } from '../src/source/bootstrap.js';
 import { collectKnownFile, writeKnown } from '../src/daemon/daemon.js';
 import { daemonPaths, ensureDirs, type DaemonPaths } from '../src/daemon/paths.js';
 import { FileLock } from '../src/daemon/filelock.js';
@@ -19,7 +20,7 @@ describe('instance garbage collection', () => {
     writeKnown(paths, [valid, removed, repurposed]);
     rmSync(removed, { recursive: true }); writeFileSync(join(repurposed, 'aside.md'), 'Repurposed directory');
   });
-  afterEach(() => rmSync(root, { recursive: true, force: true }));
+  afterEach(() => {access.reset(); rmSync(root, { recursive: true, force: true });});
   const saved = (paths: DaemonPaths) => JSON.parse(readFileSync(paths.known, 'utf8'));
 
   it('persists offline cleanup before returning valid instances', () => {
@@ -46,17 +47,20 @@ describe('instance garbage collection', () => {
     if (args[0] !== 'mcp') expect(JSON.parse(result.stdout).ok).toBe(false);
     expect(saved(paths)).toEqual([valid]); expect(existsSync(paths.socket)).toBe(false);
   });
-  it('filters stale arrays from older daemon status responses in human and JSON output', () => {
+  it('formats live status using only the daemon-published catalogue even when disk has changed', () => {
     const snapshot = { paths, unavailable: false, known: [valid, removed, repurposed], job: null, jobFileExists: false,
+      instances: [{path: valid, id: 'valid', name: 'Published valid'}, {path: removed, id: 'removed', name: 'Published removed'}],
       running: { pid: 123, build: { version: '0.1.0', builtAt: 0 }, longRunning: true,
         selection: { all: false, paths: [valid, removed] }, connections: 2, tabs: 0,
         known: [valid, removed], loaded: [valid, removed], sessions: { [valid]: 1, [removed]: 1 } } };
+    access.protect([valid, removed, repurposed]);
     const human = formatDaemonStatus(snapshot).output;
-    expect(human).not.toContain(removed); expect(human).not.toContain(repurposed);
+    expect(human).toContain('Published removed'); expect(human).not.toContain(repurposed);
     const json = JSON.parse(formatDaemonStatus(snapshot, true).output);
-    expect(json.data.instances.map((instance: { path: string }) => instance.path)).toEqual([valid]);
-    expect(json.data.daemon.known).toEqual([valid]); expect(json.data.daemon.loaded).toEqual([valid]);
-    expect(json.data.daemon).not.toHaveProperty('selection'); expect(json.data.daemon).not.toHaveProperty('longRunning'); expect(json.data.daemon.sessions).toEqual({ [valid]: 1 });
+    expect(json.data.instances.map((instance: { path: string }) => instance.path)).toEqual([valid, removed]);
+    expect(json.data.daemon.known).toEqual([valid, removed]); expect(json.data.daemon.loaded).toEqual([valid, removed]);
+    expect(json.data.daemon).not.toHaveProperty('selection'); expect(json.data.daemon).not.toHaveProperty('longRunning'); expect(json.data.daemon.sessions).toEqual({ [valid]: 1, [removed]: 1 });
+    expect(access.violations).toEqual([]);
   });
   it('does not mutate the registry for a syntax error that never tried to use an instance', () => {
     const result = spawnSync(process.execPath, [join(__dirname, '../dist/main.js'), 'artifact', 'query', '--wat', '--json'], {

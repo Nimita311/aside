@@ -51,3 +51,19 @@ describe('quick period landing within the current view', () => {
     expect(quickJumpCard(flow([]), '2026-06-10T12:00:00', '2026-06-03', 1)).toBeNull();
   });
 });
+
+
+describe('oldest-first query navigation', () => {
+  const ids = ['2023-01-01T10:00', '2024-02-02T09:00', '2026-06-03T12:00'];
+  it('uses chronological date landing independently of displayed order', () => {
+    const host = flow(ids);
+    expect(dateJumpCard(host, '2025-01-01T23:59:59')?.dataset.entryId).toBe(ids[1]);
+    expect(dateJumpCard(host, '2030-01-01T23:59:59')?.dataset.entryId).toBe(ids[2]);
+    expect(dateJumpCard(host, '2020-01-01T23:59:59')?.dataset.entryId).toBe(ids[0]);
+  });
+  it('finds period-step neighbors in either display direction', () => {
+    const host = flow(ids);
+    expect(quickJumpCard(host, '2026-05-27T12:00:00', '2026-06-03', -1)?.dataset.entryId).toBe(ids[1]);
+    expect(quickJumpCard(host, '2024-02-09T12:00:00', '2024-02-02', 1)?.dataset.entryId).toBe(ids[2]);
+  });
+});

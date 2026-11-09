@@ -15,7 +15,7 @@ source of truth.
 - **Recurrence.** Template series follow the [action recurrence design](recurrence.md).
   Ordinary actions map to single events; if an ordinary action's event is made recurring, Aside stops syncing it —
   never editing, deleting, or importing from the series — and surfaces the
-  action in `calendar_info`; removing the recurrence resumes sync.
+  action in `Instance.calendarSync`; removing the recurrence resumes sync.
 
 ## What syncs (action → event)
 
@@ -25,6 +25,7 @@ source of truth.
 | `scheduled` | start time (minute precision), or an all-day event for a date-only value |
 | `timezone` | named event time zone for a timed `scheduled` (IANA, e.g. `Asia/Tokyo`); floating if unset; ignored for all-day dates |
 | `duration` | event length — positive fixed ISO duration in whole minutes, e.g. `PT1H`, `P1D` = 24 elapsed hours even across clock changes; default `PT30M` if unset; all-day events span by date |
+| `location` | primary event location derived from one bare [location handle](location-reference.md#action-location); unset clears it |
 | `deadline` + `description` + `body` | notes |
 | ID + state | `url` marker (see Linking) |
 
@@ -61,7 +62,7 @@ stage — so synced events stay distinguishable by which aside instance they bel
 and whether the action is still scheduled or done.
 Instance prefix edits enqueue forward synchronization of existing scheduled,
 completed, and recurring events. The setting is saved before Calendar work;
-receipts report the observed synchronization state.
+mutations report sync states needing attention as warnings.
 
 ## Linking
 
@@ -99,7 +100,7 @@ floating-time normalization above.
 
 **Forward** — run whenever an aside tool creates or changes an action (`capture` / `update`);
 a direct file edit is picked up at the next reconcile when it moves the event's
-derived time, title, or calendar (a notes-only edit rides along with the next
+derived time, title, location, or calendar (a notes-only edit rides along with the next
 such push) — derives the event the action implies and pushes it:
 
 - active, scheduled, calendar set → event at `scheduled`, title `name`
@@ -107,10 +108,11 @@ such push) — derives the event the action implies and pushes it:
 - backlog, cancelled, or calendar cleared → event removed
 - scheduled with no calendar → not synced (surfaced as an issue)
 
-Hand edits to a synced event (title, notes) are not preserved — the next sync
-overwrites them.
+Hand edits to a synced event (title, notes, location) are not preserved — the
+next sync overwrites them. Calendar location edits never update the action, and
+sync never geocodes an address or chooses a location from body mentions.
 
-Tool writes save the local record before starting calendar work. Their receipts report per-action calendar state; `calendar_info` exposes pending work, retries, successful sync or removal, and disabled or failed sync. A saved record or an absence of issues does not establish that its event is synced. These observations are shared by every session, last while the [daemon](daemon.md) has the instance loaded, and remain available when the calendar helper is unreachable. Failure reports give observed categories and recovery steps; a helper crash, command failure, or undecided permission response does not establish its cause.
+Writes save the local record before starting calendar work. Mutations warn about sync states needing attention; `Instance.calendarSync` exposes pending work, retries, successful sync or removal, and disabled or failed sync. A saved record or an absence of issues does not establish that its event is synced. These observations are shared by every session, last while the [daemon](daemon.md) has the instance loaded, and remain available when the calendar helper is unreachable. Failure reports give observed categories and recovery steps; a helper crash, command failure, or undecided permission response does not establish its cause.
 
 **Reverse** reads Aside-marked events and imports the gesture into the action; the
 event is then re-derived from the result, so a removal or the `✓` resync falls out
@@ -159,7 +161,7 @@ length. Reads include its actual start/end instants and explicit zone. A start
 in the second occurrence of a repeated hour, sub-minute start/length, unsupported zone, or
 missing/inconsistent timing metadata blocks that action in both directions;
 its event and record are preserved, including lifecycle suffix gestures.
-`calendar_info` reports the action and an actionable diagnostic. Other actions
+`Instance.calendarSync` reports the action and an actionable diagnostic. Other actions
 continue normally, and an unsafe duplicate is preserved rather than pruned. An
 end in the second occurrence remains representable by elapsed duration.
 

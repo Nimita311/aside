@@ -47,6 +47,12 @@ export const catalogue: CatalogueBranch[] = [
       leaf('date-jump', 'Jump to day'),
       leaf('date-range', 'Date range'),
     ]),
+    branch('entry-sources', 'Agent timelines', [
+      leaf('query-source', 'Recent decisions'),
+      leaf('query-source-scoped', 'Project and search filters'),
+      leaf('query-source-inspection', 'Query details'),
+      leaf('query-source-unavailable', 'Unavailable source'),
+    ]),
     branch('timeline-display', 'Display', [
       leaf('expanded-tags', 'Expanded references'),
       leaf('reference-hover', 'Reference hover'),

@@ -1,149 +1,88 @@
-import { showActionFailure, dismissActionToast } from './toast';
 import { activeModal, usable } from './modal';
 import { toDateStr } from '../lib/types';
-import { JUMP_UNITS, JumpUnit, monthStart, parseLooseDate, shiftByUnit } from './dates';
+import { monthStart, parseLooseDate } from './dates';
 import type { DateTimePreferences } from './preferences';
 import { calendarLabel, dateColumns, formatDate, formatMonth } from './date-display';
 import { currentFlowDate } from './latch';
 
-// The jump-to-date popover under the latched readout: a quick period
-// navigator, a free-form date field, and an inline calendar (see spec.md).
-// The date math lives in dates.ts; the flow-side landing (loading weeks,
-// scrolling, flashing) is injected by app.ts through DatePickerDeps.
+export interface CalendarContext {
+  /** Identity of the retained timeline, including its record-selection filters. */
+  key: string;
+  current: string;
+  visibleRange?: { start: string; end: string };
+  retained?: boolean;
+}
 
 export interface DatePickerDeps {
   displayPreferences?(): DateTimePreferences;
-  // One-time jump that dismisses the popover: scroll the flow to the day,
-  // pinning it (or the nearest earlier entry) to the pane top.
+  getCalendarContext?(): CalendarContext;
+  /** Complete counts for the inclusive displayed grid, not just loaded cards. */
+  getDayCounts?(from: string, to: string): Promise<ReadonlyMap<string, number>>;
   jumpToDate(dateStr: string): void;
-  // The quick navigator's landing: jump to the entry closest to `targetIso`
-  // on a date beyond `baseDate` in `dir` (+1 newer / −1 older), loading as
-  // needed. Resolves false at the timeline boundary or in an empty view.
-  jumpNear(targetIso: string, baseDate: string, dir: number): Promise<boolean>;
+  /** Compatibility for callers of the old quick navigator; unused by the calendar. */
+  jumpNear?(targetIso: string, baseDate: string, dir: number): Promise<boolean>;
 }
 
-const CAL_WEEKDAYS = Array.from({ length: 7 }, (_, i) => calendarLabel(`2026-10-${String(12 + i).padStart(2, '0')}`, { weekday: 'short' }));
-const ARROW_UP = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m18 15-6-6-6 6"/></svg>';
-const ARROW_DOWN = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>';
-
-interface CalendarMarks { today: string; current: string; selected: string }
-
-function markCalendarDay(button: HTMLElement, marks: CalendarMarks, prefs: DateTimePreferences = { timeFormat: 'locale' }): void {
-  const date = button.dataset.date!;
-  const selected = date === marks.selected;
-  const current = date === marks.current;
-  const today = date === marks.today;
-  button.classList.toggle('is-selected', selected);
-  button.classList.toggle('is-current', current);
-  button.classList.toggle('is-today', today);
-  const day = dateColumns(date, prefs).find(part => part.type === 'day')!.value;
-  if (button.textContent !== day) button.textContent = day;
-  button.setAttribute('aria-label', `${formatDate(date, prefs.dateFormat)}${selected ? ', selected' : ''}${current ? ', currently shown in timeline' : ''}`);
-  if (today) button.setAttribute('aria-current', 'date');
-  else button.removeAttribute('aria-current');
+interface CalendarSurface {
+  root: HTMLElement;
+  calendar: HTMLElement;
+  input: HTMLInputElement;
+  error: HTMLElement;
+  status: HTMLElement;
 }
 
-// Draw the inline month calendar into `container` (cleared first): a header with
-// month-stepping arrows, a Mon-first weekday row, and a grid of day buttons.
-// `onPick` fires with the clicked day's date; `onNav` steps the shown month.
-function drawCalendar(
-  container: HTMLElement,
-  view: Date,
-  marks: CalendarMarks,
-  onPick: (dateStr: string) => void,
-  onNav: (delta: number) => void,
-  prefs: DateTimePreferences,
-): void {
-  container.innerHTML = '';
-  const year = view.getFullYear();
-  const month = view.getMonth();
-  container.setAttribute('role', 'group');
-  container.dataset.month = toDateStr(view);
-  container.setAttribute('aria-label', formatMonth(toDateStr(view), prefs));
+type Counts = { status: 'loading' } | { status: 'ready'; values: ReadonlyMap<string, number> } | { status: 'error' };
 
-  const header = container.appendChild(document.createElement('div'));
-  header.className = 'cal-header';
-  const prev = header.appendChild(document.createElement('button'));
-  prev.type = 'button';
-  prev.className = 'cal-nav';
-  prev.setAttribute('aria-label', 'Previous month');
-  prev.textContent = '‹';
-  prev.addEventListener('click', () => onNav(-1));
-  const title = header.appendChild(document.createElement('span'));
-  title.className = 'cal-title';
-  title.textContent = formatMonth(toDateStr(view), prefs);
-  const next = header.appendChild(document.createElement('button'));
-  next.type = 'button';
-  next.className = 'cal-nav';
-  next.setAttribute('aria-label', 'Next month');
-  next.textContent = '›';
-  next.addEventListener('click', () => onNav(1));
-
-  const weekdays = container.appendChild(document.createElement('div'));
-  weekdays.className = 'cal-weekdays';
-  for (const w of CAL_WEEKDAYS) weekdays.appendChild(document.createElement('span')).textContent = w;
-
-  const grid = container.appendChild(document.createElement('div'));
-  grid.className = 'cal-grid';
-  const firstDow = (new Date(year, month, 1).getDay() + 6) % 7; // Mon = 0
-  const days = new Date(year, month + 1, 0).getDate();
-  for (let i = 0; i < firstDow; i++) grid.appendChild(document.createElement('span'));
-  for (let d = 1; d <= days; d++) {
-    const dateStr = toDateStr(new Date(year, month, d));
-    const btn = grid.appendChild(document.createElement('button'));
-    btn.type = 'button';
-    btn.className = 'cal-day';
-    btn.dataset.date = dateStr;
-    markCalendarDay(btn, marks, prefs);
-    btn.addEventListener('click', () => onPick(dateStr));
-  }
+function gridDates(view: Date, startsOn: number): string[] {
+  const first = new Date(view);
+  first.setDate(1);
+  first.setDate(1 - (first.getDay() - startsOn + 7) % 7);
+  return Array.from({ length: 42 }, (_, index) => {
+    const date = new Date(first); date.setDate(first.getDate() + index);
+    return toDateStr(date);
+  });
 }
 
-export function createDatePicker(deps: DatePickerDeps): { toggle(): void; close(): void; refresh(): void; isOpen(): boolean } {
-  // The open popover, or null. A single element, torn down on dismiss.
-  let popover: HTMLElement | null = null;
+function density(count: number): number {
+  return count > 0 ? Math.min(0.3, 0.04 + Math.log2(count + 1) * 0.045) : 0;
+}
+
+/** Persistent inline calendar, sharing its month and draft with the optional popover. */
+export function createDatePicker(deps: DatePickerDeps): {
+  mountInline(host: HTMLElement): void;
+  toggle(trigger?: HTMLElement): void;
+  close(): void;
+  refresh(options?: { invalidateCounts?: boolean; reloadCounts?: boolean }): void;
+  isOpen(): boolean;
+  dispose(): void;
+} {
+  let inline: CalendarSurface | null = null;
+  let popup: CalendarSurface | null = null;
   let launcher: HTMLElement | null = null;
+  let view = monthStart(currentFlowDate());
+  let contextKey: string | null = null;
+  let lastCurrent = '';
+  let browsedMonth = false;
+  let draft = '';
+  let invalid = false;
   let focusFrame: number | null = null;
-  // The quick navigator's selected period — held across opens. Each step is
-  // relative to the flow's current date, not a stored cursor, so scrolling
-  // between steps re-bases the navigator.
-  let pickerUnit: JumpUnit = 'week';
-  // A step's load+scroll is async; ignore further clicks until it settles so
-  // rapid clicks can't stack overlapping jumps.
-  let quickBusy = false;
-  // Stops the open popover watching the latch (which keeps its "current day"
-  // marker live); set while open, run and cleared on close.
+  let armTimer: ReturnType<typeof setTimeout> | null = null;
+  let pressedOutside = false;
   let detachCurrentWatch: (() => void) | null = null;
   let detachViewportWatch: (() => void) | null = null;
   let reposition: (() => void) | null = null;
-  // Pending dismiss-listener arming (open() schedules it a tick out).
-  let armTimer: ReturnType<typeof setTimeout> | null = null;
-  // Whether the current press began outside the popover — only then does its
-  // release dismiss, so a drag that starts inside (selecting text in the field)
-  // and ends outside doesn't close it.
-  let pressedOutside = false;
+  let revision = 0;
+  let disposed = false;
+  const counts = new Map<string, Counts>();
 
-  // The popover (or its trigger chip) contains the node — a click here isn't
-  // "outside".
-  const isInside = (t: Node | null): boolean =>
-    !!(t && (popover?.contains(t) || document.querySelector('.date-latch-chip')?.contains(t)));
-
-  const onPointerDown = (e: Event) => {
-    pressedOutside = !isInside(e.target as Node);
+  const surfaces = (): CalendarSurface[] => [inline, popup].filter((surface): surface is CalendarSurface => surface !== null);
+  const preferences = (): DateTimePreferences => deps.displayPreferences?.() ?? { timeFormat: 'locale' };
+  const context = (): CalendarContext => deps.getCalendarContext?.() ?? { key: 'legacy', current: currentFlowDate() };
+  const startsOn = (): number => {
+    const day = preferences().weekStartsOn;
+    return Number.isInteger(day) && day! >= 0 && day! <= 6 ? day! : 1;
   };
-  const onClick = (e: Event) => {
-    // Dismiss only on a full click outside: both the press and the release land
-    // beyond the popover, not just the mouseup.
-    if (pressedOutside && !isInside(e.target as Node)) close(false);
-  };
-  const onKey = (e: KeyboardEvent) => {
-    if (e.defaultPrevented || activeModal() || e.key !== 'Escape') return;
-    e.preventDefault();
-    // Esc steps back one level (spec): dismiss only the popover — stop the
-    // event before the app's global handler would also clear the filter.
-    e.stopPropagation();
-    close(true);
-  };
+  const requestKey = (ctx: CalendarContext, days: string[]): string => `${ctx.key}\n${days[0]}\n${days[41]}`;
 
   function cancelFocusRestore(): void {
     if (focusFrame !== null) cancelAnimationFrame(focusFrame);
@@ -153,303 +92,272 @@ export function createDatePicker(deps: DatePickerDeps): { toggle(): void; close(
 
   function restoreFocus(trigger: HTMLElement | null): void {
     if (activeModal()) return;
-    const target = usable(trigger) ? trigger
+    const calendar = document.getElementById('btn-workspace-calendar');
+    const target = usable(trigger) ? trigger : usable(calendar) ? calendar
       : Array.from(document.querySelectorAll<HTMLElement>('.date-latch-chip')).find(usable)
-        ?? Array.from(document.querySelectorAll<HTMLElement>('.app-title a')).find(usable);
+        ?? Array.from(document.querySelectorAll<HTMLElement>('#btn-workspace-views, #btn-instance-switch, .app-title a')).find(usable);
     target?.focus({ preventScroll: true });
   }
 
-  function close(returnFocus = !!popover?.contains(document.activeElement)): void {
+  const isInside = (node: Node | null): boolean => !!node && (!!popup?.root.contains(node) || !!launcher?.contains(node));
+  const onPointerDown = (event: Event): void => { pressedOutside = !isInside(event.target as Node); };
+  const onClick = (event: Event): void => { if (pressedOutside && !isInside(event.target as Node)) close(false); };
+  const onKey = (event: KeyboardEvent): void => {
+    if (event.defaultPrevented || activeModal() || event.key !== 'Escape') return;
+    event.preventDefault(); event.stopPropagation(); close(true);
+  };
+
+  function close(returnFocus = !!popup?.root.contains(document.activeElement)): void {
     cancelFocusRestore();
-    const wasOpen = popover !== null;
-    const trigger = launcher;
-    trigger?.setAttribute('aria-expanded', 'false');
-    trigger?.removeAttribute('aria-controls');
+    const wasOpen = popup !== null, trigger = launcher;
+    trigger?.setAttribute('aria-expanded', 'false'); trigger?.removeAttribute('aria-controls');
     if (armTimer !== null) { clearTimeout(armTimer); armTimer = null; }
-    popover?.remove();
-    popover = null;
-    detachCurrentWatch?.();
-    detachCurrentWatch = null;
-    detachViewportWatch?.();
-    detachViewportWatch = null;
+    popup?.root.remove(); popup = null;
+    detachCurrentWatch?.(); detachCurrentWatch = null;
+    detachViewportWatch?.(); detachViewportWatch = null;
     document.removeEventListener('pointerdown', onPointerDown, true);
     document.removeEventListener('click', onClick, true);
     document.removeEventListener('keydown', onKey, true);
     if (!wasOpen || !returnFocus) return;
     restoreFocus(trigger);
-    // A flow rebuild may replace the chip immediately after dismissing us.
-    // Repair only a lost focus; never displace a later keyboard or pointer target.
     document.addEventListener('pointerdown', cancelFocusRestore, true);
     focusFrame = requestAnimationFrame(() => {
-      focusFrame = null;
-      document.removeEventListener('pointerdown', cancelFocusRestore, true);
+      focusFrame = null; document.removeEventListener('pointerdown', cancelFocusRestore, true);
       const focused = document.activeElement;
       if (!(focused instanceof HTMLElement) || !usable(focused)) restoreFocus(trigger);
     });
   }
 
-  // Step the quick navigator one period in `dir` (+1 newer / −1 older) from the
-  // flow's current date, keeping the popover open — so scrolling (or a manual
-  // jump) between steps re-bases it to where the view now sits.
-  async function stepQuick(dir: number, nav: HTMLElement, setStatus: (message: string) => void): Promise<void> {
-    if (quickBusy) return;
-    quickBusy = true;
-    dismissActionToast();
-    setStatus('');
-    nav.setAttribute('aria-busy', 'true');
-    try {
-      const base = currentFlowDate();
-      const target = shiftByUnit(base, pickerUnit, dir);
-      await deps.jumpNear(target + 'T12:00:00', base, dir);
-    } catch {
-      if (nav.isConnected) showActionFailure('Unable to jump to that date. Try again.');
-    } finally {
-      nav.removeAttribute('aria-busy');
-      quickBusy = false;
+  function synchronizeContext(): CalendarContext {
+    const ctx = context();
+    if (ctx.key !== contextKey) {
+      contextKey = ctx.key; view = monthStart(ctx.current); browsedMonth = false;
+      draft = ''; invalid = false; counts.clear(); revision++;
+    } else if (ctx.current !== lastCurrent && !browsedMonth && !draft.trim()
+      && !surfaces().some(surface => surface.calendar.contains(document.activeElement)
+        && (document.activeElement as HTMLElement)?.dataset.date)) {
+      view = monthStart(ctx.current);
+    }
+    lastCurrent = ctx.current;
+    return ctx;
+  }
+
+  function loadCounts(ctx: CalendarContext, days: string[]): void {
+    if (!deps.getDayCounts || !ctx.key || disposed) return;
+    const key = requestKey(ctx, days);
+    if (counts.has(key)) return;
+    if (counts.size >= 12) {
+      const oldest = counts.keys().next().value;
+      if (oldest !== undefined) counts.delete(oldest);
+    }
+    const token = revision;
+    counts.set(key, { status: 'loading' });
+    void Promise.resolve().then(() => deps.getDayCounts!(days[0], days[41])).then(values => {
+      if (disposed || revision !== token || context().key !== ctx.key || !counts.has(key)) return;
+      counts.set(key, { status: 'ready', values }); render();
+    }, () => {
+      if (disposed || revision !== token || context().key !== ctx.key || !counts.has(key)) return;
+      counts.set(key, { status: 'error' }); render();
+    });
+  }
+
+  function navigateMonth(delta: number): void {
+    synchronizeContext();
+    view.setDate(1); view.setMonth(view.getMonth() + delta); browsedMonth = true; render();
+  }
+
+  function jump(date: string): void {
+    draft = ''; invalid = false; view = monthStart(date); browsedMonth = false;
+    deps.jumpToDate(date); close(true); render();
+  }
+
+  function commit(surface: CalendarSurface): void {
+    synchronizeContext();
+    // Read the live field too: Enter may follow a programmatic edit without an
+    // input event. The existing loose parser remains the single date grammar.
+    draft = surface.input.value;
+    const parsed = parseLooseDate(draft);
+    if (parsed) jump(parsed);
+    else { invalid = true; updateInputs(); surface.input.focus({ preventScroll: true }); reposition?.(); }
+  }
+
+  function updateInputs(): void {
+    const base = context().current;
+    for (const surface of surfaces()) {
+      if (surface.input.value !== draft) surface.input.value = draft;
+      surface.input.classList.toggle('is-invalid', invalid);
+      surface.error.hidden = !invalid;
+      surface.error.textContent = invalid ? `Enter a valid date, such as ${base}.` : '';
+      if (invalid) {
+        surface.input.setAttribute('aria-invalid', 'true'); surface.input.setAttribute('aria-describedby', surface.error.id);
+      } else { surface.input.removeAttribute('aria-invalid'); surface.input.removeAttribute('aria-describedby'); }
     }
   }
 
-  // Open the popover under the latch chip. Three parts, all visible at once: a
-  // quick period navigator (up/down steppers that jump without closing), a
-  // date-entry field, and an always-expanded inline calendar (both a one-time
-  // jump that dismisses).
-  function open(): void {
-    if (activeModal()) return;
-    const chip = document.querySelector<HTMLElement>('.date-latch-chip');
-    if (!chip) return;
-    cancelFocusRestore();
-    launcher = chip;
-    pressedOutside = false;
-    // Seeds the field and calendar; the quick navigator re-reads the current
-    // date per step rather than tracking this.
-    const base = currentFlowDate();
-
-    const pop = document.createElement('div');
-    pop.className = 'date-jump';
-    pop.id = 'date-jump';
-
-    // Quick navigator: period segments on the left, up/down steppers to their
-    // right — the arrows sit at the popover's top-right corner.
-    const nav = pop.appendChild(document.createElement('div'));
-    nav.className = 'date-jump-nav';
-    const units = nav.appendChild(document.createElement('div'));
-    units.className = 'date-jump-units';
-    const unitBtns = JUMP_UNITS.map((u) => {
-      const btn = units.appendChild(document.createElement('button'));
-      btn.type = 'button';
-      btn.className = 'date-jump-unit';
-      btn.textContent = u.label;
-      btn.setAttribute('aria-pressed', String(u.key === pickerUnit));
-      btn.classList.toggle('is-active', u.key === pickerUnit);
-      btn.addEventListener('click', () => {
-        setQuickStatus('');
-        pickerUnit = u.key;
-        for (const b of unitBtns) {
-          b.classList.toggle('is-active', b.dataset.unit === pickerUnit);
-          b.setAttribute('aria-pressed', String(b.dataset.unit === pickerUnit));
-        }
-      });
-      btn.dataset.unit = u.key;
-      return btn;
-    });
-    const steppers = nav.appendChild(document.createElement('div'));
-    steppers.className = 'date-jump-steppers';
-    const up = steppers.appendChild(document.createElement('button'));
-    up.type = 'button';
-    up.className = 'date-jump-step';
-    up.setAttribute('aria-label', 'Jump one period newer');
-    up.title = 'Newer';
-    up.innerHTML = ARROW_UP;
-    up.addEventListener('click', () => { void stepQuick(1, nav, setQuickStatus); });
-    const down = steppers.appendChild(document.createElement('button'));
-    down.type = 'button';
-    down.className = 'date-jump-step';
-    down.setAttribute('aria-label', 'Jump one period older');
-    down.title = 'Older';
-    down.innerHTML = ARROW_DOWN;
-    down.addEventListener('click', () => { void stepQuick(-1, nav, setQuickStatus); });
-
-    // Keep an empty live region mounted before the asynchronous result arrives.
-    // The message is visible too, so reduced motion does not remove feedback.
-    const quickStatus = pop.appendChild(document.createElement('div'));
-    quickStatus.className = 'date-jump-status';
-    quickStatus.setAttribute('role', 'status');
-    quickStatus.setAttribute('aria-atomic', 'true');
-    function setQuickStatus(message: string): void {
-      if (popover !== pop) return;
-      quickStatus.textContent = message;
-      positionPopover();
+  function draw(surface: CalendarSurface, ctx: CalendarContext, days: string[]): void {
+    const cal = surface.calendar;
+    const focused = cal.contains(document.activeElement) ? document.activeElement as HTMLElement : null;
+    const focusedDate = focused?.dataset.date, focusedAction = focused?.dataset.calendarAction;
+    const prefs = preferences(), selected = parseLooseDate(draft) ?? '', today = toDateStr(new Date());
+    const month = toDateStr(view).slice(0, 7), activity = counts.get(requestKey(ctx, days)), range = ctx.visibleRange;
+    const rangeStart = range && (range.start < range.end ? range.start : range.end);
+    const rangeEnd = range && (range.start < range.end ? range.end : range.start);
+    // Preference/count/range refreshes keep the existing date controls. A
+    // focused date is a durable keyboard target even when its label changes.
+    const previousDays = cal.dataset.gridStart === days[0] && cal.dataset.gridEnd === days[41]
+      ? new Map(Array.from(cal.querySelectorAll<HTMLButtonElement>('.cal-day')).map(button => [button.dataset.date!, button]))
+      : new Map<string, HTMLButtonElement>();
+    cal.replaceChildren(); cal.setAttribute('role', 'group'); cal.dataset.month = toDateStr(view);
+    cal.dataset.gridStart = days[0]; cal.dataset.gridEnd = days[41];
+    cal.setAttribute('aria-label', formatMonth(toDateStr(view), prefs));
+    const header = cal.appendChild(document.createElement('div')); header.className = 'cal-header';
+    const title = header.appendChild(document.createElement('span')); title.className = 'cal-title';
+    title.textContent = formatMonth(toDateStr(view), prefs); title.title = title.textContent;
+    const controls = header.appendChild(document.createElement('div')); controls.className = 'cal-controls';
+    controls.setAttribute('role', 'group'); controls.setAttribute('aria-label', 'Calendar navigation');
+    for (const [action, label, glyph, delta] of [['prev', 'Previous month', '‹', -1], ['next', 'Next month', '›', 1]] as const) {
+      const button = controls.appendChild(document.createElement('button'));
+      button.type = 'button'; button.className = 'cal-nav'; button.dataset.calendarAction = action;
+      button.setAttribute('aria-label', label); button.textContent = glyph;
+      button.addEventListener('click', () => navigateMonth(delta));
     }
-
-    // A rule marks the quick navigator and the date selection below it as two
-    // separate ways to jump.
-    pop.appendChild(document.createElement('hr')).className = 'date-jump-divider';
-
-    // Date entry: a plain text field showing an ISO date, taking free-form input
-    // parsed leniently on commit — no native date control, so its picker popup
-    // never competes with the inline calendar below.
-    const entry = pop.appendChild(document.createElement('label'));
-    entry.className = 'date-jump-entry';
-    entry.textContent = 'Jump to';
-    const input = entry.appendChild(document.createElement('input'));
-    input.type = 'text';
-    input.className = 'date-jump-input';
-    input.value = ''; // empty by default; the calendar tracks the viewing date instead
-    input.placeholder = 'YYYY-MM-DD';
-    input.setAttribute('aria-label', 'Jump to date');
-    input.autocomplete = 'off';
-    const error = entry.appendChild(document.createElement('span'));
-    error.id = 'date-jump-error';
-    error.hidden = true;
-    error.setAttribute('role', 'alert');
-
-    function setInvalid(invalid: boolean): void {
-      input.classList.toggle('is-invalid', invalid);
-      error.hidden = !invalid;
-      error.textContent = invalid ? `Enter a valid date, such as ${base}.` : '';
-      if (invalid) {
-        input.setAttribute('aria-invalid', 'true');
-        input.setAttribute('aria-describedby', error.id);
-      } else {
-        input.removeAttribute('aria-invalid');
-        input.removeAttribute('aria-describedby');
+    const now = controls.appendChild(document.createElement('button'));
+    now.type = 'button'; now.className = 'cal-today'; now.textContent = 'Today';
+    now.dataset.calendarAction = 'today'; now.setAttribute('aria-label', 'Jump to today');
+    now.addEventListener('click', () => jump(toDateStr(new Date())));
+    const weekdays = cal.appendChild(document.createElement('div')); weekdays.className = 'cal-weekdays'; weekdays.setAttribute('aria-hidden', 'true');
+    for (let i = 0; i < 7; i++) {
+      const date = `2026-10-${String(11 + (startsOn() + i) % 7).padStart(2, '0')}`;
+      const label = weekdays.appendChild(document.createElement('span'));
+      label.textContent = calendarLabel(date, { weekday: 'narrow' }); label.title = calendarLabel(date, { weekday: 'long' });
+    }
+    const grid = cal.appendChild(document.createElement('div')); grid.className = 'cal-grid';
+    if (deps.getDayCounts && ctx.key && (!activity || activity.status === 'loading')) grid.setAttribute('aria-busy', 'true');
+    for (const [index, date] of days.entries()) {
+      const existing = previousDays.get(date);
+      const button = grid.appendChild(existing ?? document.createElement('button'));
+      button.type = 'button'; button.className = 'cal-day'; button.dataset.date = date;
+      const isSelected = date === selected, current = date === ctx.current;
+      const inRange = !!rangeStart && !!rangeEnd && date >= rangeStart && date <= rangeEnd;
+      button.classList.toggle('is-selected', isSelected); button.classList.toggle('is-current', current);
+      button.classList.toggle('is-adjacent', !date.startsWith(month)); button.classList.toggle('is-today', date === today);
+      button.classList.toggle('is-in-range', inRange);
+      button.classList.toggle('range-start', inRange && (index % 7 === 0 || date === rangeStart));
+      button.classList.toggle('range-end', inRange && (index % 7 === 6 || date === rangeEnd));
+      if (date === today) button.setAttribute('aria-current', 'date'); else button.removeAttribute('aria-current');
+      const rawCount = activity?.status === 'ready' ? activity.values.get(date) ?? 0 : undefined;
+      const count = rawCount !== undefined && Number.isFinite(rawCount) && rawCount >= 0 ? Math.floor(rawCount) : undefined;
+      if (count !== undefined) { button.dataset.count = String(count); button.style.setProperty('--cal-density', String(density(count))); }
+      else { delete button.dataset.count; button.style.removeProperty('--cal-density'); }
+      let label = formatDate(date, prefs.dateFormat);
+      if (isSelected) label += ', selected';
+      if (current && !range) label += ', currently shown in timeline';
+      if (inRange) label += ctx.retained ? ', last visible in timeline' : ', currently visible in timeline';
+      if (count !== undefined) label += `, ${count} matching ${count === 1 ? 'entry' : 'entries'}`;
+      else if (deps.getDayCounts && ctx.key) label += activity?.status === 'error' ? ', activity unavailable' : ', activity loading';
+      button.setAttribute('aria-label', label); button.title = label;
+      if (!existing) {
+        const shade = button.appendChild(document.createElement('span')); shade.className = 'cal-day-shade'; shade.setAttribute('aria-hidden', 'true');
+        const number = button.appendChild(document.createElement('span')); number.className = 'cal-day-number';
+        const outline = button.appendChild(document.createElement('span')); outline.className = 'cal-range-outline'; outline.setAttribute('aria-hidden', 'true');
+        button.addEventListener('click', () => jump(date));
       }
-      positionPopover();
+      button.querySelector<HTMLElement>('.cal-day-number')!.textContent = dateColumns(date, prefs).find(part => part.type === 'day')!.value;
     }
+    surface.status.replaceChildren(); surface.status.hidden = activity?.status !== 'error';
+    if (activity?.status === 'error') {
+      surface.status.append('Activity unavailable. ');
+      const retry = surface.status.appendChild(document.createElement('button')); retry.type = 'button';
+      retry.className = 'cal-retry'; retry.textContent = 'Retry';
+      retry.addEventListener('click', () => { counts.delete(requestKey(ctx, days)); render(); });
+    }
+    if (focusedDate) cal.querySelector<HTMLButtonElement>(`.cal-day[data-date="${focusedDate}"]`)?.focus({ preventScroll: true });
+    else if (focusedAction) cal.querySelector<HTMLButtonElement>(`[data-calendar-action="${focusedAction}"]`)?.focus({ preventScroll: true });
+  }
 
-    // Inline calendar, always expanded. Views month-firsts so stepping never
-    // overflows a short month.
-    const cal = pop.appendChild(document.createElement('div'));
-    cal.className = 'date-jump-cal';
-    let view = monthStart(base);
-    const focusedDay = (): string | undefined =>
-      cal.contains(document.activeElement) && document.activeElement instanceof HTMLElement
-        ? document.activeElement.dataset.date : undefined;
-    const renderCal = () => {
-      const focusedNav = Array.from(cal.querySelectorAll('.cal-nav')).indexOf(document.activeElement!);
-      const focusedDate = focusedDay();
-      drawCalendar(
-        cal, view,
-        { today: toDateStr(new Date()), current: currentFlowDate(), selected: parseLooseDate(input.value) ?? '' },
-        (dateStr) => { deps.jumpToDate(dateStr); close(true); },
-        (delta) => { view = new Date(view.getFullYear(), view.getMonth() + delta, 1); renderCal(); },
-        deps.displayPreferences?.() ?? { timeFormat: 'locale' },
-      );
-      if (focusedNav >= 0) cal.querySelectorAll<HTMLButtonElement>('.cal-nav')[focusedNav]?.focus({ preventScroll: true });
-      else if (focusedDate) cal.querySelector<HTMLButtonElement>(`.cal-day[data-date="${focusedDate}"]`)?.focus({ preventScroll: true });
-      positionPopover();
-    };
-    renderCal();
+  function render(): void {
+    if (disposed) return;
+    const ctx = synchronizeContext(), days = gridDates(view, startsOn());
+    // Compact layouts park the persistent control until its pill page opens.
+    // Preparing that hidden DOM must not issue remote activity queries.
+    if (surfaces().some(surface => surface.root.isConnected && !surface.root.closest('[hidden], [inert]'))) loadCounts(ctx, days);
+    for (const surface of surfaces()) draw(surface, ctx, days);
+    updateInputs(); reposition?.();
+  }
 
-    // Track the viewing date while the popover is open: scrolling the flow (or a
-    // quick step, which scrolls it) moves where the view sits, and the latch
-    // stamps that date onto its data-date each frame. Redraw when the day changes
-    // — and, while the field is empty, follow the scroll to that month too, so an
-    // empty picker mirrors where the flow is. (renderFlow closes the popover, so
-    // the latch element is stable for the popover's lifetime.)
-    const latchEl = document.getElementById('date-latch');
-    let lastCurrent = base;
-    const watch = new MutationObserver(() => {
-      const now = currentFlowDate();
-      if (now === lastCurrent) return;
-      lastCurrent = now;
-      // A background flow update must not replace the month under a focused
-      // day. Keep its date available until the user navigates elsewhere.
-      if (!input.value.trim() && !focusedDay()) view = monthStart(now);
-      renderCal();
-    });
-    if (latchEl) watch.observe(latchEl, { attributes: true, attributeFilter: ['data-date'] });
-    detachCurrentWatch = () => watch.disconnect();
-
-    // As the field is edited, clear the error and follow a parseable value to
-    // its month — or, once cleared, back to the viewing date's month.
+  function createSurface(popover: boolean): CalendarSurface {
+    const root = document.createElement('div'); root.className = popover ? 'date-jump' : 'timeline-calendar date-jump-inline';
+    if (popover) { root.id = 'date-jump'; root.setAttribute('role', 'dialog'); root.setAttribute('aria-label', 'Timeline calendar'); }
+    const calendar = root.appendChild(document.createElement('div')); calendar.className = 'date-jump-cal';
+    const entry = root.appendChild(document.createElement('div')); entry.className = 'date-jump-entry';
+    const input = entry.appendChild(document.createElement('input'));
+    input.type = 'text'; input.className = 'date-jump-input'; input.placeholder = 'Jump to date…'; input.setAttribute('aria-label', 'Jump to date'); input.autocomplete = 'off';
+    const submit = entry.appendChild(document.createElement('button')); submit.type = 'button';
+    submit.className = 'date-jump-submit'; submit.textContent = '→'; submit.setAttribute('aria-label', 'Jump to date');
+    const error = root.appendChild(document.createElement('div')); error.className = 'date-jump-error';
+    error.id = popover ? 'date-jump-error' : 'date-jump-error-inline'; error.hidden = true; error.setAttribute('role', 'alert');
+    const status = root.appendChild(document.createElement('div')); status.className = 'date-jump-status';
+    status.hidden = true; status.setAttribute('role', 'status'); status.setAttribute('aria-atomic', 'true');
+    const surface = { root, calendar, input, error, status };
     input.addEventListener('input', () => {
-      setInvalid(false);
-      const parsed = parseLooseDate(input.value);
-      if (parsed) view = monthStart(parsed);
-      else if (!input.value.trim()) view = monthStart(currentFlowDate());
-      renderCal();
+      // Availability can change before a deferred layout refresh. Adopt that
+      // context before recording this edit so its reset cannot erase the draft.
+      synchronizeContext();
+      draft = input.value; invalid = false;
+      const parsed = parseLooseDate(draft);
+      if (parsed) { view = monthStart(parsed); browsedMonth = true; }
+      else if (!draft.trim()) { view = monthStart(context().current); browsedMonth = false; }
+      render();
     });
-    // Commit on Enter only — not on blur, so clicking the calendar's month arrows
-    // (which blur the field) navigates instead of jumping and closing.
-    input.addEventListener('keydown', (e) => {
-      if (e.key !== 'Enter') return;
-      e.preventDefault();
-      const parsed = parseLooseDate(input.value);
-      if (parsed) { deps.jumpToDate(parsed); close(true); }
-      else setInvalid(true);
-    });
+    input.addEventListener('keydown', event => { if (event.key === 'Enter') { event.preventDefault(); commit(surface); } });
+    submit.addEventListener('click', () => commit(surface));
+    return surface;
+  }
 
-    document.body.appendChild(pop);
-    popover = pop;
-    chip.setAttribute('aria-expanded', 'true');
-    chip.setAttribute('aria-controls', pop.id);
-
-    // Keep the usual position under the chip when space allows. At high zoom
-    // or with an onscreen keyboard, fit the visible viewport and scroll the
-    // popover's contents so every calendar day remains reachable.
+  function open(trigger?: HTMLElement): void {
+    if (activeModal()) return;
+    const button = trigger ?? document.getElementById('btn-workspace-calendar') ?? document.querySelector<HTMLElement>('.date-latch-chip');
+    if (!button) return;
+    cancelFocusRestore(); launcher = button; pressedOutside = false;
+    popup = createSurface(true); const pop = popup.root;
+    document.body.appendChild(pop); button.setAttribute('aria-expanded', 'true'); button.setAttribute('aria-controls', pop.id);
     const viewport = window.visualViewport;
     function positionPopover(): void {
       if (!pop.isConnected) return;
       const viewport = window.visualViewport;
-      const minLeft = (viewport?.offsetLeft ?? 0) + 8;
-      const minTop = (viewport?.offsetTop ?? 0) + 8;
-      const availableWidth = Math.max(0, (viewport?.width ?? window.innerWidth) - 16);
-      const availableHeight = Math.max(0, (viewport?.height ?? window.innerHeight) - 16);
-      pop.style.maxWidth = `${availableWidth}px`;
-      pop.style.maxHeight = `${availableHeight}px`;
-      const rect = chip!.getBoundingClientRect();
-      const size = pop.getBoundingClientRect();
-      pop.style.left = `${Math.max(minLeft, Math.min(rect.right - size.width, minLeft + availableWidth - size.width))}px`;
-      pop.style.top = `${Math.max(minTop, Math.min(rect.bottom + 4, minTop + availableHeight - size.height))}px`;
+      const minLeft = (viewport?.offsetLeft ?? 0) + 8, minTop = (viewport?.offsetTop ?? 0) + 8;
+      const width = Math.max(0, (viewport?.width ?? window.innerWidth) - 16), height = Math.max(0, (viewport?.height ?? window.innerHeight) - 16);
+      pop.style.maxWidth = `${width}px`; pop.style.maxHeight = `${height}px`;
+      const rect = button!.getBoundingClientRect(), size = pop.getBoundingClientRect();
+      const above = button!.id === 'btn-workspace-calendar' || !!button!.closest('#control-pill');
+      const top = above ? rect.top - size.height - 8 : rect.bottom + 4;
+      pop.style.left = `${Math.max(minLeft, Math.min(rect.right - size.width, minLeft + width - size.width))}px`;
+      pop.style.top = `${Math.max(minTop, Math.min(top, minTop + height - size.height))}px`;
     }
-    positionPopover();
-    window.addEventListener('resize', positionPopover);
-    viewport?.addEventListener('resize', positionPopover);
-    viewport?.addEventListener('scroll', positionPopover);
-    detachViewportWatch = () => {
-      reposition = null;
-      window.removeEventListener('resize', positionPopover);
-      viewport?.removeEventListener('resize', positionPopover);
-      viewport?.removeEventListener('scroll', positionPopover);
-    };
     reposition = positionPopover;
-
-    // Focus the field so the user can type straight away (preventScroll so
-    // focusing the off-flow popover doesn't nudge the page).
-    input.focus({ preventScroll: true });
-
-    // Dismiss on a full click outside / Escape. Armed next tick so the opening
-    // click (still propagating) doesn't immediately close it; close() cancels
-    // the arming so a same-tick close can't leak capture listeners that would
-    // swallow Escape app-wide.
+    window.addEventListener('resize', positionPopover); viewport?.addEventListener('resize', positionPopover); viewport?.addEventListener('scroll', positionPopover);
+    detachViewportWatch = () => {
+      reposition = null; window.removeEventListener('resize', positionPopover);
+      viewport?.removeEventListener('resize', positionPopover); viewport?.removeEventListener('scroll', positionPopover);
+    };
+    const latch = document.getElementById('date-latch');
+    if (latch) {
+      const watch = new MutationObserver(() => render()); watch.observe(latch, { attributes: true, attributeFilter: ['data-date'] });
+      detachCurrentWatch = () => watch.disconnect();
+    }
+    render(); popup.input.focus({ preventScroll: true });
     armTimer = setTimeout(() => {
-      armTimer = null;
-      document.addEventListener('pointerdown', onPointerDown, true);
-      document.addEventListener('click', onClick, true);
-      document.addEventListener('keydown', onKey, true);
+      armTimer = null; document.addEventListener('pointerdown', onPointerDown, true);
+      document.addEventListener('click', onClick, true); document.addEventListener('keydown', onKey, true);
     });
   }
 
   return {
-    toggle(): void {
-      if (popover) close();
-      else open();
-    },
+    mountInline(host) { if (!inline) inline = createSurface(false); host.append(inline.root); render(); },
+    toggle(trigger) { if (popup) close(); else open(trigger); },
     close,
-    refresh() {
-      const marks = { today: toDateStr(new Date()), current: currentFlowDate(), selected: parseLooseDate(popover?.querySelector<HTMLInputElement>('.date-jump-input')?.value ?? '') ?? '' };
-      const prefs = deps.displayPreferences?.() ?? { timeFormat: 'locale' as const };
-      const calendar = popover?.querySelector<HTMLElement>('.date-jump-cal');
-      if (calendar?.dataset.month) {
-        const label = formatMonth(calendar.dataset.month, prefs);
-        calendar.setAttribute('aria-label', label);
-        const title = calendar.querySelector('.cal-title');
-        if (title && title.textContent !== label) title.textContent = label;
-      }
-      for (const button of Array.from(popover?.querySelectorAll<HTMLElement>('.cal-day') ?? [])) markCalendarDay(button, marks, prefs);
-      reposition?.();
-    },
-    isOpen: () => popover !== null,
+    refresh(options) { if (options?.invalidateCounts || options?.reloadCounts) { counts.clear(); revision++; } if (inline || popup) render(); },
+    isOpen: () => popup !== null,
+    dispose() { close(false); cancelFocusRestore(); inline?.root.remove(); inline = null; disposed = true; revision++; counts.clear(); },
   };
 }

@@ -1,0 +1,10 @@
+{
+  "query": "query RecentDecisions($where: EntryWhere) { entries(where: $where, orderBy: CREATED_DESC) { nodes { id } } }",
+  "variables": {
+    "where": {
+      "createdFrom": "2026-10-12",
+      "or": [{ "search": "decision" }, { "search": "review" }],
+      "not": { "search": "#action/2026-10-12-cancelled" }
+    }
+  }
+}

@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { parse as parseYaml } from 'yaml';
-import { yamlQuote } from '../src/mcp/tools/yaml.js';
-import { serializeAction, serializeProject } from '../src/mcp/tools/serialize.js';
+import { yamlQuote } from '../src/core/yaml.js';
+import { serializeAction, serializeProject } from '../src/source/serialize.js';
 
 function frontMatter(fileContent: string): any {
   return parseYaml(fileContent.match(/^---\n([\s\S]*?)\n---/m)![1]);

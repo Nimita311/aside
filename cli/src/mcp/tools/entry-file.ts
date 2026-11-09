@@ -1,7 +1,7 @@
 import { ENTRY_PREAMBLE, splitFrontMatter } from '../../core/parser.js';
 import { parseDocument } from 'yaml';
-import { formatScalar } from '../format.js';
-import { mergeMetadata } from './front-matter.js';
+import { formatScalar } from '../../core/text.js';
+import { mergeMetadata } from '../../core/metadata.js';
 
 // Reject the one sequence entry content cannot hold: a `---` line followed by a
 // ```entry fence is the entry preamble, so embedding it would split the note into

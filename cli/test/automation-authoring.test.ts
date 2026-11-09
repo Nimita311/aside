@@ -2,8 +2,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { parse, stringify } from 'yaml';
-import { init } from '../src/commands/init.js';
-import { Store } from '../src/mcp/store.js';
+import { init } from '../src/source/bootstrap.js';
+import { Store } from '../src/source/store.js';
 import { handleCapture } from '../src/mcp/tools/capture.js';
 import { handleUpdateProject } from '../src/mcp/tools/update.js';
 import { handleUpdateInstance } from '../src/mcp/tools/instance.js';
@@ -12,6 +12,7 @@ import { InstanceHost } from '../src/daemon/host.js';
 import { CalClient } from '../src/mcp/calendar/client.js';
 import { QueryView } from '../src/graphql/query.js';
 import * as models from '../src/automation/models.js';
+import {hostGraphQL} from './support/graphql-host.js';
 
 const jobs = {
   digest: { schedule: { cron: '0 8 * * 1-5', timezone: 'America/Los_Angeles' }, run: { model: 'CODEX_GPT_6_1_SOL', prompt: '#artifact/2026-10-08-digest-instructions' } },
@@ -36,7 +37,7 @@ const invalidModelSelections = [
 const namedJobs = (value: Record<string, unknown>) => Object.entries(value).map(([name, definition]) => ({name, ...definition as object}));
 let dir: string, store: Store, host: InstanceHost, project: string;
 async function graph(document: string, variables?: Record<string, unknown>, mode = 'mutate') {
-  return JSON.parse((await host.tool(dir, mode, { document, variables })).text);
+  return JSON.parse((await hostGraphQL(host, dir, mode, { document, variables })).text);
 }
 const automationFields = 'automations { nodes { name schedule { cron rrule dtstart timezone at } run { script args model prompt { id } } } }';
 const projectWrite = `mutation($id: ID!, $jobs: [CreateAutomationInput!]!) { updateProject(id: $id, input: {automations: {set: $jobs}}) { error project { id ${automationFields} } } }`;
@@ -70,17 +71,19 @@ beforeEach(() => {
 afterEach(async () => { await host.close(); store.close(); vi.restoreAllMocks(); rmSync(dir, { recursive: true, force: true }); });
 
 describe('automation authoring', () => {
-  it('round trips all schedules through GraphQL artifact prompts and uses the same direct artifact handles in legacy inputs', async () => {
+  it('round trips all schedules through GraphQL artifact prompts and direct artifact handles in frontmatter', async () => {
     expect(existsSync(join(dir, '.aside'))).toBe(false);
     const result = await graph(projectWrite, { id: project, jobs: namedJobs(graphJobs) });
     expect(result.errors).toBeUndefined();
     expect(declarations(result.data.updateProject.project.automations)).toEqual(artifactJobs);
     expect(result.extensions.mutations[0]).toMatchObject({operation: 'updateProject', error: null, changes: expect.any(Array)});
-    const legacy = await host.tool(dir, 'query_projects', { ids: [project], detail: 'metadata' });
-    expect(legacy.text).toContain('prompt: "#artifact/2026-10-08-instructions"');
-    const instance = await host.tool(dir, 'update_instance', { automations: jobs });
-    expect(instance.text).toContain('updated: instance');
-    expect(JSON.parse((await host.tool(dir, 'query_instance', {})).text).manifest.automations).toEqual(jobs);
+    const projectFile = store.getProjectFile(project)!;
+    expect(parse(readFileSync(projectFile, 'utf8').match(/^---\n([\s\S]*?)\n---/)![1]).automations).toEqual(artifactJobs);
+    const instance = await graph(instanceWrite, { jobs: namedJobs(graphJobs) });
+    expect(instance.errors).toBeUndefined();
+    expect(declarations(instance.data.updateInstance.instance.automations)).toEqual(jobs);
+    expect(instance.extensions.mutations[0].changes).toEqual([expect.objectContaining({kind: 'instance', effect: 'UPDATED'})]);
+    expect(parse(readFileSync(join(dir, 'aside.md'), 'utf8').split('---')[1]).automations).toEqual(jobs);
     const queried = await graph(`{ activeInstance { ${automationFields} } project(id: "${project}") { ${automationFields} } }`, undefined, 'query');
     expect(declarations(queried.data.activeInstance.automations)).toEqual(jobs);
     expect(declarations(queried.data.project.automations)).toEqual(artifactJobs);
@@ -230,8 +233,6 @@ describe('automation authoring', () => {
   it('reads malformed direct-file declarations for repair and isolates nested query snapshots', async () => {
     handleUpdateProject(store, { id: project, automations: jobs });
     const old = new QueryView(store);
-    store.getProject(project)!.frontMatter.automations!.digest = { broken: true };
-    expect(old.records.project.get(project)!.record.frontMatter.automations).toEqual(jobs);
     // Save the malformed declaration as a user file edit, then query through the host.
     const file = store.getProjectFile(project)!;
     const saved = readFileSync(file, 'utf8');
@@ -239,6 +240,7 @@ describe('automation authoring', () => {
     metadata.automations.digest = { broken: true };
     writeFileSync(file, `---\n${stringify(metadata)}---\n\n${store.getProject(project)!.body}\n`);
     store.rebuild();
+    expect(old.records.project.get(project)!.record.frontMatter.automations).toEqual(jobs);
     handleUpdateProject(store, { id: project, body: 'Keep malformed map readable.' });
     const result = await graph(`{ project(id: "${project}") { ${automationFields} } }`, undefined, 'query');
     expect(result.errors).toBeUndefined();

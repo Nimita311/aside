@@ -13,25 +13,25 @@ describe('VERSION', () => {
     expect(VERSION).toBe(read('..', 'package.json').version);
   });
 
-  it.each(['graphql', 'legacy'])('matches the %s plugin manifest', surface => {
-    expect(VERSION).toBe(read('..', '..', 'agent', surface, '.claude-plugin', 'plugin.json').version);
+  it('matches the plugin manifest', () => {
+    expect(VERSION).toBe(read('..', '..', 'agent', 'graphql', '.claude-plugin', 'plugin.json').version);
   });
 
-  it.each(['graphql', 'legacy'])('matches the %s marketplace manifest', surface => {
-    const market = read('..', '..', 'agent', surface, '.claude-plugin', 'marketplace.json');
+  it('matches the marketplace manifest', () => {
+    const market = read('..', '..', 'agent', 'graphql', '.claude-plugin', 'marketplace.json');
     const entry = market.plugins.find((p: { name: string }) => p.name === 'aside');
     expect(entry?.version).toBe(VERSION);
   });
 });
 
 describe('agent plugin declarations', () => {
-  it.each(['graphql', 'legacy'])('points the %s marketplace at its configuration and skill folder', surface => {
-    const market = read('..', '..', 'agent', surface, '.claude-plugin', 'marketplace.json');
+  it('points the marketplace at its configuration and skill folder', () => {
+    const market = read('..', '..', 'agent', 'graphql', '.claude-plugin', 'marketplace.json');
     expect(market.plugins.find((p: { name: string }) => p.name === 'aside')?.source).toBe('./');
   });
 
-  it.each(['graphql', 'legacy'])('runs the %s CLI from PATH without a bundled runtime or relative launcher', surface => {
-    const mcp = read('..', '..', 'agent', surface, '.mcp.json');
-    expect(mcp.mcpServers.aside).toEqual({ command: 'aside', args: ['mcp', ...(surface === 'legacy' ? ['--legacy'] : [])] });
+  it('runs the CLI from PATH without a bundled runtime or relative launcher', () => {
+    const mcp = read('..', '..', 'agent', 'graphql', '.mcp.json');
+    expect(mcp.mcpServers.aside).toEqual({ command: 'aside', args: ['mcp'] });
   });
 });

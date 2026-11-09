@@ -1,4 +1,4 @@
-// Wire protocol between the MCP (Node) and the aside-cal Swift helper. One JSON
+// Wire protocol between MCP (Node) and `aside-native calendar`. One JSON
 // object per line each way; every request is answered by exactly one response
 // carrying the same `id`. See cli/calendar-impl.md.
 
@@ -47,6 +47,15 @@ export interface ListCalendarsResult {
   calendars: CalCalendar[];
 }
 
+// Native event venue. Address text and coordinates are independent; display
+// labels and geocoding remain outside the Calendar protocol.
+export interface CalLocation {
+  title: string;
+  latitude?: number;
+  longitude?: number;
+  altitude?: number;
+}
+
 // An Aside-marked event: wall-clock strings in its explicit named zone (null
 // means floating), plus actual epoch milliseconds. `url` is the marker. `recurring`
 // marks an event in a recurring series. Ordinary action sync refuses these;
@@ -72,6 +81,7 @@ export interface CalEvent {
   seriesRule?: NativeRecurrenceRule;
   externalId?: string; // provider family lookup hint, never an occurrence identity
   seriesHead?: boolean; // first occurrence of a stored, non-detached series item
+  location?: CalLocation | null; // readback for forward reconciliation only
 }
 
 export interface UpsertEventArgs {
@@ -84,6 +94,7 @@ export interface UpsertEventArgs {
   durationMinutes?: number; // positive whole elapsed minutes; timed events only
   timezone?: string; // IANA; omitted = floating
   notes?: string;
+  location?: CalLocation | null; // omitted preserves; null clears the native venue
   allDay?: boolean;
   eventId?: string; // update this event when known; otherwise create
   allowTimeReplacement?: boolean; // explicit unambiguous start edit resolves a timing block

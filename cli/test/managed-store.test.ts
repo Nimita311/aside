@@ -2,9 +2,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, renameSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { Store } from '../src/mcp/store.js';
+import { Store } from '../src/source/store.js';
+import {sourceLifecycleFixture} from './source-lifecycle-fixture.js';
 
 let base: string, root: string, store: Store;
+let owner: ReturnType<typeof sourceLifecycleFixture> | undefined;
 beforeEach(() => {
   base = mkdtempSync(join(tmpdir(), 'aside-managed-store-'));
   root = join(base, 'instance');
@@ -13,7 +15,7 @@ beforeEach(() => {
   vi.stubEnv('ASIDE_DAEMON_HOME', join(base, 'state'));
   store = new Store(root);
 });
-afterEach(() => { store.close(); vi.unstubAllEnvs(); rmSync(base, { recursive: true, force: true }); });
+afterEach(() => { owner?.close(); owner = undefined; store.close(); vi.restoreAllMocks(); vi.unstubAllEnvs(); rmSync(base, { recursive: true, force: true }); });
 
 const id = '2026-10-14-record';
 const frontMatter = { name: 'Record', created: '2026-10-14T12:00:00' };
@@ -26,6 +28,14 @@ function save(kind: string, path: string): void {
 }
 
 describe('managed Store writes', () => {
+  it.each([undefined, null])('requires an explicit watch owner before installing observers (%s)', callback => {
+    const rebuild = vi.spyOn(store, 'rebuild');
+    expect(() => Reflect.apply(store.watch, store, [callback])).toThrow('Source watching requires a lifecycle invalidation owner.');
+    expect(store['watcher']).toBeNull();
+    expect(store['attachmentPoll']).toBeUndefined();
+    expect(rebuild).not.toHaveBeenCalled();
+  });
+
   it('watches edits through a selected instance root alias', async () => {
     const file = join(root, 'projects', '2026', `${id}.md`);
     save('projects', file);
@@ -33,7 +43,7 @@ describe('managed Store writes', () => {
     const alias = join(base, 'selected-instance');
     symlinkSync(root, alias);
     store = new Store(alias);
-    store.watch();
+    owner = sourceLifecycleFixture(store);
     await new Promise<void>(resolve => store['watcher']!.once('ready', resolve));
     writeFileSync(file, readFileSync(file, 'utf8').replace('new body', 'external edit'));
     await vi.waitFor(() => expect(store.getProject(id)?.body).toContain('external edit'), { timeout: 3000 });
@@ -45,7 +55,7 @@ describe('managed Store writes', () => {
     const directory = join(canonicalRoot, gap);
     mkdirSync(directory, { recursive: true });
     const file = join(canonicalRoot, 'notes', '2026', '2026-10-12.md');
-    store.watch();
+    owner = sourceLifecycleFixture(store);
     const watcher = store['watcher']!;
     const handler = (watcher as unknown as {
       _nodeFsHandler: { _watchWithNodeFs(path: string, ...args: unknown[]): unknown };
@@ -82,7 +92,7 @@ describe('managed Store writes', () => {
     expect(store.getProject(id)?.body).toBe('new body');
     expect(store.getIndexDescription('projects', id)).toBe('original description');
     const rebuild = vi.spyOn(store, 'rebuild');
-    store.watch();
+    owner = sourceLifecycleFixture(store);
     await new Promise<void>(resolve => store['watcher']!.once('ready', resolve));
     await vi.waitFor(() => expect(rebuild).toHaveBeenCalledOnce());
 
@@ -110,7 +120,7 @@ describe('managed Store writes', () => {
       writeFileSync(join(directory, 'notes.md'), 'user content');
     }
     const rebuild = vi.spyOn(store, 'rebuild');
-    store.watch();
+    owner = sourceLifecycleFixture(store);
     await new Promise<void>(resolve => store['watcher']!.once('ready', resolve));
     await vi.waitFor(() => expect(rebuild).toHaveBeenCalledOnce());
     rebuild.mockClear();

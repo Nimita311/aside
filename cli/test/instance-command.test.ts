@@ -1,9 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { existsSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { spawnSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import { runInstance } from '../src/commands/instance.js';
-import { init } from '../src/commands/init.js';
+import { init } from '../src/source/bootstrap.js';
 import { Daemon, writeKnown } from '../src/daemon/daemon.js';
 import { DaemonClient } from '../src/daemon/client.js';
 import * as daemonClient from '../src/daemon/client.js';
@@ -11,6 +11,8 @@ import { FileLock, isLocked } from '../src/daemon/filelock.js';
 import { InstanceHost } from '../src/daemon/host.js';
 import { daemonPaths } from '../src/daemon/paths.js';
 import { CalClient } from '../src/mcp/calendar/client.js';
+import { hashText } from '../src/semantic/documents.js';
+import { SemanticCacheRetention } from '../src/semantic/cache-retention.js';
 
 describe('instance registry commands', () => {
   let home: string;
@@ -33,6 +35,12 @@ describe('instance registry commands', () => {
     return dir;
   }
   function output(): string { return vi.mocked(console.log).mock.calls.at(-1)![0]; }
+  function cached(dir: string): string {
+    const cache = join(daemonPaths().state, 'search', hashText(dir));
+    mkdirSync(cache, {recursive: true});
+    writeFileSync(join(cache, 'cached-passage'), 'Saved semantic cache text.');
+    return cache;
+  }
 
   it('lists an empty fresh registry without creating daemon state', async () => {
     await runInstance(['list', '--json']);
@@ -104,9 +112,122 @@ describe('instance registry commands', () => {
     } });
   });
 
-  it.each(['add', 'forget'])('confirms %s results with an older daemon without inventing change information', async operation => {
+  it('keeps a forgotten cache by default and clears it explicitly without changing instance files', async () => {
+    const one = instance('one'), cache = cached(one), paths = daemonPaths();
+    writeKnown(paths, [one]);
+    await runInstance(['forget', '--dir', one, '--json']);
+    expect(existsSync(join(cache, 'cached-passage'))).toBe(true);
+    expect(JSON.parse(output()).data).not.toHaveProperty('cache');
+    // Clear remains useful after registration was already removed.
+    await runInstance(['forget', '--dir', one, '--clear-cache', '--json']);
+    expect(existsSync(cache)).toBe(false);
+    expect(existsSync(join(one, 'aside.md'))).toBe(true);
+    expect(JSON.parse(output())).toMatchObject({ok: true, data: {
+      results: [{path: one, registered: false, changed: false}], cache: {clearRequested: [one]},
+    }});
+    expect(existsSync(paths.socket)).toBe(false);
+    expect(isLocked(paths.lifetimeLock)).toBe(false);
+    expect(isLocked(paths.startLock)).toBe(false);
+  });
+
+  it('returns the committed forget receipt when cache reclamation must retry', async () => {
+    const one = instance('one'), cache = cached(one), paths = daemonPaths();
+    writeKnown(paths, [one]);
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
+    vi.spyOn(SemanticCacheRetention.prototype, 'collect').mockRejectedValueOnce(new Error('Cache file is busy.'));
+    await runInstance(['forget', '--dir', one, '--clear-cache', '--json']);
+    expect(JSON.parse(output())).toMatchObject({ok: true, data: {
+      results: [{path: one, registered: false, changed: true}], cache: {clearRequested: [one]},
+    }});
+    expect(JSON.parse(readFileSync(paths.known, 'utf8'))).toEqual([]);
+    expect(JSON.parse(readFileSync(join(cache, '.retention.json'), 'utf8')).removeRequested).toBe(true);
+    expect(errors).toHaveBeenCalledWith('Error: Semantic cache cleanup is pending: Cache file is busy.');
+    await runInstance(['list', '--json']);
+    expect(existsSync(cache)).toBe(false);
+  });
+
+  it('clears an offline cache after the instance directory has been deleted', async () => {
+    const one = instance('one'), cache = cached(one), paths = daemonPaths();
+    writeKnown(paths, [one]); rmSync(one, {recursive: true});
+    await runInstance(['forget', '--dir', one, '--clear-cache']);
+    expect(existsSync(cache)).toBe(false);
+    expect(output()).toContain('Clear requested');
+    expect(JSON.parse(readFileSync(paths.known, 'utf8'))).toEqual([]);
+  });
+
+  it('retains an unrelated missing instance cache when explicitly clearing another instance', async () => {
+    const target = instance('target'), missing = instance('missing'), paths = daemonPaths();
+    const targetCache = cached(target), missingCache = cached(missing);
+    writeKnown(paths, [target, missing]); rmSync(missing, {recursive: true});
+    await runInstance(['forget', '--dir', target, '--clear-cache', '--json']);
+    expect(existsSync(targetCache)).toBe(false);
+    expect(existsSync(join(missingCache, 'cached-passage'))).toBe(true);
+    expect(JSON.parse(output()).data.cache.clearRequested).toEqual([target]);
+    expect(JSON.parse(readFileSync(paths.known, 'utf8'))).toEqual([]);
+  });
+
+  it('clears caches for the worktree family removed with its primary instance', async () => {
+    const primary = instance('primary'), linked = join(home, 'linked'), other = instance('other');
+    const git = (...args: string[]) => execFileSync('git', ['-C', primary, '-c', 'core.hooksPath=/dev/null', ...args], {stdio: 'pipe'});
+    git('init', '-b', 'main'); git('add', '.');
+    git('-c', 'user.name=Test', '-c', 'user.email=test@example.com', 'commit', '--no-gpg-sign', '-m', 'fixture');
+    git('worktree', 'add', '--detach', linked);
+    const primaryCache = cached(primary), linkedCache = cached(linked), otherCache = cached(other);
+    writeKnown(daemonPaths(), [primary, linked, other]);
+    await runInstance(['forget', '--dir', primary, '--clear-cache', '--json']);
+    expect(existsSync(primaryCache)).toBe(false); expect(existsSync(linkedCache)).toBe(false);
+    expect(existsSync(join(otherCache, 'cached-passage'))).toBe(true);
+    expect(JSON.parse(output()).data.cache.clearRequested).toEqual([primary, linked]);
+    expect(JSON.parse(readFileSync(daemonPaths().known, 'utf8'))).toEqual([other]);
+  });
+
+  it('collects an expired unregistered cache on the next offline catalogue check', async () => {
+    const one = instance('one'), cache = cached(one);
+    const initial = Date.now(), clock = vi.spyOn(Date, 'now').mockReturnValue(initial);
+    writeKnown(daemonPaths(), [one]);
+    await runInstance(['forget', '--dir', one]);
+    expect(existsSync(join(cache, 'cached-passage'))).toBe(true);
+    clock.mockReturnValue(initial + 30 * 24 * 60 * 60 * 1000);
+    await runInstance(['list']);
+    expect(existsSync(cache)).toBe(false);
+    expect(existsSync(join(one, 'aside.md'))).toBe(true);
+  });
+
+  it('preserves expired caches when an unreadable registry cannot establish registration status', async () => {
+    const one = instance('one'), cache = cached(one), paths = daemonPaths();
+    const metadata = JSON.stringify({version: 1, unregisteredSince: Date.now() - 31 * 24 * 60 * 60 * 1000});
+    writeFileSync(join(cache, '.retention.json'), metadata);
+    writeFileSync(paths.known, '{invalid JSON');
+    await runInstance(['list', '--json']);
+    expect(existsSync(join(cache, 'cached-passage'))).toBe(true);
+    expect(readFileSync(join(cache, '.retention.json'), 'utf8')).toBe(metadata);
+    expect(readFileSync(paths.known, 'utf8')).toBe('{invalid JSON');
+  });
+
+  it('forwards explicit cache removal and reports acknowledgment without claiming immediate deletion', async () => {
     const one = instance('one');
-    const peer = { request: vi.fn().mockResolvedValue({ known: operation === 'add' ? [one] : [] }), close: vi.fn() };
+    const peer = {request: vi.fn(async method => method === 'instances' ? [] : {known: [], requested: [one], changed: [one], cache: {clearRequested: [one]}}), close: vi.fn()};
+    vi.spyOn(daemonClient, 'tryConnect').mockResolvedValue({peer} as unknown as daemonClient.Connection);
+    await runInstance(['forget', '--dir', one, '--clear-cache', '--json']);
+    expect(peer.request).toHaveBeenCalledWith('known.forget', {paths: [one], clearCache: true});
+    expect(JSON.parse(output())).toMatchObject({ok: true, data: {cache: {clearRequested: [one]}}});
+    expect(peer.close).toHaveBeenCalled();
+  });
+
+  it.each([undefined, {clearRequested: []}])('rejects an unacknowledged clear request: %j', async cache => {
+    const one = instance('one');
+    const peer = {request: vi.fn().mockResolvedValue({known: [], requested: [one], cache}), close: vi.fn()};
+    vi.spyOn(daemonClient, 'tryConnect').mockResolvedValue({peer} as unknown as daemonClient.Connection);
+    await expect(runInstance(['forget', '--dir', one, '--clear-cache', '--json'])).rejects.toThrow('did not confirm');
+    expect(peer.close).toHaveBeenCalled();
+    expect(vi.mocked(console.log)).not.toHaveBeenCalled();
+  });
+
+  it.each(['add', 'forget'])('confirms %s results without inventing omitted change information', async operation => {
+    const one = instance('one');
+    const peer = { request: vi.fn(async method => method === 'instances'
+      ? operation === 'add' ? [{path: one, id: 'one', name: 'Published one', manifest: {id: 'one', name: 'Published one'}}] : []
+      : { known: operation === 'add' ? [one] : [], requested: [one] }), close: vi.fn() };
     vi.spyOn(daemonClient, 'tryConnect').mockResolvedValue({ peer } as unknown as daemonClient.Connection);
     await runInstance([operation, '--dir', one, '--json']);
     const report = JSON.parse(output());

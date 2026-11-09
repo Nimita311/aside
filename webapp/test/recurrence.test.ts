@@ -48,3 +48,26 @@ it('shows upcoming work from every template before paging through long history',
     expect(store.getActionIndex()).toHaveLength(3);
   } finally { vi.useRealTimers(); }
 });
+
+
+it('keeps the panel seven-day preview, next recurrence, history, and saved future work', async () => {
+  vi.useFakeTimers(); vi.setSystemTime(new Date('2026-10-09T12:00:00Z'));
+  try {
+    const data = snapshotFixture();
+    data.actions = [
+      ['daily', { frontMatter: { name: 'Daily', created: '2026-10-01T09:00', recurrence: [{ dtstart: '2026-10-01', rrule: 'FREQ=DAILY' }] }, body: '' }],
+      ['monthly', { frontMatter: { name: 'Monthly', created: '2026-10-01T09:00', recurrence: [{ dtstart: '2026-11-01', rrule: 'FREQ=MONTHLY' }] }, body: '' }],
+      ['saved', { frontMatter: { name: 'Saved future', created: '2026-10-01T09:00', scheduled: '2099-01-01' }, body: '' }],
+    ];
+    data.indexes.actions = data.actions.map(([id]) => ({ id, description: id }));
+    const source: SnapshotSource = { snapshot: async () => ({ value: data, version: '1' }), read: vi.fn(), revalidate: vi.fn(), assetUrl: p => p, assetVersion: vi.fn() };
+    const store = new RemoteStore(source); await store.init();
+    const page = await store.getPlanningActions();
+    const dailyDates = page.nodes.filter(row => row.occurrence?.template === 'daily').map(row => row.action.frontMatter.scheduled!);
+    expect(dailyDates).toContain('2026-10-16');
+    expect(dailyDates).not.toContain('2026-10-17');
+    expect(dailyDates).toContain('2026-10-08');
+    expect(page.nodes.find(row => row.occurrence?.template === 'monthly')?.action.frontMatter.scheduled).toBe('2026-11-01');
+    expect((await instanceSummaryData(store)).actions.scheduled.some(row => row.id === 'saved')).toBe(true);
+  } finally { vi.useRealTimers(); }
+});

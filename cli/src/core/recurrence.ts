@@ -401,7 +401,7 @@ export function assertOccurrence(value: unknown): OccurrenceIdentity {
 }
 
 export function projectedAction(template: Action, identity: OccurrenceIdentity, scheduled: string): Action {
-  const { recurrence, occurrence, resolution, timezone, ...fm } = template.frontMatter;
+  const { created, recurrence, occurrence, resolution, timezone, ...fm } = template.frontMatter;
   return { frontMatter: { ...fm, scheduled, ...(identity.timezone && { timezone: identity.timezone }), occurrence: identity }, body: template.body };
 }
 
@@ -409,7 +409,8 @@ interface PlanningCursor { now: string; phase: number; clock: string; id: string
 function planningClock(row: PlanningAction): string {
   const fm = row.action.frontMatter;
   const instant = fm.scheduled && fm.timezone ? scheduleInstant(fm.scheduled, fm.timezone) : undefined;
-  return instant === undefined ? fm.scheduled ?? fm.created : wallTimeAt(instant);
+  // Projections have a schedule; only saved backlog actions use creation time.
+  return instant === undefined ? fm.scheduled ?? fm.created! : wallTimeAt(instant);
 }
 function planningPhase(row: PlanningAction, now: Date): number {
   const fm = row.action.frontMatter;

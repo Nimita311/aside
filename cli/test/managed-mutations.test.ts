@@ -2,14 +2,14 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { dirname, join, relative } from 'node:path';
 import { tmpdir } from 'node:os';
-import { init } from '../src/commands/init.js';
-import { Store } from '../src/mcp/store.js';
+import { init } from '../src/source/bootstrap.js';
+import { Store } from '../src/source/store.js';
 import { handleCapture } from '../src/mcp/tools/capture.js';
 import { handleUpdateAction, handleUpdateEntry, handleUpdateProject } from '../src/mcp/tools/update.js';
 import { handleUpdateInstance } from '../src/mcp/tools/instance.js';
 import { handleUpdateOccurrence } from '../src/mcp/tools/recurrence.js';
-import { writeFileCrashSafe } from '../src/mcp/tools/index-file.js';
-import { MutationWriteError } from '../src/mcp/tools/mutation-result.js';
+import { writeFileCrashSafe } from '../src/storage/atomic-file.js';
+import { MutationWriteError } from '../src/source/mutation-result.js';
 
 describe('managed mutation paths', () => {
   let directory: string;

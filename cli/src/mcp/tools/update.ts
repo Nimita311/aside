@@ -2,35 +2,33 @@ import { assertAutomationDeclarations } from '../../automation/declaration.js';
 import type { AutomationDeclarations } from '../../core/automation.js';
 import { assertDelegation, type DelegationDefinition } from '../../core/delegation.js';
 import { applyRecurrenceMutation, type RecurrenceMutation } from '../../core/recurrence.js';
-import { dirname, join, relative } from 'node:path';
-import { Store } from '../store.js';
+import { dirname, join } from 'node:path';
+import { Store } from '../../source/store.js';
 import { assertScheduling, isWallMinute } from '../../core/scheduling.js';
 import { assertCalendarName } from '../../core/calendar-name.js';
-import { formatActionMeta, formatProjectMeta, formatEntryMeta, formatScalar } from '../format.js';
+import { assertLocationHandle } from '../../core/location-reference.js';
+import {formatScalar} from '../../core/text.js';
 import { validateEntryContent, buildEntryBlock, renderEntries, splitEntrySegments, splitWeekFile } from './entry-file.js';
 import { resolveEntityRefs, type NewProject, type NewAction } from './capture.js';
 import { resolveMarkdownSource } from './content-source.js';
 import { parseEntryBlock, ENTRY_PREAMBLE } from '../../core/parser.js';
 import type { ActionFrontMatter, ProjectFrontMatter, RelatedProject } from '../../core/types.js';
-import { assertAutomationEdits, hasAutomationEdits, type AutomationEdits } from './automation-edits.js';
-import { trackMutation } from './mutation-result.js';
-import { parseMetadata } from './front-matter.js';
-import { assertLinkEdits, assertRelatedProjectEdits, hasLinkEdits, hasRelatedProjectEdits, linkId, mergeLinkIds, type LinkEdits, type RelatedProjectEdits } from './link-edits.js';
-import { assertManagedPath, readManagedText } from '../../core/managed-path.js';
+import { assertAutomationEdits, hasAutomationEdits, type AutomationEdits } from '../../core/automation-edits.js';
+import { trackMutation } from '../../source/mutation-result.js';
+import { parseMetadata } from '../../core/metadata.js';
+import { assertLinkEdits, assertRelatedProjectEdits, hasLinkEdits, hasRelatedProjectEdits, linkId, mergeLinkIds, type LinkEdits, type RelatedProjectEdits } from '../../core/link-edits.js';
 
 function assertUpdatePaths(store: Store, file: string, description?: string): void {
-  assertManagedPath(store.getDataDir(), file, 'file');
-  if (description !== undefined) assertManagedPath(store.getDataDir(), join(dirname(file), 'index.yaml'), 'file', true);
+  store.assertMutationPaths([file], false);
+  if (description !== undefined) store.assertMutationPaths([join(dirname(file), 'index.yaml')]);
 }
 
-// Persist a description change and return a warning suffix for the response
-// when it landed nowhere: an entity with no index row (hand-created, never
-// indexed) silently keeps its old description otherwise, while the tool
-// reports success.
-function descriptionWarning(store: Store, kind: 'notes' | 'projects' | 'actions', id: string, description?: string): string {
-  if (description === undefined) return '';
-  if (store.setIndexEntry(kind, id, description)) return '';
-  return `\nwarning: description not saved — index entry for ${formatScalar(id)} could not be updated (run \`aside instance validate\`)`;
+// Persist a description change and return a warning when it landed nowhere: an
+// entity with no index row (hand-created, never indexed) silently keeps its old
+// description otherwise, while the mutation reports success.
+function descriptionWarning(store: Store, kind: 'notes' | 'projects' | 'actions', id: string, description?: string): string | undefined {
+  if (description === undefined || store.setIndexEntry(kind, id, description)) return undefined;
+  return `Description not saved: the index entry for ${formatScalar(id)} could not be updated. Run aside instance validate.`;
 }
 
 // A field-patch over an existing action or project. The convention mirrors a
@@ -40,7 +38,7 @@ function descriptionWarning(store: Store, kind: 'notes' | 'projects' | 'actions'
 //   - field = null   → remove the field (returns the entity to the prior state,
 //                      e.g. deschedule, reopen)
 // Renaming changes only the display name. IDs, filenames, and created timestamps
-// remain fixed. Entry content is amended through `update_entry`, not here.
+// remain fixed. Entry content is amended through `updateEntry`, not here.
 export interface UpdateActionArgs {
   delegation?: DelegationDefinition | null;
   id: string;
@@ -53,6 +51,7 @@ export interface UpdateActionArgs {
   calendar_account?: string | null;
   duration?: string | null;
   timezone?: string | null;
+  location?: string | null;
   body?: string;
   body_file?: string;
   description?: string;
@@ -88,18 +87,17 @@ export interface UpdateEntryArgs {
   actionEdits?: LinkEdits<NewAction> | null;
 }
 
-// The update_entry outcome mirrors CaptureResult: the human-readable tool response
-// plus the ids it created, so the MCP server's calendar sync acts on the ids
-// directly instead of re-parsing the text.
+// The updateEntry outcome mirrors CaptureResult: the ids it created, plus any
+// warning about the description.
 export interface UpdateEntryResult {
-  text: string;
+  warning?: string;
   createdProjectIds: string[];
   createdActionIds: string[];
 }
 
 // The action fields the merge patch can touch — also what `fileChanged` derives
 // from, so the patch and the rewrite trigger cannot drift.
-const ACTION_PATCH_FIELDS = ['name', 'scheduled', 'deadline', 'resolution', 'calendar', 'calendar_account', 'duration', 'timezone', 'delegation'] as const;
+const ACTION_PATCH_FIELDS = ['name', 'scheduled', 'deadline', 'resolution', 'calendar', 'calendar_account', 'duration', 'timezone', 'location', 'delegation'] as const;
 
 // Apply one provided merge-patch field: null (or an empty string) removes it, a
 // value sets it. Callers skip undefined fields (leave unchanged).
@@ -112,16 +110,17 @@ function assertName(name: string | undefined): void {
   if (name !== undefined && (typeof name !== 'string' || !name.trim())) throw new Error('name must be a nonblank string.');
 }
 
-export function handleUpdateAction(store: Store, args: UpdateActionArgs, now = new Date()): string {
+export function handleUpdateAction(store: Store, args: UpdateActionArgs, now = new Date()): string | undefined {
   return trackMutation(store, () => updateAction(store, args, now)).value;
 }
-function updateAction(store: Store, args: UpdateActionArgs, now: Date): string {
+function updateAction(store: Store, args: UpdateActionArgs, now: Date): string | undefined {
   if (args.delegation !== undefined && args.delegation !== null) assertDelegation(args.delegation);
   assertName(args.name);
   assertCalendarName(args.calendar);
+  if (args.location !== undefined && args.location !== null) assertLocationHandle(args.location);
   const action = store.getAction(args.id);
   if (!action) {
-    throw new Error(`Cannot update action "${args.id}" — not found.\nHint: use query_actions to verify the ID; create new actions with capture or update_entry.`);
+    throw new Error(`Cannot update action "${args.id}" — not found.\nHint: query actions to verify the ID; create new actions with capture or updateEntry through mutate.`);
   }
 
   // Null clears; every supplied string must satisfy the capture contract.
@@ -134,9 +133,9 @@ function updateAction(store: Store, args: UpdateActionArgs, now: Date): string {
   if (!file) throw new Error(`Cannot update action "${args.id}" — file not found.`);
   assertUpdatePaths(store, file, args.description);
   if (args.recurrence !== undefined) {
-    const issue = store.getIssues().find(issue => issue.severity === 'error' &&
-      (issue.code === 'invalid_yaml' || /recurrence|occurrence/.test(issue.code) || /^(recurrence|occurrence)(?:\W|$)/.test(issue.field ?? '')) &&
-      (issue.file === file || issue.file === relative(store.getDataDir(), file) || issue.message.startsWith(args.id + ':')));
+    const issue = store.getRecordSourceHealth('action', args.id).issue
+      ?? store.getRecordIssues('action', args.id).find(issue => issue.severity === 'error' &&
+        (/recurrence|occurrence/.test(issue.code) || /^(recurrence|occurrence)(?:\W|$)/.test(issue.field ?? '')));
     if (issue) throw new Error(`${issue.message} Repair the recurrence declaration before mutating its schedules.`);
     fm.recurrence = applyRecurrenceMutation(action.frontMatter.recurrence, args.recurrence, now, store.getOccurrenceOriginals(args.id));
   }
@@ -152,17 +151,13 @@ function updateAction(store: Store, args: UpdateActionArgs, now: Date): string {
   const fileChanged = args.recurrence !== undefined || replacementBody !== undefined || ACTION_PATCH_FIELDS.some((key) => args[key] !== undefined);
   if (fileChanged) store.saveAction(args.id, fm, replacementBody, file,
     [...ACTION_PATCH_FIELDS.filter(key => args[key] !== undefined), ...(args.recurrence !== undefined ? ['recurrence'] : [])]);
-  const warning = descriptionWarning(store, 'actions', args.id, args.description);
-
-  const updated = store.getAction(args.id)!;
-  const description = store.getIndexDescription('actions', args.id);
-  return `updated: ${formatScalar(args.id)}${warning}\n\n${formatActionMeta(args.id, updated, store.getProjectsForAction(args.id), file, description)}`;
+  return descriptionWarning(store, 'actions', args.id, args.description);
 }
 
-export function handleUpdateProject(store: Store, args: UpdateProjectArgs): string {
+export function handleUpdateProject(store: Store, args: UpdateProjectArgs): string | undefined {
   return trackMutation(store, () => updateProject(store, args)).value;
 }
-function updateProject(store: Store, args: UpdateProjectArgs): string {
+function updateProject(store: Store, args: UpdateProjectArgs): string | undefined {
   assertName(args.name);
   if (args.related_projects !== undefined && args.relatedProjectEdits != null) throw new Error('Provide either related_projects or relatedProjectEdits, not both.');
   if (args.relatedProjectEdits) assertRelatedProjectEdits(args.relatedProjectEdits);
@@ -173,7 +168,7 @@ function updateProject(store: Store, args: UpdateProjectArgs): string {
   }
   const project = store.getProject(args.id);
   if (!project) {
-    throw new Error(`Cannot update project "${args.id}" — not found.\nHint: use query_projects to verify the ID; create new projects with capture or update_entry.`);
+    throw new Error(`Cannot update project "${args.id}" — not found.\nHint: query projects to verify the ID; create new projects with capture or updateEntry through mutate.`);
   }
 
   const automations = args.automations == null ? args.automations : assertAutomationDeclarations(args.automations);
@@ -190,14 +185,14 @@ function updateProject(store: Store, args: UpdateProjectArgs): string {
     } else {
       for (const rp of args.related_projects) {
         if (!store.getProject(rp.project)) {
-          throw new Error(`Related project "${rp.project}" not found.\nHint: use query_projects to find the correct ID.`);
+          throw new Error(`Related project "${rp.project}" not found.\nHint: query projects to find the correct ID.`);
         }
       }
       fm.related_projects = args.related_projects;
     }
   }
   for (const link of args.relatedProjectEdits?.upsert ?? []) {
-    if (!store.getProject(link.project)) throw new Error(`Related project "${link.project}" not found.\nHint: use query_projects to find the correct ID.`);
+    if (!store.getProject(link.project)) throw new Error(`Related project "${link.project}" not found.\nHint: query projects to find the correct ID.`);
   }
 
   const replacementBody = resolveMarkdownSource(args.body, args.body_file, 'body');
@@ -212,11 +207,7 @@ function updateProject(store: Store, args: UpdateProjectArgs): string {
   // trailing blank lines that the read parser normalizes in its domain snapshot.
   if (fileChanged) store.saveProject(args.id, fm, replacementBody, file,
     ['name', 'automations', 'ended', 'related_projects'].filter(key => args[key as keyof UpdateProjectArgs] !== undefined), automationEdits, args.relatedProjectEdits ?? undefined);
-  const warning = descriptionWarning(store, 'projects', args.id, args.description);
-
-  const updated = store.getProject(args.id)!;
-  const description = store.getIndexDescription('projects', args.id);
-  return `updated: ${formatScalar(args.id)}${warning}\n\n${formatProjectMeta(args.id, updated, file, description)}`;
+  return descriptionWarning(store, 'projects', args.id, args.description);
 }
 
 export function handleUpdateEntry(store: Store, args: UpdateEntryArgs, now?: Date): UpdateEntryResult {
@@ -245,7 +236,7 @@ function updateEntry(store: Store, args: UpdateEntryArgs, now?: Date): UpdateEnt
   }
   const entry = store.getEntries().find(e => e.meta.created === args.id);
   if (!entry) {
-    throw new Error(`Cannot update entry "${args.id}" — not found.\nHint: use query_entries to verify the ID, or capture to create a new entry.`);
+    throw new Error(`Cannot update entry "${args.id}" — not found.\nHint: query entries to verify the ID, or use capture through mutate to create a new entry.`);
   }
   const file = store.getEntryFile(args.id);
   if (!file) throw new Error(`Cannot update entry "${args.id}" — weekly file not found.`);
@@ -276,46 +267,49 @@ function updateEntry(store: Store, args: UpdateEntryArgs, now?: Date): UpdateEnt
   let currentProjectIds = entry.meta.projects ?? [];
   let currentActionIds = entry.meta.actions ?? [];
   if (fileChanged) {
-    originalWeeklyContent = readManagedText(store.getDataDir(), file);
-    split = splitWeekFile(originalWeeklyContent) ?? undefined;
-    if (!split) throw new Error(`Cannot update entry "${args.id}" — could not parse weekly file.`);
-    segments = splitEntrySegments(split.body);
-    targetIndex = segments.findIndex((segment) => {
-      // Read `created:` only from the segment's leading ```entry fence — the
-      // same rule extractEntryBlocks uses — so a `created:` line in entry prose
-      // can never identify the segment, however the metadata block is shaped.
-      const fence = segment.match(/^\s*```entry\s*\n([\s\S]*?)```/);
-      return fence !== null && parseEntryBlock(fence[1]).value.created === args.id;
-    });
-    if (targetIndex === -1) throw new Error(`Cannot update entry "${args.id}" — not found in weekly file.`);
-    const target = segments[targetIndex].match(/^\s*```entry\s*\n([\s\S]*?)```\s*\n?([\s\S]*)/)!;
-    originalMetadata = target[1];
-    if (replacementContent === undefined) {
-      metadataRange = entryMetadataRange(split.body, args.id);
-      if (!metadataRange) throw new Error(`Cannot update entry "${args.id}" — metadata not found in weekly file.`);
-      originalMetadata = split.body.slice(metadataRange.start, metadataRange.end);
-    }
-    // Patch the current disk tags, including external edits not yet observed by
-    // the watcher. Tolerant reads may drop malformed IDs; refuse to erase them
-    // implicitly when a patch needs to preserve that list.
-    const diskMetadata = parseEntryBlock(originalMetadata).value;
-    const rawMetadata = parseMetadata(originalMetadata, `entry ${args.id}`).toJS();
-    for (const [field, patch] of [['projects', 'projectEdits'], ['actions', 'actionEdits']] as const) {
-      const current = rawMetadata[field];
-      if (hasLinkEdits(args[patch]) && current != null && (!Array.isArray(current) || current.some(id => typeof id !== 'string'))) {
-        throw new Error(`Cannot patch entry ${args.id}: existing ${field} must be a list of text IDs. Repair it or replace the full list.`);
+    store.prepareSourceMutation(file, original => {
+      if (original === undefined) throw new Error(`Cannot update entry "${args.id}" — weekly file is missing.`);
+      originalWeeklyContent = original;
+      split = splitWeekFile(originalWeeklyContent) ?? undefined;
+      if (!split) throw new Error(`Cannot update entry "${args.id}" — could not parse weekly file.`);
+      segments = splitEntrySegments(split.body);
+      targetIndex = segments.findIndex((segment) => {
+        // Read `created:` only from the segment's leading ```entry fence — the
+        // same rule extractEntryBlocks uses — so a `created:` line in entry prose
+        // can never identify the segment, however the metadata block is shaped.
+        const fence = segment.match(/^\s*```entry\s*\n([\s\S]*?)```/);
+        return fence !== null && parseEntryBlock(fence[1]).value.created === args.id;
+      });
+      if (targetIndex === -1) throw new Error(`Cannot update entry "${args.id}" — not found in weekly file.`);
+      const target = segments[targetIndex].match(/^\s*```entry\s*\n([\s\S]*?)```\s*\n?([\s\S]*)/)!;
+      originalMetadata = target[1];
+      if (replacementContent === undefined) {
+        metadataRange = entryMetadataRange(split.body, args.id);
+        if (!metadataRange) throw new Error(`Cannot update entry "${args.id}" — metadata not found in weekly file.`);
+        originalMetadata = split.body.slice(metadataRange.start, metadataRange.end);
       }
-    }
-    currentProjectIds = diskMetadata.projects ?? [];
-    currentActionIds = diskMetadata.actions ?? [];
-    // New entity IDs are deterministic. Preflight the complete metadata merge
-    // before resolving references creates records: even valid YAML can contain
-    // custom aliases that cannot safely survive replacement of a link list.
-    const predictedIds = (refs: (string | NewProject | NewAction)[]) => refs.map(ref => linkId(ref, currentTime));
-    buildEntryBlock(args.id,
-      args.projects !== undefined ? predictedIds(projectRefs) : mergeLinkIds(currentProjectIds, predictedIds(projectRefs), args.projectEdits?.remove ?? []),
-      args.actions !== undefined ? predictedIds(actionRefs) : mergeLinkIds(currentActionIds, predictedIds(actionRefs), args.actionEdits?.remove ?? []),
-      content, originalMetadata, changedTags);
+      // Patch the current disk tags, including external edits not yet observed by
+      // the watcher. Tolerant reads may drop malformed IDs; refuse to erase them
+      // implicitly when a patch needs to preserve that list.
+      const diskMetadata = parseEntryBlock(originalMetadata).value;
+      const rawMetadata = parseMetadata(originalMetadata, `entry ${args.id}`).toJS();
+      for (const [field, patch] of [['projects', 'projectEdits'], ['actions', 'actionEdits']] as const) {
+        const current = rawMetadata[field];
+        if (hasLinkEdits(args[patch]) && current != null && (!Array.isArray(current) || current.some(id => typeof id !== 'string'))) {
+          throw new Error(`Cannot patch entry ${args.id}: existing ${field} must be a list of text IDs. Repair it or replace the full list.`);
+        }
+      }
+      currentProjectIds = diskMetadata.projects ?? [];
+      currentActionIds = diskMetadata.actions ?? [];
+      // New entity IDs are deterministic. Preflight the complete metadata merge
+      // before resolving references creates records: even valid YAML can contain
+      // custom aliases that cannot safely survive replacement of a link list.
+      const predictedIds = (refs: (string | NewProject | NewAction)[]) => refs.map(ref => linkId(ref, currentTime));
+      buildEntryBlock(args.id,
+        args.projects !== undefined ? predictedIds(projectRefs) : mergeLinkIds(currentProjectIds, predictedIds(projectRefs), args.projectEdits?.remove ?? []),
+        args.actions !== undefined ? predictedIds(actionRefs) : mergeLinkIds(currentActionIds, predictedIds(actionRefs), args.actionEdits?.remove ?? []),
+        content, originalMetadata, changedTags);
+    });
   }
 
   // Merge-patch: omit a field to keep it. Content is replaced wholesale; the link
@@ -339,13 +333,5 @@ function updateEntry(store: Store, args: UpdateEntryArgs, now?: Date): UpdateEnt
     }
     store.saveEntry(args.id, projectIds, actionIds, content, file, weeklyContent);
   }
-  const warning = descriptionWarning(store, 'notes', args.id, args.description);
-
-  const description = store.getIndexDescription('notes', args.id);
-  const updated = store.getEntries().find(entry => entry.meta.created === args.id)!;
-  const lines: string[] = [`updated: ${formatScalar(args.id)}${warning}`];
-  if (refs.createdProjectIds.length > 0) lines.push(`projects_created: [${refs.createdProjectIds.join(', ')}]`);
-  if (refs.createdActionIds.length > 0) lines.push(`actions_created: [${refs.createdActionIds.join(', ')}]`);
-  const text = `${lines.join('\n')}\n\n${formatEntryMeta(updated, file, description)}`;
-  return { text, createdProjectIds: refs.createdProjectIds, createdActionIds: refs.createdActionIds };
+  return { warning: descriptionWarning(store, 'notes', args.id, args.description), createdProjectIds: refs.createdProjectIds, createdActionIds: refs.createdActionIds };
 }

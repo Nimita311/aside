@@ -3,7 +3,7 @@ import { buildClientSchema, getIntrospectionQuery, graphqlSync, printSchema, val
 import { buildGraphQLSchema } from '../src/graphql/schema.js';
 
 // Documentation is part of the agent API: a client must discover constraints
-// through normal introspection without loading implementation or legacy tools.
+// through normal introspection without loading implementation.
 function introspection() {
   const result = graphqlSync({
     schema: buildGraphQLSchema(),
@@ -36,6 +36,10 @@ describe('GraphQL agent schema documentation', () => {
       expect(mutation.showUrl.description).toContain(text);
     }
     expect((schema.getType('ShowOutcome') as any).getValues().map((value: any) => value.name)).toEqual(['OPENED', 'UNAVAILABLE']);
+    const source = (schema.getType('ShowInput') as any).getFields().source;
+    expect(source.type.toString()).toBe('String');
+    expect(source.description).toContain('attachment handle');
+    expect(source.description).toContain('return context');
   });
 
   it('exposes resolved project relations and typed content links through introspection', () => {
@@ -242,7 +246,7 @@ describe('GraphQL agent schema documentation', () => {
     const instanceInput = data.__schema.types.find(type => type.name === 'UpdateInstanceInput')!;
     if (instanceInput.kind !== 'INPUT_OBJECT') throw new Error('UpdateInstanceInput must be an input object');
     expect(instanceInput.inputFields.map(item => item.name)).toEqual(expect.arrayContaining(['automations', 'settings', 'body']));
-    for (const name of ['automationEdits', 'recurrenceLookaheadDays', 'scheduledEventTitlePrefix', 'doneEventTitlePrefix']) {
+    for (const name of ['automationEdits', 'scheduledEventTitlePrefix', 'doneEventTitlePrefix']) {
       expect(instanceInput.inputFields.map(item => item.name)).not.toContain(name);
     }
     expect(field('AutomationEditsInput', 'upsert').description).toContain('complete definitions');

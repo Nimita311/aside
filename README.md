@@ -13,7 +13,7 @@ Capture. Organize. Deliver.
 | **Actions** | Deliver on your plans with calendar sync and agent delegation. |
 
 **Every note, project, and action lives in a `.md` file.**
-No database. No proprietary format.
+No database required to read or edit your records. No proprietary format.
 
 ## An aside in your agent session
 
@@ -51,7 +51,9 @@ No database. No proprietary format.
 ## Get started
 
 Supported on macOS. Requires Node.js 22.12+ and npm; Node.js 24 recommended.
-Calendar sync requires macOS 14+ and the Xcode Command Line Tools.
+Native integration requires macOS 14+ and the Xcode Command Line Tools when
+building from source. One bundled `aside-native` binary supplies Calendar,
+geocoding, system events, and desktop dialogs.
 
 1. **Build from source.**
 
@@ -77,5 +79,19 @@ Calendar sync requires macOS 14+ and the Xcode Command Line Tools.
 4. **Ask your agent to get started.**
 
    > Set me up with Aside and show me what it can do.
+
+## Optional semantic search
+
+Run [Ollama](https://ollama.com) locally and install the embedding model:
+
+```sh
+ollama pull qwen3-embedding:0.6b
+```
+
+Agents use per-entity `where.regex` filters for patterns and
+`search(rankBy: {semantic: ...})` for natural-language ranking across entities.
+The web app offers explicit search modes too. Semantic
+search builds a disposable local LanceDB index; Markdown remains authoritative.
+See [setup and behavior](design/semantic-search.md).
 
 *Let AI be useful; make your life beautiful.*

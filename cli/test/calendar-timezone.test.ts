@@ -1,12 +1,13 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { Store } from '../src/mcp/store.js';
+import { Store } from '../src/source/store.js';
 import { handleCapture } from '../src/mcp/tools/capture.js';
 import { CalClient } from '../src/mcp/calendar/client.js';
-import { CalSync, storeAction } from '../src/mcp/calendar/sync.js';
+import {storeAction} from '../src/mcp/calendar/sync.js';
+import {CalendarSyncFixture as CalSync} from './calendar-fixture.js';
 import { buildMarker } from '../src/mcp/calendar/markers.js';
-import { eventTimes, savedEvent } from './calendar-fixture.js';
+import { calendarMutationFixture, eventTimes, savedEvent } from './calendar-fixture.js';
 
 const fixtures: Array<{ dir: string; store: Store; sync: CalSync }> = [];
 afterEach(() => { for (const f of fixtures.splice(0)) { f.sync.dispose(); f.store.close(); rmSync(f.dir, { recursive: true, force: true }); } vi.restoreAllMocks(); });
@@ -26,7 +27,7 @@ function fixture(zone?: string) {
     return { eventId: 'event' };
   });
   const remove = vi.spyOn(cal, 'deleteEvent').mockResolvedValue({ deleted: true });
-  const sync = new CalSync(cal, 'work', store); fixtures.push({ dir, store, sync });
+  const sync = new CalSync(cal, 'work', store, undefined, undefined, calendarMutationFixture(store)); fixtures.push({ dir, store, sync });
   const actual = (timezone: string | null, start = '2026-03-08T01:00', end = '2026-03-08T01:30') => {
     const ev = eventTimes({ id: 'event', url: buildMarker('work', id, 'active'), calendar: 'Work', title: '▢ Review', start, end, durationMinutes: 30 }, timezone);
     list.mockResolvedValue({ events: [ev] }); get.mockResolvedValue({ events: [ev] }); return ev;

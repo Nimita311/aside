@@ -31,7 +31,7 @@ export class InstanceSwitcher {
 
   setActive(instance: AvailableInstance | null): void {
     this.active = instance;
-    const identity = instance ? instanceIdentity(instance, this.instances) : undefined;
+    const identity = instance ? instanceIdentity(instance, this.instances, false, true) : undefined;
     this.label.replaceChildren(identity ?? document.createTextNode('Choose an instance'));
     this.label.title = identity ? [...identity.querySelector('.instance-identity-text')!.children].map(node => node.textContent).join(' ') : 'Choose an instance';
     this.trigger.setAttribute('aria-label', instance ? `Switch instance, current instance ${instance.name || instance.id}` : 'Choose an instance');
@@ -86,7 +86,7 @@ export class InstanceSwitcher {
       if (!instance.error) row.href = instanceLink(instance); else row.setAttribute('aria-disabled', 'true');
       const check = document.createElement('span'); check.className = 'instance-menu-check'; check.setAttribute('aria-hidden', 'true');
       if (instance.path === this.active?.path) check.textContent = '✓';
-      const body = document.createElement('span'); body.className = 'instance-menu-body'; body.append(instanceIdentity(instance, this.instances, compact));
+      const body = document.createElement('span'); body.className = 'instance-menu-body'; body.append(instanceIdentity(instance, this.instances, compact, instance.path === this.active?.path));
       if (!compact && instance.description) {
         const description = document.createElement('span'); description.className = 'instance-description'; description.textContent = instance.description; body.append(description);
       }

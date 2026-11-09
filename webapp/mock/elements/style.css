@@ -9,6 +9,14 @@ body.elements-page { display: block; overflow: auto; overscroll-behavior-y: cont
 .element-icons { display: flex; flex-wrap: wrap; gap: 4px 6px; list-style: none; }
 .element-icon { display: flex; align-items: center; justify-content: center; width: 24px; height: 24px; }
 .element-icon-glyphs { display: inline-flex; align-items: center; justify-content: center; color: var(--color-text); }
+.element-entity-icon { width: auto; gap: 4px; padding: 0 3px; }
+.element-entity-icon[data-kind="project"] .element-icon-glyphs { color: var(--color-tag-project-fg); }
+.element-entity-icon[data-kind="action"] .element-icon-glyphs { color: var(--color-tag-action-fg); }
+.element-entity-icon[data-kind="entry"] .element-icon-glyphs,
+.element-entity-icon[data-kind="instance"] .element-icon-glyphs,
+.element-entity-icon[data-kind="content"] .element-icon-glyphs,
+.element-entity-icon[data-kind="date"] .element-icon-glyphs,
+.element-entity-icon[data-kind="location"] .element-icon-glyphs { color: var(--color-text-secondary); }
 .element-icon:focus-visible, .element-swatches li:focus-visible { outline: 2px solid var(--color-accent); outline-offset: 2px; border-radius: var(--radius-sm); }
 .element-subheading { margin: 12px 0 6px; color: var(--color-text-secondary); font-size: var(--font-size-xs); line-height: var(--line-height-xs); font-weight: 400; }
 .element-pill-specimens > .element-subheading:first-child { margin-top: 0; }

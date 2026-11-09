@@ -20,7 +20,7 @@ export class InstancePathError extends Error {}
 // opening `---` fence, not that the front matter is well-formed — enough to
 // reject an unrelated prose file named `aside.md` while still accepting an
 // empty manifest. It is the single definition of validity, shared by
-// discovery, resolution, select_instance, and validate, so they cannot disagree.
+// discovery, resolution, selectInstance, and validate, so they cannot disagree.
 export function isAsideDir(dir: string): boolean {
   const path = resolve(dir, MANIFEST_FILE);
   try {

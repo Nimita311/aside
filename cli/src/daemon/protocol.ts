@@ -35,8 +35,12 @@ export interface StopResult {
 
 export interface KnownEditResult {
   known: string[];
+  /** Canonical requested paths, resolved by the registry owner. */
+  requested: string[];
   // Canonical requested paths whose registration changed; absent on older daemons.
   changed?: string[];
+  // Explicit cache clear requests accepted durably; active instances can defer removal.
+  cache?: {clearRequested: string[]};
 }
 
 export interface DiagnosticCleanupResult {

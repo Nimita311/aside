@@ -107,6 +107,64 @@ describe('iframe query connections',()=>{
     channel.port1.postMessage({type:'cancel',id:1});
     await vi.waitFor(()=>expect(signals[0].aborted).toBe(true));
   });
+  it('suspends hidden panel queries and resumes the same channel without reloading its iframe',async()=>{
+    let signal!: AbortSignal;
+    let finish!: (result: WebQueryResult) => void;
+    const query = vi.fn<Query>(async()=>({data:{resumed:true}}));
+    query.mockImplementationOnce((_request,value)=>{
+      signal = value;
+      return new Promise(resolve=>{ finish = resolve; });
+    });
+    const {frame,bridge,connect} = setup(query), channel = connect(), source = frame.src;
+    channel.port1.postMessage({type:'query',id:1,request});
+    await vi.waitFor(()=>expect(query).toHaveBeenCalledTimes(1));
+
+    expect(bridge.setSuspended(frame,true)).toBe(true);
+    frame.inert = true;
+    await vi.waitFor(()=>expect(signal.aborted).toBe(true));
+    expect(channel.port2.closed).toBe(false);
+    expect(channel.port2.messages).toContainEqual({type:'error',id:1,message:expect.stringContaining('not visible')});
+    channel.port1.postMessage({type:'query',id:2,request});
+    await vi.waitFor(()=>expect(channel.port2.messages).toContainEqual({type:'error',id:2,message:expect.stringContaining('not visible')}));
+    expect(query).toHaveBeenCalledTimes(1);
+    finish({data:{stale:true}});
+
+    frame.inert = false;
+    expect(bridge.setSuspended(frame,false)).toBe(true);
+    channel.port1.postMessage({type:'query',id:3,request});
+    await vi.waitFor(()=>expect(channel.port2.messages).toContainEqual({type:'result',id:3,result:{data:{resumed:true}}}));
+    expect(frame.src).toBe(source);
+    expect(query).toHaveBeenCalledTimes(2);
+    expect(channel.port2.messages.some((value:any)=>value.type==='result' && value.id===1)).toBe(false);
+    expect(connect().port2.closed).toBe(true);
+  });
+  it('allows the initial private handshake while explicitly suspended but grants no query execution',async()=>{
+    const {frame,bridge,connect,query} = setup();
+    bridge.setSuspended(frame,true);
+    frame.hidden = true;
+    const channel = connect();
+    expect(channel.port2.messages).toContainEqual({type:'ready'});
+    channel.port1.postMessage({type:'query',id:1,request});
+    await vi.waitFor(()=>expect(channel.port2.messages).toContainEqual({type:'error',id:1,message:expect.stringContaining('not visible')}));
+    expect(query).not.toHaveBeenCalled();
+    frame.hidden = false;
+    bridge.setSuspended(frame,false);
+    channel.port1.postMessage({type:'query',id:2,request});
+    await vi.waitFor(()=>expect(query).toHaveBeenCalledOnce());
+  });
+  it.each(['removed','source changed','sandbox changed','instance changed','cleared'])('still revokes an explicitly suspended grant when %s',async mode=>{
+    const {frame,bridge,connect,deactivate,query} = setup(), channel = connect();
+    bridge.setSuspended(frame,true);
+    frame.inert = true;
+    if (mode==='removed') frame.remove();
+    else if (mode==='source changed') frame.src=`${location.origin}/other.html`;
+    else if (mode==='sandbox changed') frame.setAttribute('sandbox','allow-scripts allow-same-origin');
+    else if (mode==='cleared') bridge.clear();
+    else { deactivate(); channel.port1.postMessage({type:'query',id:1,request}); }
+    await vi.waitFor(()=>expect(channel.port2.closed).toBe(true));
+    expect(bridge.setSuspended(frame,false)).toBe(false);
+    expect(query).not.toHaveBeenCalled();
+  });
   it('rejects routing overrides and duplicated request IDs',async()=>{
     const {connect,query}=setup();const channel=connect();
     channel.port1.postMessage({type:'query',id:1,request:{...request,instance:'other'}});
@@ -137,6 +195,19 @@ function client() {
   return {...value,api:createIframeQueryClient(target),parent,events};
 }
 describe('iframe SDK',()=>{
+  it('can retry after a temporary panel suspension without opening a new private connection',async()=>{
+    const {api,frame,bridge,parent,query} = client();
+    await expect(api.query(request.query)).resolves.toMatchObject({data:{actions:{totalCount:3}}});
+    const source = frame.src;
+    bridge.setSuspended(frame,true); frame.inert = true;
+    await expect(api.query(request.query)).rejects.toThrow('not visible');
+    expect(query).toHaveBeenCalledOnce();
+    frame.inert = false; bridge.setSuspended(frame,false);
+    await expect(api.query(request.query)).resolves.toMatchObject({data:{actions:{totalCount:3}}});
+    expect(parent.postMessage).toHaveBeenCalledOnce();
+    expect(query).toHaveBeenCalledTimes(2);
+    expect(frame.src).toBe(source);
+  });
   it('connects once and correlates multiple queries over the private port',async()=>{
     const {api,parent,query}=client();
     const results=await Promise.all([api.query(request.query),api.query(request.query,{count:2},{operationName:'Dashboard'})]);

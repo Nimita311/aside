@@ -1,10 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { init } from '../src/commands/init.js';
+import { init } from '../src/source/bootstrap.js';
 import { formatDaemonStatus } from '../src/commands/daemon-status.js';
 import { daemonPaths } from '../src/daemon/paths.js';
 import type { Status } from '../src/daemon/protocol.js';
+import {availableInstances} from '../src/source/instance-admission.js';
 
 describe('daemon status checklist', () => {
   let root: string;
@@ -22,8 +23,9 @@ describe('daemon status checklist', () => {
     rmSync(root, { recursive: true, force: true });
   });
   function report(overrides: Partial<Parameters<typeof formatDaemonStatus>[0]> = {}) {
+    const instances = availableInstances([...new Set([...(overrides.known ?? [work, personal]), ...(overrides.running?.loaded ?? [])])]);
     return formatDaemonStatus({ paths: { ...daemonPaths({ ASIDE_DAEMON_HOME: root }), job: join(root, 'job.plist') },
-      unavailable: false, known: [work, personal], job: null, jobFileExists: false, ...overrides });
+      unavailable: false, known: [work, personal], instances, job: null, jobFileExists: false, ...overrides });
   }
   function running(overrides: Partial<Status> = {}): Status {
     return { pid: 123, build: { version: '0.1.0', builtAt: Date.UTC(2026, 9, 5) }, connections: 3, tabs: 1, known: [work, personal], loaded: [work, personal], ...overrides };
@@ -121,7 +123,7 @@ describe('daemon status checklist', () => {
     expect(problem).toContain('aside instance forget --dir');
     expect(duplicated.output).not.toContain('Work manifest');
     const json = JSON.parse(formatDaemonStatus({ paths: daemonPaths({ ASIDE_DAEMON_HOME: root }),
-      known: [work, personal], running: running(), unavailable: false, job: null, jobFileExists: false }, true).output);
+      known: [work, personal], instances: availableInstances([work, personal]), running: running(), unavailable: false, job: null, jobFileExists: false }, true).output);
     expect(json.ok).toBe(false);
     expect(json.checks.filter((check: { code: string }) => check.code.startsWith('instance_'))).toEqual([
       expect.objectContaining({ code: 'instance_id_conflict', passed: false }),

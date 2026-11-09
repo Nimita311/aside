@@ -1,18 +1,19 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { init } from '../src/commands/init.js';
-import { Store } from '../src/mcp/store.js';
+import { init } from '../src/source/bootstrap.js';
+import { Store } from '../src/source/store.js';
 import { handleCapture } from '../src/mcp/tools/capture.js';
 import { InstanceHost } from '../src/daemon/host.js';
 import { CalClient } from '../src/mcp/calendar/client.js';
 import * as models from '../src/automation/models.js';
 import { parseManifest, parseProjectFile } from '../src/core/parser.js';
+import {hostGraphQL} from './support/graphql-host.js';
 
 let dir: string, store: Store, host: InstanceHost, project: string;
 const namedTask = (name: string, script = name) => ({name, schedule: {at: '2099-01-01T00:00:00Z'}, run: {script}});
 async function graph(document: string, variables?: Record<string, unknown>) {
-  return JSON.parse((await host.tool(dir, 'mutate', {document, variables})).text);
+  return JSON.parse((await hostGraphQL(host, dir, 'mutate', {document, variables})).text);
 }
 function savedJobs(file: string, kind: string): Record<string, any> | undefined {
   const text = readFileSync(file, 'utf8');

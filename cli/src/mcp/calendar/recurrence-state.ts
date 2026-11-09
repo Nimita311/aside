@@ -1,8 +1,8 @@
 import { createHash } from 'node:crypto';
-import { mkdirSync, readFileSync, realpathSync } from 'node:fs';
-import { join } from 'node:path';
+import { mkdirSync, readFileSync } from 'node:fs';
+import { join, resolve } from 'node:path';
 import { daemonPaths } from '../../daemon/paths.js';
-import { writeFileCrashSafe } from '../tools/index-file.js';
+import { writeFileCrashSafe } from '../../storage/atomic-file.js';
 import type { OccurrenceIdentity } from '../../core/recurrence.js';
 import { assertOccurrence, assertRecurrence } from '../../core/recurrence.js';
 import type { CalEvent } from './protocol.js';
@@ -28,7 +28,9 @@ export class RecurrenceMirror {
   constructor(dataDir: string, instance: string) {
     const directory = join(daemonPaths().state, 'calendar');
     mkdirSync(directory, { recursive: true, mode: 0o700 });
-    this.path = join(directory, createHash('sha256').update(JSON.stringify([realpathSync(dataDir), instance])).digest('hex') + '.json');
+    // The source owner supplies a canonical root. Preserve its identity even
+    // when the directory disappears or an admission alias is retargeted.
+    this.path = join(directory, createHash('sha256').update(JSON.stringify([resolve(dataDir), instance])).digest('hex') + '.json');
     let raw: unknown;
     try { raw = JSON.parse(readFileSync(this.path, 'utf8')); }
     catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return; throw new Error('Calendar recurrence mirror is unreadable; preserve Calendar events until it is repaired.', { cause: error }); }

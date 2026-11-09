@@ -6,6 +6,7 @@ import path from 'node:path';
 import { grantUrl } from '../../src/file-grants.ts';
 import { entryOutputPaths } from '../../build-config.mjs';
 import { browserBuildOptions, createMockServer, readJson } from '../server.mjs';
+import { parseEntrySource, sourceRequest, parseSourcePage } from '../../src/entry-source.ts';
 
 let server;
 const request = (path, init = {}, session) => fetch(new URL(path, server.url), {
@@ -28,6 +29,50 @@ beforeAll(async () => { server = await createMockServer({ port: 0, build: false 
 afterAll(async () => { await server?.close(); });
 
 describe('mock HTTP server', () => {
+  it('persists sidebar replacements in one preview snapshot without writing fixtures or affecting another session', async () => {
+    const first = await sessionFor(), second = await sessionFor();
+    const fixture = new URL('../fixtures/showcase/aside.md', import.meta.url);
+    const before = await readFile(fixture, 'utf8');
+    const original = (await json(`${instancePath}/data`, {}, second)).instance.manifest.config;
+    const sidebar = [
+      { items: [{ label: 'Calmer notes', timeline: 'calmer' }] },
+      { title: 'Launch', items: [{ entity: '#project/2026-10-12-aurora' }] },
+    ];
+    const write = { ...post({ sidebar, expectedSidebar: original.webapp?.sidebar ?? [] }), headers: { 'Content-Type': 'application/json', 'X-Aside-Control': '1' } };
+    expect(await json(`${instancePath}/sidebar`, write, first)).toEqual({ sidebar });
+    const updated = (await json(`${instancePath}/data`, {}, first)).instance.manifest.config;
+    expect(updated.webapp.sidebar).toEqual(sidebar); expect(updated.recurrenceLookaheadDays).toBe(original.recurrenceLookaheadDays);
+    expect((await json(`${instancePath}/data`, {}, second)).instance.manifest.config).toEqual(original);
+    expect(await readFile(fixture, 'utf8')).toBe(before);
+    expect((await request(`${instancePath}/sidebar`, {}, first)).status).toBe(405);
+    expect((await request(`${instancePath}/sidebar`, post({ sidebar: [] }), first)).status).toBe(403);
+    for (const body of [{ sidebar: [] }, { sidebar: [], expectedSidebar: sidebar, extra: true }, { sidebar: [{ items: [{ entity: 'one', timeline: 'two' }] }], expectedSidebar: sidebar }]) {
+      expect((await request(`${instancePath}/sidebar`, { ...write, body: JSON.stringify(body) }, first)).status).toBe(400);
+    }
+    expect((await request(`${instancePath}/sidebar`, { ...write, headers: { ...write.headers, Origin: 'null' } }, first)).status).toBe(403);
+    expect((await json(`${instancePath}/data`, {}, first)).instance.manifest.config.webapp.sidebar).toEqual(sidebar);
+  });
+
+  it('rejects stale preview sidebar writes without losing another browser’s pin', async () => {
+    const session = await sessionFor();
+    const expectedSidebar = (await json(`${instancePath}/data`, {}, session)).instance.manifest.config.webapp.sidebar;
+    const first = [{ items: [{ timeline: 'first pin' }] }], second = [{ items: [{ timeline: 'second pin' }] }];
+    const write = sidebar => ({ ...post({ sidebar, expectedSidebar }), headers: { 'Content-Type': 'application/json', 'X-Aside-Control': '1' } });
+    const replies = await Promise.all([request(`${instancePath}/sidebar`, write(first), session), request(`${instancePath}/sidebar`, write(second), session)]);
+    expect(replies.map(reply => reply.status).sort()).toEqual([200, 409]);
+    expect((await json(`${instancePath}/data`, {}, session)).instance.manifest.config.webapp.sidebar)
+      .toEqual(replies[0].status === 200 ? first : second);
+  });
+  it('runs an authored entry source through the bundled regex worker and native browsing predicate', async () => {
+    const session = await sessionFor('query-source-scoped');
+    const definition = parseEntrySource(await readFile(new URL('../fixtures/showcase/artifacts/2026/2026-10-12-recent-decisions/decisions.json', import.meta.url), 'utf8'));
+    const query = sourceRequest(definition, { filter: { type: 'project', id: '2026-10-12-aurora' }, search: 'calmer', offset: 0, limit: 2 });
+    const result = await json(`${instancePath}/graphql`, post(query), session);
+    expect(result.errors).toBeUndefined();
+    const page = parseSourcePage(definition, result, { offset: 0, limit: 2 });
+    expect(page.ids[0]).toBe('2026-10-18T08:15');
+    expect(page.totalCount).toBeGreaterThan(0);
+  });
   it('decodes request UTF-8 after collecting chunks, including boundaries inside a character', async () => {
     const expected = { query: 'query { projects(where: { name: "東京 🌅" }) { totalCount } }' };
     const bytes = Buffer.from(JSON.stringify(expected));

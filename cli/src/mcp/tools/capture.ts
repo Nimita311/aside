@@ -2,19 +2,17 @@ import { assertAutomationDeclarations } from '../../automation/declaration.js';
 import { assertRecurrence, type RecurrenceSchedule } from '../../core/recurrence.js';
 import type { AutomationDeclarations } from '../../core/automation.js';
 import { assertDelegation, type DelegationDefinition } from '../../core/delegation.js';
-import { existsSync } from 'node:fs';
 import { join } from 'node:path';
-import { Store } from '../store.js';
+import { Store } from '../../source/store.js';
 import { assertScheduling } from '../../core/scheduling.js';
 import { assertCalendarName } from '../../core/calendar-name.js';
-import { formatScalar } from '../format.js';
+import { assertLocationHandle } from '../../core/location-reference.js';
 import { formatDate, formatTimestamp, getMonday, getSunday, getWeekNumber } from '../../core/date.js';
 import { toKebabCase } from '../../core/slug.js';
 import { validateEntryContent, buildEntryBlock, renderEntries, splitEntrySegments, splitWeekFile } from './entry-file.js';
 import { resolveMarkdownSource } from './content-source.js';
 import type { ActionFrontMatter, ProjectFrontMatter } from '../../core/types.js';
-import { trackMutation } from './mutation-result.js';
-import { assertManagedPath, readManagedText } from '../../core/managed-path.js';
+import { trackMutation } from '../../source/mutation-result.js';
 
 export interface NewProject {
   automations?: AutomationDeclarations;
@@ -35,6 +33,7 @@ export interface NewAction {
   scheduled?: string;
   timezone?: string;
   duration?: string;
+  location?: string;
   calendar?: string;
   calendar_account?: string;
   deadline?: string;
@@ -48,11 +47,8 @@ export interface CaptureArgs {
   actions?: (string | NewAction)[];
 }
 
-// The capture outcome: the human-readable tool response plus the ids it created,
-// so callers (the MCP server's calendar sync) act on the ids directly instead of
-// re-parsing the text.
+// The capture outcome: the ids it created, so callers act on them directly.
 export interface CaptureResult {
-  text: string;
   entryId: string;
   createdProjectIds: string[];
   createdActionIds: string[];
@@ -84,7 +80,7 @@ function requireExisting(ids: string[], exists: (id: string) => boolean, entity:
   const cap = entity === 'project' ? 'Project' : 'Action';
   for (const id of ids) {
     if (!exists(id)) {
-      throw new Error(`${cap} "${id}" not found.\nHint: pass an object with {name, description} to create a new ${entity}, or use query_${entity}s to find the correct ID.`);
+      throw new Error(`${cap} "${id}" not found.\nHint: use {create: {name, description}} to create a new ${entity}, or query ${entity}s for the correct ID and link it with existingId.`);
     }
   }
 }
@@ -93,14 +89,14 @@ function requireExisting(ids: string[], exists: (id: string) => boolean, entity:
 // files. Distinct names can slugify to the same ID (e.g. "Eye + face" and
 // "Eye face"), and the {today}- prefix only disambiguates across days.
 function rejectIdCollisions(
-  dataDir: string,
+  store: Store,
   ids: string[],
   named: { name: string }[],
   entityDir: string,
   entity: 'project' | 'action',
 ): void {
   const cap = entity === 'project' ? 'Project' : 'Action';
-  if (ids.length) assertManagedPath(dataDir, join(entityDir, 'index.yaml'), 'file', true);
+  if (ids.length) store.assertMutationPaths([join(entityDir, 'index.yaml')]);
   const seen = new Set<string>();
   for (let i = 0; i < ids.length; i++) {
     const id = ids[i];
@@ -108,17 +104,14 @@ function rejectIdCollisions(
       throw new Error(`Two new ${entity}s derive the same ID "${id}" (from name "${named[i].name}"). Choose a different name.`);
     }
     seen.add(id);
-    const file = assertManagedPath(dataDir, join(entityDir, `${id}.md`), 'file', true);
-    if (existsSync(file)) {
-      throw new Error(`${cap} ID "${id}" already exists. Choose a different name.`);
-    }
+    store.assertNewRecordPath(join(entityDir, `${id}.md`), `${cap} ID "${id}" already exists. Choose a different name.`);
   }
 }
 
 // Resolve `projects`/`actions` link lists: validate the existing IDs, then create
 // the new entities. Name collisions are rejected up front, before any writes
-// (step 3). Shared by capture and update_entry — the two tools whose link lists
-// create projects and actions.
+// (step 3). Shared by capture and updateEntry — the two operations whose link
+// lists create projects and actions.
 export function resolveEntityRefs(
   store: Store,
   projects: (string | NewProject)[],
@@ -144,6 +137,7 @@ function resolveRefs(store: Store, projects: (string | NewProject)[], actions: (
     if (action.delegation !== undefined) assertDelegation(action.delegation);
     assertScheduling(action);
     assertCalendarName(action.calendar);
+    if (action.location !== undefined) assertLocationHandle(action.location);
     if (action.recurrence) {
       assertRecurrence(action.recurrence);
       if (action.scheduled) throw new Error('A recurrence template cannot also have scheduled set.');
@@ -162,15 +156,15 @@ function resolveRefs(store: Store, projects: (string | NewProject)[], actions: (
   // all-or-nothing.)
   const newProjectIds = newProjects.map(np => `${today}-${toKebabCase(np.name)}`);
   const newActionIds = newActions.map(na => `${today}-${toKebabCase(na.name)}`);
-  rejectIdCollisions(dataDir, newProjectIds, newProjects, projectsDir, 'project');
-  rejectIdCollisions(dataDir, newActionIds, newActions, actionsDir, 'action');
+  rejectIdCollisions(store, newProjectIds, newProjects, projectsDir, 'project');
+  rejectIdCollisions(store, newActionIds, newActions, actionsDir, 'action');
 
   // Validate related_projects references (existing projects or ones created here).
   for (const proj of newProjects) {
     if (proj.related_projects) {
       for (const rp of proj.related_projects) {
         if (!store.getProject(rp.project) && !newProjectIds.includes(rp.project)) {
-          throw new Error(`Related project "${rp.project}" not found.\nHint: use query_projects to find the correct ID.`);
+          throw new Error(`Related project "${rp.project}" not found.\nHint: query projects to find the correct ID.`);
         }
       }
     }
@@ -210,6 +204,7 @@ function resolveRefs(store: Store, projects: (string | NewProject)[], actions: (
     if (act.scheduled) fm.scheduled = act.scheduled;
     if (act.timezone) fm.timezone = act.timezone;
     if (act.duration) fm.duration = act.duration;
+    if (act.location !== undefined) fm.location = act.location;
     if (act.calendar) fm.calendar = act.calendar;
     if (act.calendar_account) fm.calendar_account = act.calendar_account;
     if (act.deadline) fm.deadline = act.deadline;
@@ -228,7 +223,7 @@ function resolveRefs(store: Store, projects: (string | NewProject)[], actions: (
 }
 
 // Create a new entry, optionally creating new projects and actions in the same
-// call. The entry is always new — editing an existing entry is update_entry.
+// call. The entry is always new — editing an existing entry is updateEntry.
 export function handleCapture(store: Store, args: CaptureArgs, now?: Date): CaptureResult {
   return trackMutation(store, () => capture(store, args, now)).value;
 }
@@ -256,46 +251,38 @@ function capture(store: Store, args: CaptureArgs, now?: Date): CaptureResult {
   const mondayStr = formatDate(monday);
   const weekFilePath = join(dataDir, 'notes', String(monday.getFullYear()), `${mondayStr}.md`);
   // Reject unsafe note destinations before creating any linked entities.
-  assertManagedPath(dataDir, weekFilePath, 'file', true);
-  assertManagedPath(dataDir, join(dataDir, 'notes', String(monday.getFullYear()), 'index.yaml'), 'file', true);
+  store.assertMutationPaths([weekFilePath, join(dataDir, 'notes', String(monday.getFullYear()), 'index.yaml')]);
 
   const refs = resolveEntityRefs(store, args.projects ?? [], args.actions ?? [], currentTime);
   const { projectIds: allProjectIds, actionIds: allActionIds, createdProjectIds, createdActionIds } = refs;
 
   const entryBlock = buildEntryBlock(entryId, allProjectIds, allActionIds, content);
 
-  let weeklyContent: string;
-  if (existsSync(weekFilePath)) {
-    // Prepend the new entry, then re-render every existing entry so the whole
-    // file stays canonical. Re-splitting (rather than splicing the old body in
-    // verbatim) restores each entry's `---` preamble, so files written by older
-    // versions self-heal to canonical form on the next capture.
-    const fileContent = readManagedText(dataDir, weekFilePath);
-    const split = splitWeekFile(fileContent);
-    if (split) {
-      weeklyContent = split.frontMatter + '\n' + renderEntries([entryBlock, ...splitEntrySegments(split.body)]) + '\n';
+  store.saveEntry(entryId, allProjectIds, allActionIds, content, weekFilePath, fileContent => {
+    let weeklyContent: string;
+    if (fileContent !== undefined) {
+      // Prepend the new entry, then re-render every existing entry so the whole
+      // file stays canonical. Re-splitting (rather than splicing the old body in
+      // verbatim) restores each entry's `---` preamble, so files written by older
+      // versions self-heal to canonical form on the next capture.
+      const split = splitWeekFile(fileContent);
+      if (split) {
+        weeklyContent = split.frontMatter + '\n' + renderEntries([entryBlock, ...splitEntrySegments(split.body)]) + '\n';
+      } else {
+        // No recognizable front matter — keep any existing entries as the body.
+        weeklyContent = renderEntries([entryBlock, ...splitEntrySegments(fileContent)]) + '\n';
+      }
     } else {
-      // No recognizable front matter — keep any existing entries as the body.
-      weeklyContent = renderEntries([entryBlock, ...splitEntrySegments(fileContent)]) + '\n';
+      // Create new weekly file with front matter
+      const sunday = getSunday(entryTime);
+      const weekNum = getWeekNumber(entryTime);
+      const weekFrontMatter = `---\nweek: ${weekNum}\nweek_start: ${mondayStr}\nweek_end: ${formatDate(sunday)}\n---\n`;
+      weeklyContent = weekFrontMatter + '\n' + renderEntries([entryBlock]) + '\n';
     }
-  } else {
-    // Create new weekly file with front matter
-    const sunday = getSunday(entryTime);
-    const weekNum = getWeekNumber(entryTime);
-    const weekFrontMatter = `---\nweek: ${weekNum}\nweek_start: ${mondayStr}\nweek_end: ${formatDate(sunday)}\n---\n`;
-    weeklyContent = weekFrontMatter + '\n' + renderEntries([entryBlock]) + '\n';
-  }
 
-  store.saveEntry(entryId, allProjectIds, allActionIds, content, weekFilePath, weeklyContent);
+    return weeklyContent;
+  });
   store.addIndexEntry('notes', weekFilePath, entryId, args.description);
 
-  // Build the response — text for the agent, ids for programmatic callers.
-  const lines: string[] = [`entry: ${formatScalar(entryId)}`, `file: ${formatScalar(weekFilePath)}`];
-  if (createdProjectIds.length > 0) {
-    lines.push(`projects_created: [${createdProjectIds.map(formatScalar).join(', ')}]`);
-  }
-  if (createdActionIds.length > 0) {
-    lines.push(`actions_created: [${createdActionIds.map(formatScalar).join(', ')}]`);
-  }
-  return { text: lines.join('\n'), entryId, createdProjectIds, createdActionIds };
+  return { entryId, createdProjectIds, createdActionIds };
 }

@@ -17,8 +17,12 @@ export async function queryDaemonInstance(instance: string, request: WebQueryReq
   return result;
 }
 
-import type { AvailableInstance } from '../../cli/src/web/catalogue';
+import type {AvailableInstance} from '../../cli/src/core/catalogue';
 export type { AvailableInstance };
+
+export class DaemonRequestError extends Error {
+  constructor(message: string, readonly status: number) { super(message); }
+}
 
 export async function daemonRequest<T>(endpoint: string, body?: unknown): Promise<T> {
   const response = await authFetch(`/-/api/${endpoint}`, {
@@ -26,7 +30,7 @@ export async function daemonRequest<T>(endpoint: string, body?: unknown): Promis
     ...(body === undefined ? {} : { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Aside-Control': '1' }, body: JSON.stringify(body) }),
   });
   const value = await response.json() as T & { error?: string; paths?: string[] };
-  if (!response.ok) throw new Error([value.error ?? `Aside request failed (${response.status}).`, ...(value.paths ?? [])].join('\n'));
+  if (!response.ok) throw new DaemonRequestError([value.error ?? `Aside request failed (${response.status}).`, ...(value.paths ?? [])].join('\n'), response.status);
   return value;
 }
 

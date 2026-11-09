@@ -4,7 +4,7 @@ import { once } from 'node:events';
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { delimiter, join } from 'node:path';
-import { init } from '../src/commands/init.js';
+import { init } from '../src/source/bootstrap.js';
 import { runValidate } from '../src/commands/validate.js';
 import { runShow } from '../src/commands/show.js';
 import { runMcp } from '../src/commands/mcp.js';

@@ -1,12 +1,13 @@
-import { eventTimes, savedEvent } from './calendar-fixture.js';
+import { calendarMutationFixture, eventTimes, savedEvent } from './calendar-fixture.js';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { CalClient } from '../src/mcp/calendar/client.js';
-import { CalSync, storeAction } from '../src/mcp/calendar/sync.js';
+import {storeAction} from '../src/mcp/calendar/sync.js';
+import {CalendarSyncFixture as CalSync} from './calendar-fixture.js';
 import { buildMarker } from '../src/mcp/calendar/markers.js';
 import { calendarRoutingError } from '../src/mcp/calendar/routing.js';
-import { Store } from '../src/mcp/store.js';
+import { Store } from '../src/source/store.js';
 import { handleCapture } from '../src/mcp/tools/capture.js';
 import { handleUpdateAction } from '../src/mcp/tools/update.js';
 import type { CalCalendar, CalEvent } from '../src/mcp/calendar/protocol.js';
@@ -33,7 +34,7 @@ function fixture(calendars: CalCalendar[], account?: string) {
     return { eventId: 'event' };
   });
   const remove = vi.spyOn(cal, 'deleteEvent').mockResolvedValue({ deleted: true });
-  const sync = new CalSync(cal, 'work', store); syncers.push(sync);
+  const sync = new CalSync(cal, 'work', store, undefined, undefined, calendarMutationFixture(store)); syncers.push(sync);
   return { store, id, cal, list, events, get, upsert, remove, sync, action: () => storeAction(store, id)! };
 }
 

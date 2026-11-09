@@ -2,10 +2,10 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { parse, parseDocument } from 'yaml';
-import { Store } from '../src/mcp/store.js';
+import { Store } from '../src/source/store.js';
 import { handleUpdateAction, handleUpdateEntry, handleUpdateProject } from '../src/mcp/tools/update.js';
 import { handleUpdateArtifact } from '../src/mcp/tools/artifact.js';
-import { mergeMetadata } from '../src/mcp/tools/front-matter.js';
+import { mergeMetadata } from '../src/core/metadata.js';
 import { splitFrontMatter } from '../src/core/parser.js';
 
 describe('metadata alias safety', () => {

@@ -1,4 +1,5 @@
 import DOMPurify from 'dompurify';
+import { alignWideBlocks, wrapWideBlock } from './wide-content';
 
 type Mermaid = (typeof import('mermaid'))['default'];
 type Theme = 'dark' | 'default';
@@ -49,8 +50,9 @@ export function prepareDiagrams(root: HTMLElement): void {
     retry.textContent = 'Retry diagram'; retry.hidden = true;
     const diagram: Diagram = { host, output, source: code.textContent ?? '', details, message, retry };
     pre.replaceWith(host);
-    details.append(summary, pre);
-    host.append(output, message, retry, details);
+    details.append(summary, wrapWideBlock(pre));
+    host.append(wrapWideBlock(output), message, retry, details);
+    details.addEventListener('toggle', () => alignWideBlocks(details));
     diagrams.set(host, diagram);
   }
 }
@@ -103,7 +105,7 @@ function sanitizeDiagram(svg: string, id: string): string {
   if (!drawing.hasAttribute('aria-labelledby') && !drawing.hasAttribute('aria-label')) {
     drawing.setAttribute('aria-label', 'Mermaid diagram');
   }
-  // Keep text readable on wide diagrams. The surrounding output scrolls
+  // Keep text readable on wide diagrams. The surrounding viewport scrolls
   // horizontally rather than shrinking an entire graph into a narrow column.
   const width = Number(drawing.getAttribute('viewBox')?.trim().split(/[\s,]+/)[2]);
   if (Number.isFinite(width) && width > 0) {
@@ -195,6 +197,7 @@ async function hydrate(diagram: Diagram, root: HTMLElement, options: DiagramOpti
           diagram.message.hidden = false;
           diagram.retry.hidden = false;
         }
+        alignWideBlocks(diagram.host);
       });
     }
   };
@@ -207,6 +210,7 @@ async function hydrate(diagram: Diagram, root: HTMLElement, options: DiagramOpti
 // The app awaits this after mounting a view and before measuring navigation
 // geometry. Normal Markdown never loads Mermaid. Stale views cannot be painted.
 export async function renderDiagrams(root: HTMLElement, options: DiagramOptions = {}): Promise<void> {
+  alignWideBlocks(root);
   const hosts = Array.from(root.querySelectorAll<HTMLElement>('.mermaid-diagram'));
   if (diagrams.has(root)) hosts.unshift(root);
   await Promise.all(hosts.map(host => {

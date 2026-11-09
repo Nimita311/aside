@@ -118,11 +118,17 @@ export async function shutdownDaemon(paths: DaemonPaths, conn: Connection): Prom
 export interface ClientOptions {
   paths?: DaemonPaths;
   launcher?: Launcher;
+  /** Existing-owner operations may replace an older owner, but never start one
+   * merely because no daemon is available. */
+  startIfMissing?: boolean;
+  initialConnection?: Connection;
 }
 
 export class DaemonClient {
   readonly paths: DaemonPaths;
   private launcher: Launcher;
+  private readonly startIfMissing: boolean;
+  private initialConnection: Connection | undefined;
   private conn: Connection | null = null;
   private connecting: Promise<Connection> | null = null;
   // Connections to a daemon that is shutting down: left open so requests
@@ -134,6 +140,8 @@ export class DaemonClient {
   constructor(options: ClientOptions = {}) {
     this.paths = options.paths ?? daemonPaths();
     this.launcher = options.launcher ?? spawnDaemon;
+    this.startIfMissing = options.startIfMissing ?? true;
+    this.initialConnection = options.initialConnection;
   }
 
   // Fires when the daemon connection drops.
@@ -185,6 +193,8 @@ export class DaemonClient {
     this.closeListeners.clear();
     this.conn?.peer.close();
     this.conn = null;
+    this.initialConnection?.peer.close();
+    this.initialConnection = undefined;
     for (const conn of this.retired) conn.peer.close();
     this.retired.clear();
   }
@@ -220,8 +230,10 @@ export class DaemonClient {
   // Locate, handshake, start.
   private async connect(): Promise<Connection> {
     ensureDirs(this.paths);
-    const found = await tryConnect(this.paths);
+    const found = this.initialConnection ?? await tryConnect(this.paths);
+    this.initialConnection = undefined;
     if (found) return this.settle(found);
+    if (!this.startIfMissing) throw new Error('No running aside daemon is available. Run `aside daemon status`.');
 
     const lock = new FileLock(this.paths.startLock);
     if (!(await lock.acquireWait(DAEMON_START_TIMEOUT_MS + DAEMON_SHUTDOWN_TIMEOUT_MS))) {

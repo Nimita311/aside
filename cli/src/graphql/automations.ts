@@ -1,6 +1,7 @@
 import { dirname, join } from 'node:path';
 import { GraphQLError } from 'graphql';
-import { catalogFor, readExecutionContext, type ModelCatalogSnapshot } from '../automation/models.js';
+import { catalogFor, type ModelCatalogSnapshot } from '../automation/models.js';
+import {resolveExecutionContext, type ExecutionContextSnapshot} from '../core/execution-context.js';
 import { compileSchedule } from '../automation/schedule.js';
 import { validateDefinition, type AutomationDeclarations, type AutomationDefinition } from '../core/automation.js';
 import { AUTOMATION_DEFAULT_TIMEOUT } from '../core/system-config.js';
@@ -201,17 +202,18 @@ export class AutomationView {
   }
 }
 
-/** Execution metadata is read independently of Store loading and job scheduling. */
+/** Inspection consumes published settings without starting scheduling work. */
 export function executionView(root: string, options: {
   diagnostics: ParseIssue[];
   signal?: AbortSignal;
   catalog?: (refresh: boolean) => Promise<ModelCatalogSnapshot>;
+  executionContext: ExecutionContextSnapshot;
 }) {
   return {
     filePath: join(root, '.aside'),
     cwd: () => {
       options.signal?.throwIfAborted();
-      try { return readExecutionContext(root).cwd; }
+      try { return resolveExecutionContext(options.executionContext).cwd; }
       catch (error) {
         options.diagnostics.push({ severity: 'error', code: 'execution_config', file: join(root, '.aside'),
           message: error instanceof Error ? error.message : String(error) });
@@ -221,7 +223,7 @@ export function executionView(root: string, options: {
     models: async ({ refresh }: { refresh?: boolean | null } = {}) => {
       options.signal?.throwIfAborted();
       const snapshot = options.catalog ? await options.catalog(refresh ?? false)
-        : await catalogFor(root, { refresh: refresh ?? false, signal: options.signal });
+        : await catalogFor(root, { refresh: refresh ?? false, signal: options.signal, executionContext: options.executionContext });
       options.signal?.throwIfAborted();
       options.diagnostics.push(...snapshot.diagnostics.map(message => ({ severity: 'warning' as const,
         code: 'model_discovery', file: join(root, '.aside'), message })));

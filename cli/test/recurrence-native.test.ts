@@ -6,11 +6,11 @@ import { join } from 'node:path';
 it.skipIf(process.platform !== 'darwin')('native rule construction preserves its fields on unsaved EventKit objects', () => {
   const directory = mkdtempSync('/private/tmp/aside-recurrence-native-');
   try {
-    const native = readFileSync(new URL('../native/aside-cal/main.swift', import.meta.url), 'utf8');
+    const native = readFileSync(new URL('../native/aside-native/Calendar.swift', import.meta.url), 'utf8');
     const rules = native.slice(native.indexOf('func nativeRule('), native.indexOf('func upsertEvent('));
     const identity = native.slice(native.indexOf('func markerIdentity('), native.indexOf('// Whether an event'));
     const source = join(directory,'probe.swift'), binary = join(directory,'probe');
-    writeFileSync(source, `import Foundation\nimport EventKit\n${rules}\n${identity}\n
+    writeFileSync(source, `import Foundation\nimport EventKit\nimport CoreLocation\nimport CoreFoundation\n${rules}\n${identity}\n
 let rule = nativeRule(["frequency": "monthly", "interval": 2, "days": [["day": 2, "week": 1]], "count": 10])!
 precondition(rule.frequency == .monthly && rule.interval == 2)
 precondition(rule.daysOfTheWeek!.first!.weekNumber == 1)
@@ -29,13 +29,13 @@ print("native recurrence verified")\n`);
     execFileSync('xcrun',['swiftc','-module-cache-path',join(directory,'modules'),source,'-o',binary],{timeout:60000});
     expect(execFileSync(binary,{encoding:'utf8',timeout:10000})).toContain('native recurrence verified');
   } finally { rmSync(directory,{recursive:true,force:true}); }
-}, 75000);
+}, 90_000);
 
 
 it.skipIf(process.platform !== 'darwin')('fresh native occurrence selection blocks unsafe saves and removals', () => {
   const directory = mkdtempSync('/private/tmp/aside-recurrence-guard-');
   try {
-    const native = readFileSync(new URL('../native/aside-cal/main.swift', import.meta.url), 'utf8');
+    const native = readFileSync(new URL('../native/aside-native/Calendar.swift', import.meta.url), 'utf8');
     const timing = native.slice(native.indexOf('func parseWall('), native.indexOf('// The action-identity portion'));
     const operation = native.slice(native.indexOf('func markerIdentity('), native.indexOf('// Remove the event a marker'))
       .replaceAll('EKEvent(eventStore: store)', 'EKEvent(eventStore: backing)');
@@ -45,6 +45,7 @@ it.skipIf(process.platform !== 'darwin')('fresh native occurrence selection bloc
     // this executes the real native command branch, including fresh selection.
     writeFileSync(source, `import Foundation
 import EventKit
+import CoreLocation
 import CoreFoundation
 import ObjectiveC
 let backing = EKEventStore()
@@ -91,13 +92,13 @@ print("fresh occurrence timing guard verified")
     execFileSync('xcrun',['swiftc','-module-cache-path',join(directory,'modules'),source,'-o',binary],{timeout:60000});
     expect(execFileSync(binary,{encoding:'utf8',timeout:10000})).toContain('fresh occurrence timing guard verified');
   } finally { rmSync(directory,{recursive:true,force:true}); }
-}, 75000);
+}, 90_000);
 
 
 it.skipIf(process.platform !== 'darwin')('native stored-family lookup discovers distant exceptions and excludes foreign markers and adjacent projections', () => {
   const directory = mkdtempSync('/private/tmp/aside-recurrence-family-');
   try {
-    const native = readFileSync(new URL('../native/aside-cal/main.swift', import.meta.url), 'utf8');
+    const native = readFileSync(new URL('../native/aside-native/Calendar.swift', import.meta.url), 'utf8');
     const wall = native.slice(native.indexOf('func parseWall('), native.indexOf('func timedEventIssue('));
     const identity = native.slice(native.indexOf('func markerIdentity('), native.indexOf('// The event a marker already'));
     const rules = native.slice(native.indexOf('func nativeRule('), native.indexOf('func upsertEvent('));
@@ -109,6 +110,8 @@ it.skipIf(process.platform !== 'darwin')('native stored-family lookup discovers 
     // intercepted; no access grant or user's Calendar data is touched.
     writeFileSync(source, `import Foundation
 import EventKit
+import CoreLocation
+import CoreFoundation
 import ObjectiveC
 let backing = EKEventStore()
 let calendar = EKCalendar(for: .event, eventStore: backing)
@@ -168,4 +171,4 @@ print("native distant family discovery verified")
     execFileSync('xcrun',['swiftc','-module-cache-path',join(directory,'modules'),source,'-o',binary],{timeout:60000});
     expect(execFileSync(binary,{encoding:'utf8',timeout:10000})).toContain('native distant family discovery verified');
   } finally { rmSync(directory,{recursive:true,force:true}); }
-}, 75000);
+}, 90_000);

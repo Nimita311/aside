@@ -1,13 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { readTextBlock } from './framed-output.js';
 import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { Store } from '../src/mcp/store.js';
+import { Store } from '../src/source/store.js';
 import { handleCapture } from '../src/mcp/tools/capture.js';
 import { resolveMarkdownSource } from '../src/mcp/tools/content-source.js';
 import { handleUpdateAction, handleUpdateEntry, handleUpdateProject } from '../src/mcp/tools/update.js';
-import { handleQueryActions, handleQueryEntries, handleQueryProjects } from '../src/mcp/tools/query.js';
+import { executeGraphQL } from '../src/graphql/schema.js';
 
 const NOW = new Date(2026, 4, 6, 14, 30);
 
@@ -47,6 +46,12 @@ describe('Markdown file sources', () => {
   let projectId: string;
   let actionId: string;
 
+  const read = async (document: string) => {
+    const result = await executeGraphQL(store, 'query', { document });
+    expect(result.errors).toBeUndefined();
+    return result.data as any;
+  };
+
   function draft(name: string, content: string | Buffer): string {
     const file = join(root, name);
     writeFileSync(file, content);
@@ -83,7 +88,7 @@ describe('Markdown file sources', () => {
     rmSync(root, { recursive: true, force: true });
   });
 
-  it('captures UTF-8 Markdown and nested file bodies without interpreting source metadata', () => {
+  it('captures UTF-8 Markdown and nested file bodies without interpreting source metadata', async () => {
     const markdown = '---\nname: Imported metadata\nresolution: cancelled\n---\n\n# Café ☕\n\n部署する\n\n- [ ] Run the checks\n';
     const source = draft('draft with spaces.md', markdown);
     const result = handleCapture(store, {
@@ -101,29 +106,30 @@ describe('Markdown file sources', () => {
     expect(store.getProject(newProjectId)?.frontMatter.name).toBe('File Project');
     expect(store.getAction(newActionId)?.frontMatter).toMatchObject({ name: 'File Action', scheduled: '2026-05-07T09:00' });
     expect(store.getAction(newActionId)?.frontMatter.resolution).toBeUndefined();
-    expect(readTextBlock(handleQueryEntries(store, { ids: [result.entryId], detail: 'full' }))).toBe(markdown.trim());
-    expect(readTextBlock(handleQueryProjects(store, { ids: [newProjectId], detail: 'full' }))).toBe(markdown.trim());
-    expect(readTextBlock(handleQueryActions(store, { ids: [newActionId], detail: 'full' }))).toBe(markdown.trim());
+    expect(await read(`{ entry(id: "${result.entryId}") { content } project(id: "${newProjectId}") { body } action(id: "${newActionId}") { body } }`)).toEqual({
+      entry: { content: markdown.trim() }, project: { body: markdown.trim() }, action: { body: markdown.trim() },
+    });
     expect(memorySnapshot(new Store(dataDir))).toEqual(memorySnapshot(store));
     expect(readFileSync(source, 'utf-8')).toBe(markdown);
   });
 
-  it('replaces entry, action, and project text from files and exposes fresh results immediately', () => {
+  it('replaces entry, action, and project text from files and exposes fresh results immediately', async () => {
     const source = draft('replacement.md', '# Replacement\n\nA new plan — from disk.\n');
     handleUpdateEntry(store, { id: entryId, content_file: source, description: 'Updated entry summary' });
     handleUpdateAction(store, { id: actionId, body_file: source, scheduled: '2026-05-08T11:00', description: 'Updated action summary' });
     handleUpdateProject(store, { id: projectId, body_file: source, ended: '2026-05-08T12:00', description: 'Updated project summary' });
 
     const text = '# Replacement\n\nA new plan — from disk.';
-    const queries = [
-      handleQueryEntries(store, { ids: [entryId], detail: 'full' }),
-      handleQueryActions(store, { ids: [actionId], detail: 'full' }),
-      handleQueryProjects(store, { ids: [projectId], detail: 'full' }),
-    ];
-    for (const query of queries) {
-      expect(readTextBlock(query)).toBe(text);
-      expect(query).not.toMatch(/Original (?:entry|action body|project body)/);
-    }
+    const fresh = await read(`{
+      entry(id: "${entryId}") { content description }
+      action(id: "${actionId}") { body description scheduled }
+      project(id: "${projectId}") { body description ended }
+    }`);
+    expect(fresh).toEqual({
+      entry: { content: text, description: 'Updated entry summary' },
+      action: { body: text, description: 'Updated action summary', scheduled: '2026-05-08T11:00' },
+      project: { body: text, description: 'Updated project summary', ended: '2026-05-08T12:00' },
+    });
     expect(store.getAction(actionId)?.frontMatter.scheduled).toBe('2026-05-08T11:00');
     expect(store.getProject(projectId)?.frontMatter.ended).toBe('2026-05-08T12:00');
     expect(memorySnapshot(new Store(dataDir))).toEqual(memorySnapshot(store));

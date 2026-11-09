@@ -5,10 +5,11 @@ import { createInstanceId, isInstanceId } from '../src/core/identity.js';
 import { parseManifest } from '../src/core/parser.js';
 import { InstanceHost } from '../src/daemon/host.js';
 import { CalClient } from '../src/mcp/calendar/client.js';
-import { CalSync, type SyncAction } from '../src/mcp/calendar/sync.js';
-import { Store } from '../src/mcp/store.js';
+import {type SyncAction} from '../src/mcp/calendar/sync.js';
+import {CalendarSyncFixture as CalSync} from './calendar-fixture.js';
+import { Store } from '../src/source/store.js';
 import type { CalEvent } from '../src/mcp/calendar/protocol.js';
-import { savedEvent } from './calendar-fixture.js';
+import { calendarMutationFixture, savedEvent } from './calendar-fixture.js';
 const dirs: string[] = [], cleanup: Array<() => void> = [];
 afterEach(() => { cleanup.splice(0).forEach((f) => f()); dirs.splice(0).forEach((d) => rmSync(d, { recursive: true, force: true })); });
 function instance(id: string): string { const path = mkdtempSync('/tmp/aside-identity-'); dirs.push(path); writeFileSync(join(path, 'aside.md'), `---\nid: ${id}\nname: Work\n---\n`); return path; }
@@ -44,7 +45,8 @@ describe('stable instance identity', () => {
     const a = instance('work'), b = instance('work'), alias = join(a, 'alias'); symlinkSync(b, alias);
     const host = new InstanceHost(new CalClient(null)); cleanup.push(() => host.close()); host.setKnownPaths(() => [a, b, alias]);
     const issue = host.issues(a).find((i) => i.code === 'instance_id_conflict'); expect(issue?.message).toContain(a); expect(issue?.message).toContain(b); expect(host.loadedPaths()).toEqual([realpathSync(a)]);
-    writeFileSync(join(b, 'aside.md'), '---\nid: personal\n---\n'); expect(host.issues(a).some((i) => i.code === 'instance_id_conflict')).toBe(false);
+    writeFileSync(join(b, 'aside.md'), '---\nid: personal\n---\n'); host.refreshIdentities();
+    expect(host.issues(a).some((i) => i.code === 'instance_id_conflict')).toBe(false);
   });
   it('holds retries during a conflict and resumes after resolution', async () => {
     const cal = client(); let conflict = 'Duplicate work: /a, /b'; const sync = new CalSync(cal, 'work', undefined, undefined, () => conflict || null); cleanup.push(() => sync.dispose());
@@ -58,19 +60,20 @@ describe('stable instance identity', () => {
   });
   it('stops reverse writes when a collision appears during calendar reads', async () => {
     const path = instance('work'); mkdirSync(join(path, 'actions', '2026'), { recursive: true }); const file = join(path, 'actions', '2026', `${action.id}.md`), original = '---\nname: Deploy\ncreated: 2026-05-15T09:00\nscheduled: 2026-05-15T10:00\ncalendar: Work\n---\nbody\n'; writeFileSync(file, original);
-    const store = new Store(path); cleanup.push(() => store.close()); const cal = client(); let conflict = ''; vi.mocked(cal.listEvents).mockImplementation(async () => { conflict = 'Duplicate work'; return { events: [] }; }); const sync = new CalSync(cal, '', store, undefined, () => conflict || null); cleanup.push(() => sync.dispose());
+    const store = new Store(path); cleanup.push(() => store.close()); const cal = client(); let conflict = ''; vi.mocked(cal.listEvents).mockImplementation(async () => { conflict = 'Duplicate work'; return { events: [] }; }); const sync = new CalSync(cal, '', store, undefined, () => conflict || null, calendarMutationFixture(store)); cleanup.push(() => sync.dispose());
     await sync.reconcile([action]); expect(readFileSync(file, 'utf8')).toBe(original); expect(cal.deleteEvent).not.toHaveBeenCalled(); expect(cal.upsertEvent).not.toHaveBeenCalled();
   });
   it('discards an old identity completion and retries without its cached event ID', async () => {
     const path = instance('work'); mkdirSync(join(path, 'actions', '2026'), { recursive: true });
     writeFileSync(join(path, 'actions', '2026', `${action.id}.md`), '---\nname: Deploy\ncreated: 2026-05-15T09:00\nscheduled: 2026-05-15T10:00\ncalendar: Work\n---\nbody\n');
     const store = new Store(path); cleanup.push(() => store.close()); const cal = client();
-    const sync = new CalSync(cal, '', store); cleanup.push(() => sync.dispose());
+    const sync = new CalSync(cal, '', store, undefined, undefined, calendarMutationFixture(store)); cleanup.push(() => sync.dispose());
     const save = vi.mocked(cal.upsertEvent).getMockImplementation()!;
     vi.mocked(cal.upsertEvent).mockImplementationOnce(async args => {
       const saved = await save(args);
       writeFileSync(join(path, 'aside.md'), '---\nid: personal\n---\n');
-      sync.status(action.id); // host/status observes the manifest edit during the helper call
+      store.rebuild(); // The fixture's source owner observes the edit during the helper call.
+      sync.status(action.id); // Status observes loaded state without performing maintenance.
       return saved;
     });
     await sync.syncActions([action], [action]);

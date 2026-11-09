@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { chmodSync, mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { availableInstances } from '../src/web/catalogue.js';
+import {availableInstances} from '../src/source/instance-admission.js';
 import { WebAuth } from '../src/web/auth.js';
 import { startWeb } from '../src/web/locate.js';
 import { InstanceRegistry } from '../src/mcp/instance-registry.js';
@@ -24,14 +24,16 @@ describe('registered metadata read failures', () => {
     chmodSync(join(f.a, 'aside.md'), 0); chmodSync(join(f.b, 'aside.md'), 0);
     try {
       expect(availableInstances([f.a, alias, f.b])).toEqual([]);
-      expect(registry.catalogue([alias, f.b])).toEqual([]);
+      registry.reconcile(availableInstances([f.a, alias, f.b]).map(row => row.path));
+      expect(registry.catalogue([])).toEqual([]);
     } finally { chmodSync(join(f.a, 'aside.md'), 0o600); chmodSync(join(f.b, 'aside.md'), 0o600); }
     expect(availableInstances([f.a, f.b])).toEqual([
       expect.objectContaining({ id: 'one', address: 'one', name: 'One', path: f.a }),
       expect.objectContaining({ id: 'two', address: 'two', name: 'Two', path: f.b }),
     ]);
     registry.activate(f.a);
-    rmSync(join(f.b, 'aside.md')); expect(availableInstances([f.a, f.b])).toHaveLength(1); expect(registry.catalogue([f.b])).toHaveLength(1);
+    rmSync(join(f.b, 'aside.md')); expect(availableInstances([f.a, f.b])).toHaveLength(1);
+    expect(registry.catalogue(availableInstances([f.b]).map(row => row.path))).toHaveLength(1);
   });
 
   it.skipIf(!permissionTests)('reports an inaccessible parent without throwing during canonical-path resolution', () => {

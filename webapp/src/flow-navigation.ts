@@ -18,6 +18,51 @@ export interface FlowAnchor {
   offset: number;
 }
 
+export interface VisibleTimelineDates { start: string; end: string }
+
+// Calendar marks describe the records actually intersecting the reader,
+// independently of chronological ordering or how many pages are loaded.
+export function visibleTimelineDates(scroller: HTMLElement): VisibleTimelineDates | undefined {
+  const bounds = scroller.getBoundingClientRect();
+  if (bounds.bottom <= bounds.top) return undefined;
+  const cards = scroller.querySelectorAll<HTMLElement>('.entry-card[data-entry-id]:not(.flow-ghost)');
+  const measured = new Map<number, DOMRect | null>();
+  const rectAt = (index: number): DOMRect | null => {
+    if (!measured.has(index)) {
+      const rect = cards[index].getBoundingClientRect();
+      measured.set(index, rect.bottom > rect.top ? rect : null);
+    }
+    return measured.get(index)!;
+  };
+  // Cards follow physical vertical DOM order, regardless of query date order.
+  // Find the first intersecting bottom without measuring every loaded page.
+  // Hidden/zero-height cards have no ordered rectangle; probe around those
+  // holes, retaining each measurement for the visible-card pass below.
+  let low = 0, high = cards.length, first = cards.length;
+  while (low < high) {
+    const middle = Math.floor((low + high) / 2);
+    let index = middle, rect = rectAt(index);
+    for (let distance = 1; !rect && (middle + distance < high || middle - distance >= low); distance++) {
+      if (middle + distance < high) { index = middle + distance; rect = rectAt(index); }
+      if (!rect && middle - distance >= low) { index = middle - distance; rect = rectAt(index); }
+    }
+    if (!rect) break;
+    if (rect.bottom > bounds.top) { first = index; high = index; }
+    else low = index + 1;
+  }
+  let start: string | undefined, end: string | undefined;
+  for (let index = first; index < cards.length; index++) {
+    const rect = rectAt(index);
+    if (!rect) continue;
+    if (rect.top >= bounds.bottom) break;
+    if (rect.bottom <= bounds.top) continue;
+    const day = cards[index].dataset.entryId!.slice(0, 10);
+    if (!start || day < start) start = day;
+    if (!end || day > end) end = day;
+  }
+  return start && end ? { start, end } : undefined;
+}
+
 // The anchor for a tag click: the enclosing entry card, if the click came
 // from one. Clicks from the side panel or search have no card — no anchor.
 export function anchorFromSource(source?: HTMLElement): FlowAnchor | null {
@@ -63,21 +108,17 @@ export function anchorForEntry(entryId: string): FlowAnchor | null {
 // Resolve an anchor to a card in the rendered flow: the anchor's own card
 // when it survives the current filter, otherwise the card nearest in time.
 // Entry ids are ISO timestamps, so lexicographic order is time order, and
-// cards render latest-first.
+// cards can render in either creation order.
 function resolveAnchorCard(flow: HTMLElement, entryId: string): HTMLElement | null {
   const exact = flow.querySelector<HTMLElement>(`[data-entry-id="${CSS.escape(entryId)}"]`);
   if (exact) return exact;
   const t = new Date(entryId).getTime();
-  let above: HTMLElement | null = null;
+  let best: HTMLElement | null = null, gap = Infinity;
   for (const card of flow.querySelectorAll<HTMLElement>('[data-entry-id]')) {
-    if (card.dataset.entryId! > entryId) { above = card; continue; }
-    // First card at-or-before the moment — closer than the one above it?
-    if (!above) return card;
-    const dAbove = new Date(above.dataset.entryId!).getTime() - t;
-    const dBelow = t - new Date(card.dataset.entryId!).getTime();
-    return dBelow <= dAbove ? card : above;
+    const next = Math.abs(new Date(card.dataset.entryId!).getTime() - t);
+    if (!best || next < gap || next === gap && card.dataset.entryId! < best.dataset.entryId!) { best = card; gap = next; }
   }
-  return above;
+  return best;
 }
 
 // A card's top in the scroller's content coordinates — independent of the
@@ -130,13 +171,17 @@ export function viewportGapBelow(scroller: HTMLElement): number {
   return scroller.getBoundingClientRect().bottom - last.getBoundingClientRect().bottom;
 }
 
-// The latest-first cards already belong to the current filtered view. A
+// The cards already belong to the current filtered view. A
 // calendar-date jump stays chronological; exact-ID and quick-near jumps use
 // their separate matching rules.
 export function dateJumpCard(flow: HTMLElement, target: string, allowOldestClamp = true): HTMLElement | null {
-  const cards = Array.from(flow.querySelectorAll<HTMLElement>('[data-entry-id]'));
-  return cards.find(card => card.dataset.entryId! <= target)
-    ?? (allowOldestClamp ? cards.at(-1) ?? null : null);
+  let before: HTMLElement | null = null, oldest: HTMLElement | null = null;
+  for (const card of flow.querySelectorAll<HTMLElement>('[data-entry-id]')) {
+    const id = card.dataset.entryId!;
+    if (id <= target && (!before || id > before.dataset.entryId!)) before = card;
+    if (!oldest || id < oldest.dataset.entryId!) oldest = card;
+  }
+  return before ?? (allowOldestClamp ? oldest : null);
 }
 
 // A period step must advance to another date in the arrow's direction even
@@ -151,8 +196,6 @@ export function quickJumpCard(flow: HTMLElement, target: string, baseDate: strin
     if (dir > 0 ? date <= baseDate : date >= baseDate) continue;
     const gap = Math.abs(new Date(id).getTime() - time);
     if (gap < bestGap) { bestGap = gap; best = card; }
-    // Cards are latest-first; everything after this is further from target.
-    if (id <= target) break;
   }
   return best;
 }
@@ -169,22 +212,18 @@ const TARGET_FLASH_MS = 2000;
 // app passes when animation is Off or under reduced motion; the native
 // `scrollIntoView({ behavior: 'smooth' })` runs a fixed browser duration that
 // honors neither, gliding even when the user asked for no motion. `block`
-// 'center' vertically centers the card; otherwise its margin line aligns with
-// the date readout so that differing first-line baselines complete the handoff.
+// 'center' vertically centers the card; otherwise its border lands at the pane
+// top. Every entry uses the same metadata line, so its date and timestamp align
+// with the fixed readout independently of its content.
 function scrollFlowToCard(card: HTMLElement, block: ScrollLogicalPosition, duration: number): void {
   const scroller = flowScroller();
   if (!scroller) return;
   const cardTop = cardTopInScroller(scroller, card);
   let raw = cardTop;
-  const margin = card.querySelector<HTMLElement>('.entry-margin');
-  const dateRow = document.querySelector<HTMLElement>('#date-latch .latch-date-row');
   if (block === 'center') raw -= (scroller.clientHeight - card.offsetHeight) / 2;
-  else if (margin && dateRow) {
-    const readoutTop = dateRow.getBoundingClientRect().top + parseFloat(getComputedStyle(dateRow).paddingTop);
-    // Round toward the handoff: browser scroll rounding must not leave the
-    // target's marker fractionally below the readout showing the previous day.
-    raw = Math.ceil(margin.getBoundingClientRect().top - readoutTop + scroller.scrollTop);
-  }
+  // Round toward the pane edge so fractional card heights cannot leave the
+  // landed marker just below the readout, still showing the previous day.
+  else raw = Math.ceil(raw);
   const dest = Math.max(0, Math.min(raw, scroller.scrollHeight - scroller.clientHeight));
   const from = scroller.scrollTop;
   if (duration <= 0 || Math.abs(dest - from) < 1) {

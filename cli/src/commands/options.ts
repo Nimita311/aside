@@ -90,14 +90,14 @@ function createProgram(): Command {
     if (!raw) throw new InvalidArgumentError('target must not be empty');
     return raw;
   }));
-  value(show, '--dir <path>', 'Instance directory; requires a target or --url');
+  value(show, '--dir <path>', 'Instance directory; requires a target, --source or --url');
+  value(show, '--source <attachment-handle>', 'Exact indexed artifact attachment handle defining an entry timeline');
   flag(show, '--url', 'Print the web URL and exit without opening or navigating a browser');
   value(show, '--app-dir <path>', 'Webapp build directory'); json(show);
-  show.addHelpText('after', `\nNo target opens the instance selector. Handles use the workspace selection or sole known instance.\nURLs select by instance ID. Quote handles beginning with '#'.\nWith --url, prints only the URL; --dir without a target selects an instance's timeline.\n\nExamples:\n  aside show\n  aside show --url\n  aside show --url --dir ~/aside/work\n  aside show '#action/2026-10-05-review' --dir ~/aside/work\n  aside show 'aside://work/action/2026-10-05-review'`);
+  show.addHelpText('after', `\nWithout a target or --source, opens the instance selector. Handles and sources use the workspace selection or sole known instance.\nURLs select by instance ID. Quote handles beginning with '#'.\n--source opens an agent-defined entry timeline or retains it as a content target's return context.\nWith --url, prints only the URL; --dir without a target or source selects an instance's timeline.\n\nExamples:\n  aside show\n  aside show --url\n  aside show --url --dir ~/aside/work\n  aside show --source '#artifact/2026-10-05-review/decisions.json' --dir ~/aside/work\n  aside show '#action/2026-10-05-review' --dir ~/aside/work\n  aside show 'aside://work/action/2026-10-05-review'`);
 
   const mcp = program.command('mcp').description('Start the GraphQL MCP server (discovers instances by default)');
   value(mcp, '--dir <path>', 'Select one instance instead of discovering instances');
-  flag(mcp, '--legacy', 'Use the legacy entity and utility tools instead of GraphQL');
 
   const graphql = program.command('graphql').description('Execute GraphQL documents through the shared daemon');
   for (const operation of ['query', 'mutate']) {
@@ -186,7 +186,10 @@ function createProgram(): Command {
     if (operation === 'add' || operation === 'forget') directory(cmd, { repeatable: true, required: true });
     if (operation === 'validate') directory(cmd);
     if (operation === 'list') cmd.addHelpText('after', '\nLists the running daemon’s known instances, or the saved registry when stopped.');
-    if (operation === 'forget') cmd.addHelpText('after', '\nRemoves registration only; keeps instance files. An instance in use remains loaded\nuntil its last client or tab disconnects. Using it again registers it again.');
+    if (operation === 'forget') {
+      flag(cmd, '--clear-cache', 'Clear the instance\'s semantic search cache after active use finishes');
+      cmd.addHelpText('after', '\nKeeps instance files. Semantic search caches are retained for 30 days after forgetting,\nthen removed on the next cache check. Use --clear-cache to request removal immediately.\nAn instance in use remains loaded until its last client or tab disconnects; cache removal\nwaits for active use to finish. Using the instance again registers it again.');
+    }
   }
 
   const daemon = program.command('daemon').description('Manage the shared daemon and its login job');
@@ -218,7 +221,6 @@ function createProgram(): Command {
   for (const operation of ['install', 'remove', 'status']) {
     const cmd = plugin.command(operation).description({ install: 'Register this checkout and install the plugin', remove: 'Remove the plugin registration', status: 'Check the CLI build and both agents’ plugin registrations' }[operation]!);
     json(cmd);
-    flag(cmd, '--legacy', 'Use the legacy MCP plugin package instead of GraphQL');
     if (operation !== 'status') {
       value(cmd, '--agent <agent>', 'Agent to configure', { required: true, choices: ['claude', 'codex'] });
       flag(cmd, '--print', 'Show commands without running them');

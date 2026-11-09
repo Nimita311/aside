@@ -14,8 +14,9 @@ export function dismissActionToast(): void {
 }
 
 // Call only for a current, explicitly initiated operation. The manual popover
-// stays above an open reader without taking focus or intercepting pointer input.
-export function showActionFailure(message: string): void {
+// stays above an open reader without taking focus. An explicit navigation
+// action remains available until used or dismissed by later navigation.
+export function showActionFailure(message: string, action?: { label: string; run(): void }): void {
   dismissActionToast();
   const host = document.getElementById('action-toast') ?? document.createElement('div');
   host.id = 'action-toast'; host.className = 'action-toast';
@@ -27,6 +28,12 @@ export function showActionFailure(message: string): void {
   host.hidden = false;
   host.showPopover?.();
   host.textContent = message;
+  if (action) {
+    const button = document.createElement('button');
+    button.type = 'button'; button.className = 'notice-action'; button.textContent = action.label;
+    button.addEventListener('click', () => { dismissActionToast(); action.run(); });
+    host.append(' ', button);
+  }
   current = host;
-  timer = setTimeout(dismissActionToast, ACTION_TOAST_MS);
+  if (!action) timer = setTimeout(dismissActionToast, ACTION_TOAST_MS);
 }

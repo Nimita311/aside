@@ -1,10 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { init } from '../src/commands/init.js';
-import { Store } from '../src/mcp/store.js';
+import { init } from '../src/source/bootstrap.js';
+import { Store } from '../src/source/store.js';
 import { handleCapture } from '../src/mcp/tools/capture.js';
-import { handleUpdateInstance } from '../src/mcp/tools/instance.js';
 import { handleUpdateOccurrence } from '../src/mcp/tools/recurrence.js';
 import { handleUpdateAction } from '../src/mcp/tools/update.js';
 import { createArtifact } from '../src/mcp/tools/artifact.js';
@@ -13,9 +12,12 @@ import { QueryView } from '../src/graphql/query.js';
 import { InstanceHost } from '../src/daemon/host.js';
 import { CalClient } from '../src/mcp/calendar/client.js';
 import * as models from '../src/automation/models.js';
+import {sourceLifecycleFixture} from './source-lifecycle-fixture.js';
+import {hostGraphQL} from './support/graphql-host.js';
 
 describe('one GraphQL action collection', () => {
   let dir: string, store: Store, host: InstanceHost | undefined;
+  let sourceOwner: ReturnType<typeof sourceLifecycleFixture> | undefined;
   let template: string, project: string, entry: string, artifact: string;
 
   beforeEach(() => {
@@ -31,13 +33,14 @@ describe('one GraphQL action collection', () => {
       content: `Define a routine with #artifact/${artifact}.`, description: 'Routine context',
       projects: [{ name: 'Finance', description: 'Finance' }],
       actions: [{ name: 'Review finances', description: 'Weekly review', body: `Read #artifact/${artifact}.`,
-        recurrence: [{ dtstart: '2026-10-11', rrule: 'FREQ=DAILY' }] }],
+        recurrence: [{ dtstart: '2026-10-11', rrule: 'FREQ=DAILY;COUNT=7' }] }],
     });
     template = created.createdActionIds[0]; project = created.createdProjectIds[0]; entry = created.entryId;
   });
 
   afterEach(async () => {
     await host?.close(); host = undefined;
+    sourceOwner?.close(); sourceOwner = undefined;
     store.close(); vi.useRealTimers(); vi.restoreAllMocks();
     rmSync(dir, { recursive: true, force: true });
   });
@@ -52,7 +55,7 @@ describe('one GraphQL action collection', () => {
   } }`)).data.actions;
   const tool = async (mode: 'query' | 'mutate', document: string, variables?: Record<string, unknown>) => {
     host ??= new InstanceHost(new CalClient(null));
-    return JSON.parse((await host.tool(dir, mode, { document, variables })).text);
+    return JSON.parse((await hostGraphQL(host, dir, mode, { document, variables })).text);
   };
 
   it.each(['missing', 'ordinary', 'invalid'])('omits a %s occurrence template target and reports the inconsistency', async kind => {
@@ -93,15 +96,15 @@ occurrence: {template: ${target}, original: 2026-10-11}
     expect(data.entry).toEqual({ created: entry, filePath: store.getEntryFile(entry), projects: { nodes: [{ id: project }] }, actions: { totalCount: 1 } });
     expect(data.project).toMatchObject({ name: 'Finance', ended: null, relatedProjects: {nodes: []} });
     expect(data.action).toMatchObject({ name: 'Review finances', scheduled: null, status: null, occurrence: null,
-      recurrence: [{ dtstart: '2026-10-11', rrule: 'FREQ=DAILY', timezone: null }] });
+      recurrence: [{ dtstart: '2026-10-11', rrule: 'FREQ=DAILY;COUNT=7', timezone: null }] });
     expect(data.artifact).toMatchObject({ name: 'Instructions', content: { text: 'Follow these instructions.' }, attachments: [] });
     expect(data.queryType.fields.map((field: any) => field.name)).not.toContain('planningActions');
     expect(data.oldFrontMatter).toBeNull(); expect(data.oldPlanning).toBeNull(); expect(data.oldEntryMeta).toBeNull();
   });
 
-  it('includes templates and only future occurrences inside the default lookahead', async () => {
+  it('includes templates and finite projections inside the default year', async () => {
     handleCapture(store, { content: 'Distant repeat', description: 'Distant', actions: [{ name: 'Distant repeat', description: 'Distant',
-      recurrence: [{ dtstart: '2026-10-20', rrule: 'FREQ=DAILY' }] }] });
+      recurrence: [{ dtstart: '2027-10-20', rrule: 'FREQ=DAILY' }] }] });
     const before = store.getActions().size;
     const rows = await projections();
     expect(rows.totalCount).toBe(7);
@@ -324,8 +327,11 @@ occurrence: {template: ${target}, original: 2026-10-11}
   });
 
   it('omits missing tag targets from relationships and diagnoses them', async () => {
-    const metadata = store.getEntries().find(record => record.meta.created === entry)!.meta;
-    metadata.projects!.push('missing-project'); metadata.actions!.push('missing-action');
+    const file = store.getEntryFile(entry)!;
+    writeFileSync(file, readFileSync(file, 'utf8')
+      .replace('projects: [', 'projects: [missing-project, ')
+      .replace('actions: [', 'actions: [missing-action, '));
+    sourceOwner = sourceLifecycleFixture(store); sourceOwner.refresh(store);
     const result = await query(`{ entry(id: "${entry}") {
       projects { nodes { id } } actions { nodes { id } }
     } }`);
@@ -336,14 +342,11 @@ occurrence: {template: ${target}, original: 2026-10-11}
     ]));
   });
 
-  it('uses changed lookahead settings immediately and does not force a distant occurrence', async () => {
+  it('uses explicit schedule ends to select projections', async () => {
     expect((await projections()).totalCount).toBe(7);
-    handleUpdateInstance(store, { recurrenceLookaheadDays: 2 });
-    expect((await projections()).nodes.map((row: any) => row.scheduled)).toEqual(['2026-10-11', '2026-10-12']);
-    handleUpdateInstance(store, { recurrenceLookaheadDays: 0 });
-    expect((await projections()).totalCount).toBe(0);
-    handleUpdateInstance(store, { recurrenceLookaheadDays: 4 });
-    expect((await projections()).totalCount).toBe(4);
+    const selected = await query('{ actions(where: {occurrence: {projected: true}, scheduledTo: "2026-10-12"}) { nodes { scheduled } } }');
+    expect(selected.data.actions.nodes.map((row: any) => row.scheduled)).toEqual(['2026-10-11', '2026-10-12']);
+    expect(selected.extensions.defaultProjectionRanges).toEqual([]);
   });
 
   it('filters projections before both root and nested pagination', async () => {
@@ -434,13 +437,12 @@ occurrence: {template: ${target}, original: 2026-10-11}
   });
 
   it('refreshes the projection clock without changing an in-flight query snapshot', async () => {
-    handleUpdateInstance(store, { recurrenceLookaheadDays: 1 });
     let release!: (indices: number[]) => void;
     const matcher = { match: vi.fn(() => new Promise<number[]>(resolve => { release = resolve; })) };
     const pending = executeGraphQL(store, 'query', { document: `{ actions(where: {occurrence: {projected: true}, search: "Review"}) { nodes { scheduled } } }` }, { matcher });
     await vi.waitFor(() => expect(matcher.match).toHaveBeenCalledOnce());
     vi.setSystemTime(new Date('2026-10-11T12:00:00Z'));
-    expect((await projections()).nodes.map((row: any) => row.scheduled)).toEqual(['2026-10-11', '2026-10-12']);
+    expect((await projections()).totalCount).toBe(7);
     release([0]);
     const result = await pending;
     expect(result.errors).toBeUndefined();
@@ -448,13 +450,16 @@ occurrence: {template: ${target}, original: 2026-10-11}
   });
 
   it('puts recurrence expansion failures into common response completeness', async () => {
-    // Simulate an externally malformed declaration already loaded into a Store.
-    store.getAction(template)!.frontMatter.recurrence![0].rrule = 'FREQ=INVALID';
+    const file = store.getActionFile(template)!;
+    writeFileSync(file, readFileSync(file, 'utf8').replace('FREQ=DAILY', 'FREQ=INVALID'));
+    sourceOwner = sourceLifecycleFixture(store); sourceOwner.refresh(store);
     const result = await query('{ actions { totalCount } }');
     expect(result.extensions.complete).toBe(false);
     expect(result.extensions.diagnostics).toEqual(expect.arrayContaining([
       expect.objectContaining({ code: 'graphql_recurrence_projection', message: expect.stringContaining(template) }),
     ]));
-    expect(new QueryView(store).issues.some(issue => issue.code === 'graphql_recurrence_projection')).toBe(true);
+    const view = new QueryView(store);
+    await view.list('action', {});
+    expect(view.issues.some(issue => issue.code === 'graphql_recurrence_projection')).toBe(true);
   });
 });

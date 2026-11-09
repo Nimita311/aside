@@ -5,20 +5,19 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { checkoutRoot, runPlugin, type RunResult, type PluginContext } from '../src/commands/plugin.js';
 
-describe('committed agent packages', () => {
-  it.each(['graphql', 'legacy'])('ships only the matching %s MCP configuration and skill', surface => {
-    const directory = fileURLToPath(new URL(`../../agent/${surface}/`, import.meta.url));
+describe('committed agent package', () => {
+  it('ships only the GraphQL MCP configuration and skill', () => {
+    const directory = fileURLToPath(new URL('../../agent/graphql/', import.meta.url));
     expect(readdirSync(directory).sort()).toEqual(['.claude-plugin', '.mcp.json', 'skills']);
     const manifest = JSON.parse(readFileSync(join(directory, '.claude-plugin/plugin.json'), 'utf8'));
     const marketplace = JSON.parse(readFileSync(join(directory, '.claude-plugin/marketplace.json'), 'utf8'));
     expect(manifest.skills).toEqual(['./skills/aside']);
     expect(manifest.mcpServers).toBe('./.mcp.json');
     expect(marketplace.plugins).toEqual([expect.objectContaining({ name: manifest.name, source: './' })]);
-    expect(JSON.parse(readFileSync(join(directory, '.mcp.json'), 'utf8')).mcpServers.aside).toEqual({
-      command: 'aside', args: ['mcp', ...(surface === 'legacy' ? ['--legacy'] : [])],
-    });
+    expect(JSON.parse(readFileSync(join(directory, '.mcp.json'), 'utf8')).mcpServers.aside).toEqual({ command: 'aside', args: ['mcp'] });
     expect(readFileSync(join(directory, 'skills/aside/SKILL.md'), 'utf8')).toContain('name: aside');
-    expect(existsSync(join(directory, 'skills/aside/references'))).toBe(surface === 'legacy');
+    expect(existsSync(join(directory, 'skills/aside/references'))).toBe(false);
+    expect(existsSync(fileURLToPath(new URL('../../agent/legacy', import.meta.url)))).toBe(false);
   });
 });
 
@@ -138,19 +137,17 @@ describe('aside plugin', () => {
   beforeEach(() => {
     home = mkdtempSync(join(tmpdir(), 'aside-plugin-home-'));
     root = mkdtempSync(join(tmpdir(), 'aside-plugin-root-'));
-    for (const surface of ['graphql', 'legacy']) {
-      const directory = join(root, 'agent', surface);
-      mkdirSync(join(directory, '.claude-plugin'), { recursive: true });
-      writeFileSync(join(directory, '.claude-plugin', 'marketplace.json'), JSON.stringify({ name: 'aside-marketplace', plugins: [{ name: 'aside', source: './' }] }));
-      mkdirSync(join(directory, 'skills', 'aside'), { recursive: true });
-      writeFileSync(join(directory, 'skills', 'aside', 'SKILL.md'), `---\nname: aside\n---\n${surface}\n`);
-      writeFileSync(join(directory, '.claude-plugin', 'plugin.json'), JSON.stringify({ name: 'aside', version: '0.1.0', skills: ['./skills/aside'], mcpServers: './.mcp.json' }));
-      writeFileSync(join(directory, '.mcp.json'), JSON.stringify({ mcpServers: { aside: { command: 'aside', args: ['mcp', ...(surface === 'legacy' ? ['--legacy'] : [])] } } }));
-    }
+    const directory = join(root, 'agent', 'graphql');
+    mkdirSync(join(directory, '.claude-plugin'), { recursive: true });
+    writeFileSync(join(directory, '.claude-plugin', 'marketplace.json'), JSON.stringify({ name: 'aside-marketplace', plugins: [{ name: 'aside', source: './' }] }));
+    mkdirSync(join(directory, 'skills', 'aside'), { recursive: true });
+    writeFileSync(join(directory, 'skills', 'aside', 'SKILL.md'), '---\nname: aside\n---\ngraphql\n');
+    writeFileSync(join(directory, '.claude-plugin', 'plugin.json'), JSON.stringify({ name: 'aside', version: '0.1.0', skills: ['./skills/aside'], mcpServers: './.mcp.json' }));
+    writeFileSync(join(directory, '.mcp.json'), JSON.stringify({ mcpServers: { aside: { command: 'aside', args: ['mcp'] } } }));
     writeFileSync(join(root, 'agent', 'spec.md'), 'Package-external developer documentation');
     mkdirSync(join(root, 'cli', 'dist'), { recursive: true });
     writeFileSync(join(root, 'cli', 'dist', 'main.js'), 'bundle v1');
-    writeFileSync(join(root, 'cli', 'dist', 'aside-cal'), 'helper');
+    writeFileSync(join(root, 'cli', 'dist', 'aside-native'), 'helper');
     mkdirSync(join(root, 'webapp', 'dist'), { recursive: true });
     writeFileSync(join(root, 'webapp', 'index.html'), '<html>');
     writeFileSync(join(root, 'webapp', 'style.css'), 'body{}');
@@ -168,102 +165,120 @@ describe('aside plugin', () => {
     rmSync(root, { recursive: true, force: true });
   });
 
-  const plugin = (legacy = false) => join(root, 'agent', legacy ? 'legacy' : 'graphql');
+  const plugin = () => join(root, 'agent', 'graphql');
+  // Absent from the checkout: a registration can outlive its package directory.
+  const formerPlugin = () => join(root, 'agent', 'legacy');
   const cache = () => join(home, '.codex', 'plugins', 'cache', 'aside-marketplace', 'aside', '0.1.0');
   const codexId = 'aside@aside-marketplace';
-
-  it.each(['claude', 'codex'])('installs and removes only the legacy package for %s with --legacy', async agent => {
-    await runPlugin(['install', '--agent', agent, '--legacy'], ctx());
-    expect(changes()).toContain(`${agent} plugin marketplace add ${plugin(true)}`);
-    if (agent === 'codex') {
-      expect(JSON.parse(readFileSync(join(cache(), '.mcp.json'), 'utf8')).mcpServers.aside.args).toEqual(['mcp', '--legacy']);
-      expect(readFileSync(join(cache(), 'skills/aside/SKILL.md'), 'utf8')).toContain('legacy');
-      expect(existsSync(join(cache(), 'spec.md'))).toBe(false);
+  const register = (agent: string, directory: string, enabled = true) => {
+    if (agent === 'claude') {
+      agents.marketplaces = [{ name: 'aside-marketplace', path: directory }];
+      agents.plugins = [{ id: pluginId, scope: 'user', enabled }];
+      setEnabled('user', enabled);
+    } else {
+      agents.codexMarketplaces['aside-marketplace'] = directory;
+      agents.codexPlugins = [{ pluginId, enabled }];
     }
-    calls = [];
-    await expect(runPlugin(['remove', '--agent', agent], ctx())).rejects.toThrow(/registered for legacy MCP.*--legacy.*No changes/s);
-    expect(changes()).toEqual([]);
-    await runPlugin(['remove', '--agent', agent, '--legacy'], ctx());
-    expect(changes()).toContain(`${agent} plugin marketplace remove aside-marketplace`);
-  });
+  };
+  const uninstall = (agent: string) => agent === 'claude' ? `claude plugin uninstall ${pluginId} --scope user` : `codex plugin remove ${pluginId}`;
 
-  it.each(['claude', 'codex'])('switches %s between sibling packages without duplicate skills or --force', async agent => {
+  it.each(['claude', 'codex'])('replaces a deleted package of this checkout for %s without duplicate skills or --force', async agent => {
+    expect(existsSync(formerPlugin())).toBe(false);
+    register(agent, formerPlugin());
     await runPlugin(['install', '--agent', agent], ctx());
-    calls = [];
-    await runPlugin(['install', '--agent', agent, '--legacy'], ctx());
-    expect(changes()).toContain(`${agent} plugin marketplace remove aside-marketplace`);
-    expect(changes()).toContain(`${agent} plugin marketplace add ${plugin(true)}`);
-    expect(agent === 'claude' ? agents.plugins : agents.codexPlugins).toHaveLength(1);
-    calls = [];
-    await runPlugin(['install', '--agent', agent], ctx());
-    expect(changes()).toContain(`${agent} plugin marketplace add ${plugin()}`);
+    expect(changes().slice(0, 2)).toEqual([`${agent} plugin marketplace remove aside-marketplace`, `${agent} plugin marketplace add ${plugin()}`]);
+    expect(agent === 'claude' ? agents.marketplaces[0].path : agents.codexMarketplaces['aside-marketplace']).toBe(plugin());
     expect(agent === 'claude' ? agents.plugins : agents.codexPlugins).toHaveLength(1);
     if (agent === 'codex') expect(JSON.parse(readFileSync(join(cache(), '.mcp.json'), 'utf8')).mcpServers.aside.args).toEqual(['mcp']);
+    calls = [];
+    await runPlugin(['install', '--agent', agent], ctx());
+    expect(changes()).toEqual([]);
   });
 
-  it.each(['claude', 'codex'])('checks the registered package mode before removing from another checkout for %s', async agent => {
-    for (const legacy of [false, true]) {
-      const directory = join(home, 'other-checkout', 'agent', legacy ? 'legacy' : 'graphql');
-      cpSync(plugin(legacy), directory, { recursive: true });
-      if (agent === 'claude') {
-        agents.marketplaces = [{ name: 'aside-marketplace', path: directory }];
-        agents.plugins = [{ id: pluginId, scope: 'user', enabled: true }];
-      } else {
-        agents.codexMarketplaces['aside-marketplace'] = directory;
-        agents.codexPlugins = [{ pluginId, enabled: true }];
-      }
+  it.each(['claude', 'codex'])('requires --force to replace a package outside this checkout for %s', async agent => {
+    for (const directory of [join(home, 'other-checkout', 'agent', 'legacy'), join(formerPlugin(), 'nested')]) {
+      register(agent, directory);
       calls = [];
-      await expect(runPlugin(['remove', '--agent', agent, ...(!legacy ? ['--legacy'] : [])], ctx())).rejects.toThrow(/registered for .* MCP.*No changes/s);
+      await expect(runPlugin(['install', '--agent', agent], ctx())).rejects.toThrow(new RegExp(`already points at ${directory}.*--force`, 's'));
       expect(changes()).toEqual([]);
+      await runPlugin(['status'], ctx());
+      expect(lines.join('\n')).toContain(`plugin install --agent ${agent} --force`);
+      lines = [];
+      await runPlugin(['install', '--agent', agent, '--force'], ctx());
+      expect(changes()).toContain(`${agent} plugin marketplace remove aside-marketplace`);
+      expect(changes()).toContain(`${agent} plugin marketplace add ${plugin()}`);
+    }
+  });
 
-      await runPlugin(['remove', '--agent', agent, ...(legacy ? ['--legacy'] : [])], ctx());
-      expect(changes()).toEqual([agent === 'claude'
-        ? `claude plugin uninstall ${pluginId} --scope user`
-        : `codex plugin remove ${pluginId}`]);
+  it.each(['claude', 'codex'])('leaves the marketplace of another checkout when removing for %s', async agent => {
+    for (const available of [true, false]) {
+      const directory = join(home, 'other-checkout', 'agent', available ? 'graphql' : 'legacy');
+      if (available) cpSync(plugin(), directory, { recursive: true });
+      register(agent, directory);
+      calls = [];
+      await runPlugin(['remove', '--agent', agent], ctx());
+      expect(changes()).toEqual([uninstall(agent)]);
       expect(agent === 'claude' ? agents.marketplaces[0].path : agents.codexMarketplaces['aside-marketplace']).toBe(directory);
     }
   });
 
-  it.each(['claude', 'codex'])('does not infer an unavailable foreign package mode from its path for %s', async agent => {
-    const directory = join(home, 'unavailable-checkout', 'agent', 'legacy');
-    if (agent === 'claude') {
-      agents.marketplaces = [{ name: 'aside-marketplace', path: directory }];
-      agents.plugins = [{ id: pluginId, scope: 'user', enabled: true }];
-    } else {
-      agents.codexMarketplaces['aside-marketplace'] = directory;
-      agents.codexPlugins = [{ pluginId, enabled: true }];
-    }
-    await runPlugin(['remove', '--agent', agent], ctx());
-    expect(changes()).toEqual([agent === 'claude'
-      ? `claude plugin uninstall ${pluginId} --scope user`
-      : `codex plugin remove ${pluginId}`]);
-    expect(agent === 'claude' ? agents.marketplaces[0].path : agents.codexMarketplaces['aside-marketplace']).toBe(directory);
+  it('preserves Claude scopes and enabled choices while replacing a deleted package', async () => {
+    const project = join(root, 'project one'); mkdirSync(project);
+    agents.marketplaces = [{ name: 'aside-marketplace', path: formerPlugin() }];
+    agents.plugins = [
+      { id: pluginId, scope: 'user', enabled: false },
+      { id: pluginId, scope: 'project', projectPath: project, enabled: false },
+      { id: pluginId, scope: 'local', projectPath: project, enabled: false },
+    ];
+    setEnabled('user', true); setEnabled('project', false, project); setEnabled('local', false, project);
+    await runPlugin(['install', '--agent', 'claude'], ctx());
+    expect(enabledAt('user')).toBe(true); expect(enabledAt('project', project)).toBe(false); expect(enabledAt('local', project)).toBe(false);
+    expect(agents.plugins.map(p => [p.scope, p.projectPath])).toEqual([['user', undefined], ['project', project], ['local', project]]);
+    expect(agents.marketplaces).toEqual([{ name: 'aside-marketplace', path: plugin() }]);
+    expect(directories.filter(c => c.args[1] === 'install')).toEqual([
+      { args: ['plugin', 'install', pluginId, '--scope', 'user'], cwd: undefined },
+      { args: ['plugin', 'install', pluginId, '--scope', 'project'], cwd: project },
+      { args: ['plugin', 'install', pluginId, '--scope', 'local'], cwd: project },
+    ]);
   });
 
-  it('preserves disabled Claude scope choices while changing to legacy', async () => {
+  it('preserves a disabled Claude plugin while replacing a deleted package', async () => {
+    register('claude', formerPlugin(), false);
     await runPlugin(['install', '--agent', 'claude'], ctx());
-    agents.plugins[0].enabled = false;
-    setEnabled('user', false);
-    await runPlugin(['install', '--agent', 'claude', '--legacy'], ctx());
     expect(enabledAt('user')).toBe(false);
     expect(agents.plugins).toEqual([expect.objectContaining({ id: pluginId, enabled: false })]);
   });
 
-  it('does not enable a disabled Codex plugin to change its surface', async () => {
-    await runPlugin(['install', '--agent', 'codex'], ctx());
-    agents.codexPlugins[0].enabled = false;
-    calls = [];
-    await expect(runPlugin(['install', '--agent', 'codex', '--legacy'], ctx())).rejects.toThrow(/disabled.*no changes/s);
+  it('does not enable a disabled Codex plugin to replace a deleted package', async () => {
+    register('codex', formerPlugin(), false);
+    await expect(runPlugin(['install', '--agent', 'codex'], ctx())).rejects.toThrow(/disabled.*no changes/s);
     expect(changes()).toEqual([]);
-    expect(agents.codexMarketplaces['aside-marketplace']).toBe(plugin());
+    expect(agents.codexMarketplaces['aside-marketplace']).toBe(formerPlugin());
+    expect(agents.codexPlugins).toEqual([{ pluginId, enabled: false }]);
   });
 
-  it('keeps legacy selection in status recovery commands', async () => {
-    await runPlugin(['status', '--legacy'], ctx());
-    expect(lines.join('\n')).toContain('aside plugin install --agent claude --legacy');
-    expect(lines.join('\n')).toContain('aside plugin install --agent codex --legacy');
-    expect(lines.join('\n')).toContain(plugin(true));
+  it.each(['claude', 'codex'])('status recovers a deleted package of this checkout without --force for %s', async agent => {
+    register(agent, formerPlugin());
+    await runPlugin(['status'], ctx());
+    expect(lines.join('\n')).toContain(formerPlugin());
+    expect(lines).toContain(`  Fix: aside plugin install --agent ${agent}`);
+    expect(lines.join('\n')).not.toContain('--force');
     expect(changes()).toEqual([]);
+  });
+
+  it('reports the single package without a selection in text or JSON', async () => {
+    await runPlugin(['status'], ctx());
+    expect(lines.join('\n')).toContain('Expected marketplace');
+    expect(lines.join('\n')).not.toContain('MCP interface');
+    for (const args of [['status'], ['install', '--agent', 'claude']]) {
+      lines = [];
+      await runPlugin([...args, '--json'], ctx());
+      const { data } = JSON.parse(lines.join('\n'));
+      expect(Object.keys(data).sort()).toEqual(['agents', 'checkout', 'events', 'information', 'operations']);
+      const fields = data.information.find((section: { name: string }) => section.name === 'Claude Code').fields;
+      expect(fields['Expected marketplace']).toBe(plugin());
+      expect(fields).not.toHaveProperty('MCP interface');
+    }
   });
 
   it.each(['claude', 'codex'])('migrates the former agent package to GraphQL for %s', async agent => {
@@ -274,20 +289,14 @@ describe('aside plugin', () => {
     expect(changes()).toContain(`${agent} plugin marketplace add ${plugin()}`);
   });
 
-  it.each(['claude', 'codex'])('removes the former GraphQL package and its unused marketplace for %s', async agent => {
-    if (agent === 'claude') {
-      agents.marketplaces = [{ name: 'aside-marketplace', path: join(root, 'agent') }];
-      agents.plugins = [{ id: pluginId, scope: 'user', enabled: true }];
-    } else {
-      agents.codexMarketplaces['aside-marketplace'] = join(root, 'agent');
-      agents.codexPlugins = [{ pluginId, enabled: true }];
+  it.each(['claude', 'codex'])('removes former packages and their unused marketplace for %s', async agent => {
+    for (const directory of [join(root, 'agent'), formerPlugin()]) {
+      register(agent, directory);
+      calls = [];
+      await runPlugin(['remove', '--agent', agent], ctx());
+      expect(changes()).toEqual([uninstall(agent), `${agent} plugin marketplace remove aside-marketplace`]);
+      expect(agent === 'claude' ? agents.marketplaces : Object.keys(agents.codexMarketplaces)).toEqual([]);
     }
-    await expect(runPlugin(['remove', '--agent', agent, '--legacy'], ctx())).rejects.toThrow(/registered for GraphQL MCP.*No changes/s);
-    expect(changes()).toEqual([]);
-    await runPlugin(['remove', '--agent', agent], ctx());
-    expect(changes()).toEqual([agent === 'claude'
-      ? `claude plugin uninstall ${pluginId} --scope user`
-      : `codex plugin remove ${pluginId}`, `${agent} plugin marketplace remove aside-marketplace`]);
   });
 
   it('keeps the former Claude marketplace while another scope uses it', async () => {
@@ -301,7 +310,7 @@ describe('aside plugin', () => {
 
   it.each(['claude', 'codex'])('keeps current and former marketplaces used by another plugin for %s', async agent => {
     const otherId = 'other@aside-marketplace';
-    for (const directory of [plugin(), join(root, 'agent')]) {
+    for (const directory of [plugin(), join(root, 'agent'), formerPlugin()]) {
       if (agent === 'claude') {
         agents.marketplaces = [{ name: 'aside-marketplace', path: directory }];
         agents.plugins = [{ id: pluginId, scope: 'user' }, { id: otherId, scope: 'user', enabled: false }];
@@ -358,9 +367,11 @@ describe('aside plugin', () => {
         installPath: kind === 'cache' || kind === 'skill' ? oldCache : undefined,
         mcpServers: { aside: kind === 'command'
           ? { command: '/usr/bin/node', args: [join(root, 'cli/dist/main.js'), 'mcp'] }
-          : { command: 'aside', args: ['mcp', ...(kind === 'mode' ? ['--legacy'] : [])] } },
+          : { command: 'aside', args: kind === 'mode' ? ['mcp', '--legacy'] : ['mcp'] } },
       }];
       setEnabled('user', false);
+      await runPlugin(['status'], ctx());
+      expect(lines).toContain('[ERROR] Plugin source');
       await runPlugin(['install', '--agent', 'claude'], ctx());
       expect(changes()).toEqual([
         'claude plugin marketplace remove aside-marketplace',
@@ -592,11 +603,11 @@ describe('aside plugin', () => {
   });
 
   describe('codex', () => {
-    it.each(['surface switch', 'former package', 'forced checkout replacement'])('refuses %s when another Codex plugin needs the marketplace', async reason => {
-      const directory = reason === 'surface switch' ? plugin() : reason === 'former package' ? join(root, 'agent') : '/some/other/clone';
+    it.each(['deleted package', 'former package', 'forced checkout replacement'])('refuses %s when another Codex plugin needs the marketplace', async reason => {
+      const directory = reason === 'deleted package' ? formerPlugin() : reason === 'former package' ? join(root, 'agent') : '/some/other/clone';
       agents.codexMarketplaces['aside-marketplace'] = directory;
       agents.codexPlugins = [{ pluginId: codexId, enabled: true }, { pluginId: 'other@aside-marketplace', enabled: false }];
-      const options = reason === 'surface switch' ? ['--legacy'] : reason === 'forced checkout replacement' ? ['--force'] : [];
+      const options = reason === 'forced checkout replacement' ? ['--force'] : [];
       await expect(runPlugin(['install', '--agent', 'codex', ...options], ctx())).rejects.toThrow(/other plugins use it: other@aside-marketplace.*no changes/s);
       expect(changes()).toEqual([]);
       expect(agents.codexMarketplaces['aside-marketplace']).toBe(directory);
@@ -615,6 +626,7 @@ describe('aside plugin', () => {
       expect(lstatSync(join(plugin(), 'skills', 'aside')).isSymbolicLink()).toBe(false);
       expect(readFileSync(join(plugin(), 'skills', 'aside', 'SKILL.md'), 'utf8')).toContain('name: aside');
       expect(readdirSync(cache()).sort()).toEqual(readdirSync(plugin()).sort());
+      expect(existsSync(join(cache(), 'spec.md'))).toBe(false);
       expect(JSON.parse(readFileSync(join(cache(), '.mcp.json'), 'utf8')).mcpServers.aside).toEqual({ command: 'aside', args: ['mcp'] });
       expect(readFileSync(join(cache(), 'skills', 'aside', 'SKILL.md'), 'utf8')).toContain('name: aside');
       const text = lines.join('\n');
@@ -636,7 +648,7 @@ describe('aside plugin', () => {
     it('keeps the installed plugin current after rebuilding runtime artifacts', async () => {
       await runPlugin(['install', '--agent', 'codex'], ctx());
       writeFileSync(join(root, 'cli', 'dist', 'main.js'), 'bundle v2');
-      writeFileSync(join(root, 'cli', 'dist', 'aside-cal'), 'helper v2');
+      writeFileSync(join(root, 'cli', 'dist', 'aside-native'), 'helper v2');
       writeFileSync(join(root, 'webapp', 'dist', 'app.js'), 'app v2');
       calls = [];
       lines = [];
@@ -836,7 +848,7 @@ describe('aside plugin', () => {
     for (const label of ['CLI launcher', 'CLI bundle', 'regex worker', 'webapp bundle']) {
       expect(lines).toContain(`[OK] ${label}`);
     }
-    if (process.platform === 'darwin') expect(lines).toContain('[OK] calendar helper');
+    if (process.platform === 'darwin') expect(lines).toContain('[OK] native helper');
     expect(lines.join('\n').split('\nCLI\n')[1].split('\nClaude Code\n')[0]).not.toContain('[ERROR]');
     const codexReport = lines.join('\n').split('\nCodex\n')[1];
     expect(codexReport).toContain(`[OK] Marketplace`);
@@ -988,12 +1000,12 @@ describe('aside plugin', () => {
   });
 
   it.each([
-    ['install', false, false], ['install', true, false], ['install', false, true],
-    ['remove', false, false], ['remove', true, false], ['remove', false, true],
-    ['status', false, false], ['status', true, false], ['status', false, true],
-  ] as const)('reports recovery for a moved Codex marketplace on %s (legacy=%s, json=%s)', async (operation, legacy, json) => {
+    ['install', 'agent', false], ['install', 'agent/legacy', false], ['install', 'agent', true],
+    ['remove', 'agent', false], ['remove', 'agent/legacy', false], ['remove', 'agent', true],
+    ['status', 'agent', false], ['status', 'agent/legacy', false], ['status', 'agent', true],
+  ] as const)('reports recovery for a moved Codex marketplace on %s (%s, json=%s)', async (operation, directory, json) => {
     const context = ctx(), original = context.runner;
-    const diagnostic = `Error: failed to load marketplace(s):\n- \`aside-marketplace\` at ${join(root, 'agent')}: marketplace root does not contain a supported manifest`;
+    const diagnostic = `Error: failed to load marketplace(s):\n- \`aside-marketplace\` at ${join(root, directory)}: marketplace root does not contain a supported manifest`;
     context.runner = async (command, args, options) => {
       if (command === 'codex' && args.join(' ') === 'plugin marketplace list --json') {
         calls.push([command, ...args]);
@@ -1001,9 +1013,8 @@ describe('aside plugin', () => {
       }
       return original(command, args, options);
     };
-    const result = runPlugin([operation, ...(operation === 'status' ? [] : ['--agent', 'codex']),
-      ...(legacy ? ['--legacy'] : []), ...(json ? ['--json'] : [])], context);
-    const fixes = ['codex plugin marketplace remove aside-marketplace', `aside plugin ${operation === 'remove' ? 'remove' : 'install'} --agent codex${legacy ? ' --legacy' : ''}`];
+    const result = runPlugin([operation, ...(operation === 'status' ? [] : ['--agent', 'codex']), ...(json ? ['--json'] : [])], context);
+    const fixes = ['codex plugin marketplace remove aside-marketplace', `aside plugin ${operation === 'remove' ? 'remove' : 'install'} --agent codex`];
     await expect(result).rejects.toThrow(diagnostic);
     if (json) {
       const report = JSON.parse(lines.join('\n'));
@@ -1049,6 +1060,9 @@ describe('aside plugin', () => {
     await expect(runPlugin(['install', '--agent', 'claude', '--print', '--print'], ctx())).rejects.toThrow(/duplicate option --print/);
     await expect(runPlugin(['remove', '--agent', 'claude', '--force'], ctx())).rejects.toThrow(/unknown option '--force'/);
     await expect(runPlugin(['status', '--agent', 'claude'], ctx())).rejects.toThrow(/unknown option '--agent'/);
+    await expect(runPlugin(['install', '--agent', 'claude', '--legacy'], ctx())).rejects.toThrow(/unknown option '--legacy'/);
+    await expect(runPlugin(['remove', '--agent', 'claude', '--legacy'], ctx())).rejects.toThrow(/unknown option '--legacy'/);
+    await expect(runPlugin(['status', '--legacy'], ctx())).rejects.toThrow(/unknown option '--legacy'/);
     expect(calls).toEqual([]);
   });
 

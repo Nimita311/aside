@@ -1,8 +1,9 @@
+import {sourceFileAccessGuard as access} from './support/source-file-access-guard.js';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { init } from '../src/commands/init.js';
-import { Store } from '../src/mcp/store.js';
+import { init } from '../src/source/bootstrap.js';
+import { Store } from '../src/source/store.js';
 import { handleCapture } from '../src/mcp/tools/capture.js';
 import { createArtifact } from '../src/mcp/tools/artifact.js';
 import { handleUpdateEntry, handleUpdateProject } from '../src/mcp/tools/update.js';
@@ -38,7 +39,7 @@ describe('resolved GraphQL links and project relationships', () => {
     guide = createArtifact(store, {name: 'Guide', description: 'Guide', files: [{source: file}]}, new Date(2026, 9, 2, 12)).id;
     handleUpdateEntry(store, {id: entry, content: `#project/${projectA}\n#action/${action}\n#artifact/${plan}\n[Guide](${artifactHandle(guide, 'notes v2.md')})\n#project/${projectA}`});
   });
-  afterEach(() => { store.close(); rmSync(root, {recursive: true, force: true}); });
+  afterEach(() => { access.reset(); store.close(); rmSync(root, {recursive: true, force: true}); });
 
   it('returns typed direct targets with exact attachment identity and independent page metadata', async () => {
     const result = await query(`{ entry(id: "${entry}") {
@@ -94,6 +95,28 @@ describe('resolved GraphQL links and project relationships', () => {
     expect(data.artifact.projects.nodes.map((node: any) => node.id).sort()).toEqual([projectA, projectB].sort());
     expect(data.entry.artifacts.nodes.map((node: any) => node.id).sort()).toEqual([plan, guide].sort());
     expect(data.project.backlinks.nodes).toEqual([]);
+  });
+
+  it('keeps attachment metadata and references on the owner generation until reconciliation', async () => {
+    const file = join(root, `artifacts/2026/${guide}/notes v2.md`);
+    const document = `{
+      artifact(id: "${guide}") {
+        content { ... on Attachment { filename filePath } }
+        attachments { filename filePath backlinks { totalCount } }
+      }
+      entry(id: "${entry}") { attachmentLinks { totalCount nodes { filename filePath } } }
+    }`;
+    rmSync(file); access.protect([root]);
+    const result = await query(document);
+    expect(result.data).toEqual({artifact: {
+      content: {filename: 'notes v2.md', filePath: file},
+      attachments: [{filename: 'notes v2.md', filePath: file, backlinks: {totalCount: 1}}],
+    }, entry: {attachmentLinks: {totalCount: 1, nodes: [{filename: 'notes v2.md', filePath: file}]}}});
+    expect(access.violations).toEqual([]);
+    access.reset(); store.rebuild(); access.protect([root]);
+    const updated = await query(document);
+    expect(updated.data).toEqual({artifact: {content: null, attachments: []}, entry: {attachmentLinks: {totalCount: 0, nodes: []}}});
+    expect(access.violations).toEqual([]);
   });
 
   it('omits missing targets before count and exposes source-file diagnostics and validation', async () => {

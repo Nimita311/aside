@@ -7,12 +7,13 @@ import { RunStorage, type RunRecord } from '../src/automation/storage.js';
 const workers = vi.hoisted(() => [] as Array<{
   emit(event: string, message: unknown): boolean;
   messages: Array<{ type: string; id?: number }>;
+  options: { workerData: { storage: string; nativeBinary?: string; wakeBinary?: string } };
 }>);
 vi.mock('node:worker_threads', async () => {
   const { EventEmitter } = await import('node:events');
   return { Worker: class extends EventEmitter {
     messages: Array<{ type: string; id?: number }> = [];
-    constructor() { super(); workers.push(this); }
+    constructor(_url: URL, readonly options: { workerData: { storage: string; nativeBinary?: string; wakeBinary?: string } }) { super(); workers.push(this); }
     postMessage(message: { type: string; id?: number }) {
       this.messages.push(message);
       if (message.type === 'close') this.emit('message', { type: 'closed' });
@@ -23,8 +24,28 @@ vi.mock('node:worker_threads', async () => {
 import { AutomationController } from '../src/automation/controller.js';
 
 let controller: AutomationController | undefined;
-afterEach(async () => { await controller?.close(); controller = undefined; workers.length = 0; });
+afterEach(async () => { await controller?.close(); controller = undefined; workers.length = 0; vi.unstubAllEnvs(); });
 describe('automation worker diagnostics', () => {
+  it('passes the unified native executable into the scheduling worker', () => {
+    vi.stubEnv('ASIDE_NATIVE_BIN', '/fixtures/aside-native');
+    controller = new AutomationController('/tmp/aside-controller-test');
+    controller.replace('/tmp/one', [{ key: 'one', root: '/tmp/one', instance: 'one', definedIn: 'instance one', declaration: {} }]);
+    expect(workers[0].options.workerData).toEqual({ storage: '/tmp/aside-controller-test', nativeBinary: '/fixtures/aside-native' });
+  });
+
+  it('delivers a changed execution generation when authored declarations are unchanged', () => {
+    controller = new AutomationController('/tmp/aside-controller-test');
+    const root = '/fixtures/instance', source = {key: 'job', root, instance: 'work', definedIn: 'instance work', declaration: {}};
+    const first = {config: {}, cwd: root, revision: 'first'};
+    controller.replace(root, [{...source, executionContext: first}]);
+    controller.replace(root, [{...source, executionContext: structuredClone(first)}]);
+    expect(workers[0].messages.filter(message => message.type === 'replace')).toHaveLength(1);
+    const next = {config: {cwd: 'next'}, cwd: root + '/next', revision: 'next'};
+    controller.replace(root, [{...source, executionContext: next}]);
+    expect(workers[0].messages.filter(message => message.type === 'replace')).toHaveLength(2);
+    expect(workers[0].messages.at(-1)).toMatchObject({sources: [{executionContext: next}]});
+  });
+
   it('surfaces wake-helper warnings for instances with jobs and clears resolved warnings', async () => {
     controller = new AutomationController('/tmp/aside-controller-test');
     controller.replace('/tmp/one', [{ key: 'one', root: '/tmp/one', instance: 'one', definedIn: 'instance one', declaration: {} }]);

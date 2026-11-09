@@ -21,13 +21,22 @@ describe('production pill specimens', () => {
     expect(specimen(root, 'reference-instance').querySelector('.entity-title .icon-instance')).not.toBeNull();
     expect(specimen(root, 'reference-instance').querySelector('.entity-title')?.closest('.rendered-content')).toBeNull();
     expect(specimen(root, 'reference-instance').querySelector('.entity-title-label')?.textContent).toBe('Studio');
-    expect(specimen(root, 'reference-date').querySelector('.inline-tag-date')).not.toBeNull();
+    const iconStates = (row: HTMLElement, selector: string) => [...row.querySelectorAll(selector)].map(chip => chip.querySelector<SVGElement>(':scope > svg.entity-icon')?.dataset.state);
+    expect(iconStates(specimen(root, 'reference-date'), '.inline-tag-date')).toEqual(['day', 'range', 'time']);
+    const locations = specimen(root, 'reference-location');
+    expect(iconStates(locations, '.inline-tag-location')).toEqual(['geo', 'geo', 'postal']);
+    expect(locations.querySelector('.inline-tag-location.is-unresolved')?.tagName).toBe('SPAN');
     for (const chip of root.querySelectorAll<HTMLElement>('[aria-describedby]')) {
       for (const id of chip.getAttribute('aria-describedby')!.split(' ')) {
         expect(root.querySelector(`#${id}`)?.textContent?.trim()).toBeTruthy();
       }
     }
-    for (const anchor of root.querySelectorAll('a[href]')) {
+    for (const anchor of root.querySelectorAll<HTMLAnchorElement>('a[href]')) {
+      if (anchor.classList.contains('inline-tag-location')) {
+        expect(new URL(anchor.href).origin).toBe('https://maps.apple.com');
+        expect(anchor.target).toBe('_blank');
+        continue;
+      }
       expect(anchor.getAttribute('href')).toBe('#pills');
       const click = new MouseEvent('click', { bubbles: true, cancelable: true });
       anchor.dispatchEvent(click); expect(click.defaultPrevented).toBe(true);
@@ -44,6 +53,15 @@ describe('production pill specimens', () => {
       'action-overdue-backlog': ['overdue', 'backlog'], 'action-due-slipped': ['due', 'slipped'],
       'action-overdue-slipped': ['overdue', 'slipped'],
     };
+    // The icon carries the lifecycle; a deadline rides the pill's ring instead.
+    const icons: Record<string, string> = {
+      'project-open': 'live', 'project-ended': 'ended',
+      'action-scheduled': 'scheduled', 'action-backlog': 'backlog', 'action-slipped': 'slipped',
+      'action-due': 'scheduled', 'action-overdue': 'scheduled', 'action-done': 'done',
+      'action-cancelled': 'cancelled', 'action-due-backlog': 'backlog',
+      'action-overdue-backlog': 'backlog', 'action-due-slipped': 'slipped',
+      'action-overdue-slipped': 'slipped',
+    };
     for (const [name, marks] of Object.entries(expected)) {
       const row = specimen(root, name);
       const chip = row.querySelector<HTMLElement>('a.tag')!;
@@ -51,9 +69,11 @@ describe('production pill specimens', () => {
         .toEqual(marks.map(mark => `tag-status-${mark}`).sort());
       expect(row.querySelector('.status-pills .status-pill:not([hidden])'), name).not.toBeNull();
       expect(row.querySelector('.status-pills')?.closest('.rendered-content'), name).toBeNull();
-      if (marks.includes('backlog') || marks.includes('slipped')) expect(chip.querySelector('.ref-status svg')).not.toBeNull();
+      expect(chip.querySelectorAll('svg.entity-icon'), name).toHaveLength(1);
+      expect(chip.querySelector<SVGElement>('svg.entity-icon')?.dataset.state, name).toBe(icons[name]);
     }
     expect(specimen(root, 'recurrence-template').querySelector('.status-pills')?.textContent).toContain('Recurrence template');
+    expect(specimen(root, 'recurrence-template').querySelector<SVGElement>('a.tag svg.entity-icon')?.dataset.state).toBe('recurring');
     expect(specimen(root, 'recurrence-projected').querySelector('a.tag .pill')?.textContent).toBe('Projected');
     expect(specimen(root, 'recurrence-projected').querySelector('.status-pills')?.textContent).toContain('Projected');
     expect(specimen(root, 'calendar-exception').querySelector('.status-pill.pill-exception .tag-text')?.textContent).toBe('No calendar');

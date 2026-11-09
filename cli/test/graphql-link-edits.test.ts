@@ -1,20 +1,21 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { init } from '../src/commands/init.js';
-import { Store } from '../src/mcp/store.js';
+import { init } from '../src/source/bootstrap.js';
+import { Store } from '../src/source/store.js';
 import { handleCapture } from '../src/mcp/tools/capture.js';
 import { handleUpdateEntry, handleUpdateProject } from '../src/mcp/tools/update.js';
 import { InstanceHost } from '../src/daemon/host.js';
 import { CalClient } from '../src/mcp/calendar/client.js';
 import * as models from '../src/automation/models.js';
+import {hostGraphQL} from './support/graphql-host.js';
 
 let dir: string, store: Store, host: InstanceHost, entry: string, projects: string[], actions: string[];
 async function graph(field: string, input: unknown) {
   const type = field === 'updateEntry' ? 'UpdateEntryInput' : 'UpdateProjectInput';
   const id = field === 'updateEntry' ? entry : projects[0];
   const selection = field === 'updateEntry' ? 'entry { projects(limit: 100) { nodes { id } } actions(limit: 100) { nodes { id } } content } createdProjects { id } createdActions { id }' : 'project { relatedProjects { nodes { project { id } outgoingDescription } } body }';
-  return JSON.parse((await host.tool(dir, 'mutate', {document: `mutation($input: ${type}!) { ${field}(id: "${id}", input: $input) { ${selection} } }`, variables: {input}})).text);
+  return JSON.parse((await hostGraphQL(host, dir, 'mutate', {document: `mutation($input: ${type}!) { ${field}(id: "${id}", input: $input) { ${selection} } }`, variables: {input}})).text);
 }
 const ids = (page: {nodes: {id: string}[]}) => page.nodes.map(node => node.id).sort();
 const relationships = (project: {relatedProjects: {nodes: {project: {id: string}; outgoingDescription: string | null}[]}}) => project.relatedProjects.nodes
@@ -99,12 +100,12 @@ describe('GraphQL collection patches', () => {
   });
 
   it('rejects removed raw ID arrays while preserving resolved relationship IDs', async () => {
-    const result = JSON.parse((await host.tool(dir, 'query', {document: `query { entry(id: "${entry}") { projectIds actionIds } }`})).text);
+    const result = JSON.parse((await hostGraphQL(host, dir, 'query', {document: `query { entry(id: "${entry}") { projectIds actionIds } }`})).text);
     expect(result.errors.map((error: {message: string}) => error.message)).toEqual(expect.arrayContaining([
       expect.stringContaining('Cannot query field "projectIds"'),
       expect.stringContaining('Cannot query field "actionIds"'),
     ]));
-    const valid = JSON.parse((await host.tool(dir, 'query', {document: `query { entry(id: "${entry}") { projects { nodes { id } } actions { nodes { id } } } }`})).text);
+    const valid = JSON.parse((await hostGraphQL(host, dir, 'query', {document: `query { entry(id: "${entry}") { projects { nodes { id } } actions { nodes { id } } } }`})).text);
     expect(valid.errors).toBeUndefined();
     expect(ids(valid.data.entry.projects)).toEqual([...projects].sort());
     expect(ids(valid.data.entry.actions)).toEqual([...actions].sort());
@@ -136,7 +137,7 @@ describe('GraphQL collection patches', () => {
     {projects: {remove: ['same', 'same']}},
   ])('rejects collection conflicts before earlier mutation fields run (%j)', async input => {
     const original = readFileSync(join(dir, 'aside.md'), 'utf8');
-    const result = JSON.parse((await host.tool(dir, 'mutate', {document: `mutation($input: UpdateEntryInput!) { first: updateInstance(input: {body: "Must not save"}) { error } second: updateEntry(id: "${entry}", input: $input) { error } }`, variables: {input}})).text);
+    const result = JSON.parse((await hostGraphQL(host, dir, 'mutate', {document: `mutation($input: UpdateEntryInput!) { first: updateInstance(input: {body: "Must not save"}) { error } second: updateEntry(id: "${entry}", input: $input) { error } }`, variables: {input}})).text);
     expect(result.errors).toBeDefined(); expect(result.extensions.mutations).toEqual([]);
     expect(readFileSync(join(dir, 'aside.md'), 'utf8')).toBe(original);
   });

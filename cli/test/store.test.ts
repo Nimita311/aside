@@ -2,7 +2,7 @@ import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach, vi } 
 import { mkdirSync, writeFileSync, rmSync, chmodSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { Store } from '../src/mcp/store.js';
+import { Store } from '../src/source/store.js';
 
 describe('Store', () => {
   let tempDir: string;
@@ -211,14 +211,14 @@ Body.
 
     it('derives projects for an action from entry co-occurrence', () => {
       // Entry 1 has my-action + my-project
-      const projects = store.getProjectsForAction('my-action');
+      const projects = [...(store.getRelations().projectsByAction.get('my-action') ?? [])];
       expect(projects).toContain('my-project');
       expect(projects).toHaveLength(1);
     });
 
     it('derives multiple projects for an action', () => {
       // Entry 2 has other-action + my-project + other-project
-      const projects = store.getProjectsForAction('other-action');
+      const projects = [...(store.getRelations().projectsByAction.get('other-action') ?? [])];
       expect(projects).toContain('my-project');
       expect(projects).toContain('other-project');
       expect(projects).toHaveLength(2);
@@ -229,7 +229,7 @@ Body.
     });
 
     it('returns empty array for action with no projects', () => {
-      expect(store.getProjectsForAction('nonexistent')).toEqual([]);
+      expect([...(store.getRelations().projectsByAction.get('nonexistent') ?? [])]).toEqual([]);
     });
   });
 
@@ -378,7 +378,7 @@ describe('Store synchronous updates', () => {
     store.saveEntry('2026-05-06T09:00', ['proj'], [], 'second', file, weekly('2026-05-06T09:00', 'second', ['proj']));
     expect(store.getEntries().map(e => e.meta.created)).toEqual(['2026-05-06T09:00', '2026-05-05T09:00']);
     expect(store.getActionsForProject('proj')).toEqual(['act']);
-    expect(store.getProjectsForAction('act')).toEqual(['proj']);
+    expect([...(store.getRelations().projectsByAction.get('act') ?? [])]).toEqual(['proj']);
   });
 
   it('re-derives relationships when an entry is amended', () => {

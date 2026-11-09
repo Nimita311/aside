@@ -20,13 +20,22 @@ describe('InstanceRegistry', () => {
     expect(r.others()).toEqual([a, b]);
   });
 
-  it('collects deleted, repurposed, and unreadable candidates before every listing and clears invalid selection', () => {
+  it('keeps selection and catalogue reads in memory until the owner reconciles eligibility', () => {
     const r = new InstanceRegistry([a, b, c]); r.activate(b);
     rmSync(b, { recursive: true }); writeFileSync(join(c, 'aside.md'), 'Repurposed directory');
+    const state = r.selection();
+    expect(state.active).toBe(b);
+    expect(r.all()).toEqual([a, b, c]);
+    expect(r.catalogue([b, c])).toHaveLength(3);
+    const restored = new InstanceRegistry(); restored.restore(state);
+    expect(restored.selection()).toEqual(state);
+    r.reconcile([a]);
     expect(r.all()).toEqual([a]); expect(r.activeInstance).toBeNull(); expect(r.others()).toEqual([a]);
-    expect(r.catalogue([b, c])).toEqual([{ path: a, workspace: true, active: false }]);
+    expect(r.catalogue([])).toEqual([{ path: a, workspace: true, active: false }]);
     rmSync(join(a, 'aside.md')); mkdirSync(join(a, 'aside.md'));
-    expect(r.all()).toEqual([]); expect(r.catalogue([a])).toEqual([]);
+    expect(r.all()).toEqual([a]);
+    r.reconcile([]);
+    expect(r.all()).toEqual([]); expect(r.catalogue([])).toEqual([]);
   });
 
   it('starts empty with no discovery', () => {
@@ -51,11 +60,11 @@ describe('InstanceRegistry', () => {
     expect(r.others()).toEqual([a]);
   });
 
-  it('accumulates every instance selected via select_instance across the session', () => {
+  it('accumulates every instance selected via selectInstance across the session', () => {
     const r = new InstanceRegistry([a, b]);
     r.activate(a); // startup
-    r.activate(c); // select_instance to a fresh instance
-    r.activate(b); // select_instance to a discovered instance
+    r.activate(c); // selectInstance to a fresh instance
+    r.activate(b); // selectInstance to a discovered instance
     expect(r.activeInstance).toBe(b);
     expect(r.all()).toEqual([a, b, c]);
     expect(r.others()).toEqual([a, c]);

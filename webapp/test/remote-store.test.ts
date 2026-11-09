@@ -17,6 +17,49 @@ function fixture() {
 const hot = { weeks: [], entities: [], assets: [] };
 
 describe('daemon presentation cache', () => {
+  it('serializes explicit checks behind background work and continues after a failed check', async () => {
+    const { source, update } = fixture();
+    const store = new RemoteStore(source); await store.init();
+    let reject!: (error: Error) => void;
+    vi.mocked(source.snapshot).mockImplementationOnce(() => new Promise((_, fail) => { reject = fail; }));
+    const background = store.check('light', hot);
+    const failed = expect(background).rejects.toThrow('Old background failure');
+    update(snapshotFixture('work', 'Current after queued refresh'));
+    const explicit = store.check('full', hot, ['aside.md']);
+    expect(source.snapshot).toHaveBeenCalledTimes(2);
+    reject(new Error('Old background failure')); await failed;
+    const staged = await explicit;
+    expect(staged).not.toBeNull(); staged!.apply();
+    expect(store.getCachedEntryContents().get('2026-10-04T10:00')).toBe('Current after queued refresh');
+    expect(source.snapshot).toHaveBeenCalledTimes(3);
+  });
+
+  it.each([undefined, {}, { doneEventTitlePrefix: 'Done ' }])('installs sidebar-only changes without invalidating reading content (previous config=%j)', async config => {
+    const { source, update } = fixture();
+    const initial = snapshotFixture(); initial.instance!.manifest.config = config;
+    update(initial);
+    const store = new RemoteStore(source); await store.init();
+    const next = structuredClone(initial);
+    next.instance!.manifest.config = { ...config, webapp: { sidebar: [{ items: [{ timeline: 'calmer' }] }] } };
+    update(next);
+    const staged = await store.check('full', hot, ['aside.md']);
+    expect(staged).not.toBeNull();
+    expect(staged!.summary).toEqual({ indexesChanged: false, weeks: new Set(), entities: new Set(), assets: new Set() });
+    staged!.apply();
+    expect(store.getInstance()!.manifest.config?.webapp?.sidebar).toEqual([{ items: [{ timeline: 'calmer' }] }]);
+  });
+
+  it.each(['body', 'name'] as const)('still invalidates reading content when instance %s changes alongside the sidebar', async field => {
+    const { source, update } = fixture();
+    const store = new RemoteStore(source); await store.init();
+    const next = snapshotFixture();
+    next.instance!.manifest.config = { webapp: { sidebar: [] } };
+    if (field === 'body') next.instance!.body = 'New instance understanding.';
+    else next.instance!.manifest.name = 'New instance name';
+    update(next);
+    expect((await store.check('full', hot))!.summary.indexesChanged).toBe(true);
+  });
+
   it('stages complete snapshots and applies records, graph, search and diagnostics together', async () => {
     const { source, update } = fixture();
     const store = new RemoteStore(source); await store.init();

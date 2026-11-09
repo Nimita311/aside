@@ -67,6 +67,82 @@ describe('view route round-trip', () => {
     expect(parseRoute('')).toEqual(flow);
   });
 
+  it('round-trips literal flow search with filters, readers, jumps, and dates', () => {
+    const states: ViewState[] = [
+      flow,
+      { filter: { type: 'project', id: '2026-05-02-migration' }, doc: null },
+      { filter: { type: 'action', id: '2026-05-02-deploy-db' }, doc: { kind: 'detail' } },
+      { filter: null, doc: { kind: 'artifact', id: '2026-10-02-report', filename: 'questions?.md' } },
+      { filter: null, doc: { kind: 'asset', path: 'assets/questions?.md' } },
+      { filter: null, doc: null, jump: '2026-05-22T15:30' },
+      { filter: null, doc: null, date: { start: '2026-05-22' } },
+    ];
+    for (const base of states) {
+      const state = { ...base, search: 'C++ & café / 项目? #1 = 100%' };
+      const route = buildRoute(state);
+      expect(route).toContain('?search=');
+      expect(parseRoute(route)).toEqual(state);
+      const location = readInstanceLocation(instanceUrl('work', route));
+      expect(location.instanceId).toBe('work');
+      expect(parseRoute(location.route)).toEqual(state);
+    }
+  });
+
+  it('keeps a single-entry detail independent of flow search', () => {
+    const view: ViewState = { filter: { type: 'entry', id: '2026-05-22T15:30' }, doc: null };
+    expect(buildRoute({ ...view, search: 'another entry' })).toBe(buildRoute(view));
+    expect(parseRoute(`${buildRoute(view)}?search=another+entry`)).toEqual(view);
+  });
+
+  it('round-trips an entry source through browsing and document return contexts', () => {
+    const source = '#artifact/2026-10-18-决策/queries.json';
+    const states: ViewState[] = [
+      flow,
+      { filter: { type: 'project', id: '2026-05-02-migration' }, doc: null },
+      { filter: { type: 'action', id: '2026-05-02-deploy-db' }, doc: { kind: 'detail' } },
+      { filter: null, doc: { kind: 'detail' } },
+      { filter: null, doc: { kind: 'artifact', id: '2026-10-02-report', filename: 'questions?.md' } },
+      { filter: null, doc: { kind: 'asset', path: 'assets/questions?.md' } },
+      { filter: null, doc: null, jump: '2026-05-22T15:30' },
+      { filter: null, doc: null, date: { start: '2026-05-22' } },
+    ];
+    for (const base of states) {
+      const state = { ...base, source, search: 'launch & review' };
+      const route = buildRoute(state);
+      expect(parseRoute(route)).toEqual(state);
+      expect(new URLSearchParams(route.slice(route.indexOf('?') + 1)).get('source')).toBe(source);
+      expect(parseRoute(readInstanceLocation(instanceUrl('work', route)).route)).toEqual(state);
+    }
+    const entry = { filter: { type: 'entry' as const, id: '2026-05-22T15:30' }, doc: null, source };
+    expect(parseRoute(buildRoute({ ...entry, search: 'excluded text' }))).toEqual(entry);
+  });
+
+  it('retains unknown valid source identities and canonicalizes their query parameters', () => {
+    const source = '#artifact/2026-10-18-not-installed/arbitrary.json';
+    const state = { ...flow, source, search: 'review' };
+    expect(parseRoute(`?search=review&source=${encodeURIComponent(source)}&mockSession=preview`)).toEqual(state);
+    expect(buildRoute(state)).toBe(`?source=${encodeURIComponent(source)}&search=review`);
+    expect(buildRoute({ ...state, source: undefined })).toBe('?search=review');
+    expect(buildRoute({ ...state, search: '' })).toBe(`?source=${encodeURIComponent(source)}`);
+  });
+
+  it('rejects malformed entry-source identities without losing other valid browsing layers', () => {
+    for (const source of ['', 'not-an-artifact', '2026-02-30-invalid', '../2026-10-18-unsafe', 'https://example.com']) {
+      expect(parseRoute(`project/aurora?source=${encodeURIComponent(source)}&search=review`)).toEqual({
+        filter: { type: 'project', id: 'aurora' }, doc: null, search: 'review',
+      });
+      expect(() => buildRoute({ ...flow, source })).toThrow();
+    }
+  });
+
+  it('normalizes outer search whitespace and ignores unrelated query parameters', () => {
+    expect(buildRoute({ ...flow, search: '  launch  review  ' })).toBe('?search=launch++review');
+    expect(parseRoute('?search=++launch++review++&other=kept-out')).toEqual({ ...flow, search: 'launch  review' });
+    expect(parseRoute('project/aurora?search=literal%2Bterm&other=value')).toEqual({ filter: { type: 'project', id: 'aurora' }, doc: null, search: 'literal+term' });
+    for (const search of ['', '   ', '\t\n']) expect(buildRoute({ ...flow, search })).toBe('');
+    for (const query of ['?search=', '?search=+++', '?other=value']) expect(parseRoute(query)).toEqual(flow);
+  });
+
   it('round-trips the entry jump as a bare entry-id route', () => {
     const id = '2026-05-22T15:30';
     const route = buildRoute({ filter: null, doc: null, jump: id });
@@ -141,6 +217,11 @@ describe('instance locations', () => {
     expect(readInstanceLocation('/work')).toEqual({ instanceId: 'work', route: '' });
   });
 
+  it('retains a flow query without requiring a trailing instance slash', () => {
+    expect(readInstanceLocation('/work?search=hello%2Bworld')).toEqual({ instanceId: 'work', route: '?search=hello%2Bworld' });
+    expect(readInstanceLocation('/work/?search=hello%2Bworld')).toEqual({ instanceId: 'work', route: '?search=hello%2Bworld' });
+  });
+
   it('round-trips view state independently for each instance, including system-like IDs', () => {
     for (const id of ['work', 'personal', 'api', 'assets', 'project']) {
       const view: ViewState = { filter: { type: 'action', id: '2026-10-04-项目' }, doc: { kind: 'detail' } };
@@ -148,5 +229,20 @@ describe('instance locations', () => {
       expect(location.instanceId).toBe(id);
       expect(parseRoute(location.route)).toEqual(view);
     }
+  });
+});
+
+
+describe('timeline range and ordering state', () => {
+  it('round-trips independent range/order with query, focus and search', () => {
+    const view: ViewState = { filter: { type: 'action', id: '2026-10-04-review' }, doc: null,
+      source: '#artifact/2026-10-04-review/arbitrary.json', search: 'calmer',
+      range: { start: '2026-10-01', end: '2026-10-30' }, order: 'CREATED_ASC' };
+    expect(parseRoute(buildRoute(view))).toEqual(view);
+    expect(parseRoute(buildRoute({ ...view, source: undefined }))).toEqual({ ...view, source: undefined });
+  });
+  it('ignores invalid authored URL ranges/orders and validates generated ranges', () => {
+    expect(parseRoute('?range=%23date%2F2026-02-30%2F2026-03-01&order=DEADLINE_ASC')).toEqual(flow);
+    expect(() => buildRoute({ ...flow, range: { start: '2026-10-30', end: '2026-10-01' } })).toThrow('Invalid date range');
   });
 });

@@ -5,6 +5,17 @@ name: Aurora Studio
 description: A fictional launch workspace with every page, content treatment, and preview ready to explore.
 config:
   recurrenceLookaheadDays: 21
+  webapp:
+    sidebar:
+      - items:
+          - label: Recent decisions
+            timeline: "#artifact/2026-10-12-recent-decisions/decisions.json"
+      - title: Launch
+        items:
+          - entity: "#project/2026-10-12-aurora"
+          - entity: "#action/2026-10-12-review"
+          - label: Release dashboard
+            entity: "#artifact/2026-10-12-dashboard/index.html"
 ---
 
 # Room for a bright idea

@@ -2,7 +2,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { Store } from '../lib/store';
 import type { DataSource, FileRead } from '../lib/io';
-import { documentFilePath } from '../src/document-path';
+import { documentFilePath, documentIsHtml } from '../src/document-path';
 import { fileDiagnosticNotice } from '../src/diagnostics';
 const WEEK = 'notes/2026/2026-05-18.md';
 const good = '---\nweek: 21\nweek_start: 2026-05-18\nweek_end: 2026-05-24\n---\n\n---\n```entry\ncreated: 2026-05-22T15:30\n```\nRecovered content';
@@ -22,6 +22,19 @@ describe('retained parser diagnostics', () => {
     expect(documentFilePath({ kind: 'detail' }, { type: 'action', id: '~2026-05-22-repeat@2027-01-01' })).toBe('actions/2026/2026-05-22-repeat.md');
     expect(documentFilePath({ kind: 'artifact', id: '2026-05-22-report' }, null)).toBe('artifacts/2026/2026-05-22-report.md');
     expect(documentFilePath({ kind: 'asset', path: 'assets/notes.md' }, null)).toBe('assets/notes.md');
+  });
+  it('recognizes full-page HTML before loading while honoring implicit artifact content', () => {
+    const artifact = { frontMatter: { name: 'Report', created: '2026-05-22', attachments: ['index.HTML'] }, body: '' };
+    expect(documentIsHtml({ kind: 'asset', path: 'assets/index.htm' })).toBe(true);
+    expect(documentIsHtml({ kind: 'artifact', id: '2026-05-22-report', filename: 'dashboard.HTML' })).toBe(true);
+    expect(documentIsHtml({ kind: 'artifact', id: '2026-05-22-report' }, artifact)).toBe(true);
+    expect(documentIsHtml({ kind: 'artifact', id: '2026-05-22-report' }, { ...artifact, body: 'A Markdown report.' })).toBe(false);
+    expect(documentIsHtml({ kind: 'artifact', id: '2026-05-22-report' }, {
+      ...artifact, frontMatter: { ...artifact.frontMatter, attachments: ['index.HTML', 'notes.md'] },
+    })).toBe(false);
+    expect(documentIsHtml({ kind: 'artifact', id: '2026-05-22-report', filename: 'notes.md' }, artifact)).toBe(false);
+    expect(documentIsHtml({ kind: 'detail' }, artifact)).toBe(false);
+    expect(documentIsHtml(null)).toBe(false);
   });
   it('does not report an obsolete read failure after a newer check installed the record', async () => {
     const path = 'projects/2026/2026-05-22-work.md';

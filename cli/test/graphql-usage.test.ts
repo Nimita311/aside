@@ -1,20 +1,28 @@
-import {afterEach, describe, expect, it} from 'vitest';
+import {afterEach, describe, expect, it, vi} from 'vitest';
+import {lifecycleOperationsFixture} from './lifecycle-operations-fixture.js';
 import {appendFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync} from 'node:fs';
 import {join} from 'node:path';
 import {execFileSync} from 'node:child_process';
 import {parse} from 'graphql';
 import {GraphQLUsageLog, queryShape, usageDirectory, usageBaseDirectory, legacyUsageDirectory, type UsageEvent} from '../src/graphql/usage.js';
-import {executeGraphQL} from '../src/graphql/schema.js';
-import {Store} from '../src/mcp/store.js';
+import {executeGraphQLWithOwner as executeGraphQL} from './graphql-owner-fixture.js';
+import {Store} from '../src/source/store.js';
 import {InstanceSession} from '../src/mcp/instance-session.js';
 import {InstanceRegistry} from '../src/mcp/instance-registry.js';
 import {handleCapture} from '../src/mcp/tools/capture.js';
 import {handleUpdateInstance} from '../src/mcp/tools/instance.js';
-import {recordMutationChange, MutationWriteError} from '../src/mcp/tools/mutation-result.js';
+import {recordMutationChange, MutationWriteError} from '../src/source/mutation-result.js';
 import {summarizeUsage, runUsage} from '../src/commands/usage.js';
 import {parseCli} from '../src/commands/options.js';
-import {InstanceHost} from '../src/daemon/host.js';
+import {InstanceHost, instanceKey} from '../src/daemon/host.js';
 import {CalClient} from '../src/mcp/calendar/client.js';
+import {lifecycleMetadataFixture} from './lifecycle-metadata-fixture.js';
+import {hostGraphQL} from './support/graphql-host.js';
+
+vi.mock('node:fs', async importOriginal => {
+  const actual = await importOriginal<typeof import('node:fs')>();
+  return {...actual, realpathSync: vi.fn(actual.realpathSync)};
+});
 
 const roots: string[] = [], stores: Store[] = [], writers: GraphQLUsageLog[] = [];
 function fixture() {
@@ -41,16 +49,39 @@ afterEach(async () => {
     rmSync(usageDirectory(root), {recursive: true, force: true});
     rmSync(root, {recursive: true, force: true});
   });
+  vi.restoreAllMocks();
 });
 
 describe('per-instance GraphQL usage', () => {
+  it('keeps the captured request identity when the manifest changes before the log is appended', async () => {
+    const root = fixture(), usageLog = logger();
+    const request = usageLog.start('query');
+    request.touch(root, 'published-identity');
+    writeFileSync(join(root, 'aside.md'), '---\nid: unpublished-identity\n---\n');
+    request.finish({data: {entries: {count: 0}}}, root, false);
+    await usageLog.flush();
+    expect(JSON.parse(readFileSync(join(usageDirectory(root), 'instance.json'), 'utf8'))).toEqual({schemaVersion: 1, path: root, id: 'published-identity'});
+    expect(usageLog.status()).toMatchObject({dropped: 0, errors: 0});
+  });
+
+  it('appends captured usage without requiring a source manifest to remain readable', async () => {
+    const root = fixture(), usageLog = logger();
+    usageLog.record(root, event(), 'published-identity');
+    rmSync(join(root, 'aside.md'));
+    await usageLog.flush();
+    expect(events(root)).toHaveLength(1);
+    expect(JSON.parse(readFileSync(join(usageDirectory(root), 'instance.json'), 'utf8'))).toMatchObject({id: 'published-identity'});
+    expect(usageLog.status()).toMatchObject({dropped: 0, errors: 0});
+  });
+
   it('attributes showUrl without retaining its private file URL', async () => {
     const root = fixture(), usageLog = logger();
+    const metadata = lifecycleMetadataFixture(root);
     const registry = new InstanceRegistry([root]); registry.activate(root);
-    const instances = new InstanceSession(registry, {knownInstances: async () => [root], issues: async () => []});
+    const instances = new InstanceSession(registry, lifecycleOperationsFixture({knownInstances: async () => [root], issues: async () => [], instanceRecord: metadata.instanceRecord}));
     const privateUrl = 'file:///private/aside-handoff-do-not-log.html';
     const result = await executeGraphQL(() => { throw new Error('No records needed'); }, 'mutation',
-      {document: 'mutation { showUrl }'}, {instances, usageLog, showUrl: async () => privateUrl});
+      {document: 'mutation { showUrl }'}, {instances, usageLog, loadedInstance: metadata.loadedInstance, showUrl: async () => privateUrl});
     expect(result.errors).toBeUndefined();
     expect(result.data!.showUrl).toBe(privateUrl);
     await usageLog.flush();
@@ -59,15 +90,16 @@ describe('per-instance GraphQL usage', () => {
     expect(JSON.stringify(events(root))).not.toContain(privateUrl);
   });
 
-  it('logs reads and mutations through the real host, but no legacy tools or schema-resource reads', async () => {
+  it('logs reads and mutations through the real host, but no artifact tool or schema-resource reads', async () => {
     const root = fixture();
     const host = new InstanceHost(new CalClient(null));
     try {
-      await host.tool(root, 'query', {document: '{ entries { count } }'});
-      await host.tool(root, 'mutate', {document: 'mutation { capture(input:{content:"private content",description:"private description"}) { entry { id } error } }'});
-      await host.tool(root, 'query_entries', {});
+      await hostGraphQL(host, root, 'query', {document: '{ entries { count } }'});
+      await hostGraphQL(host, root, 'mutate', {document: 'mutation { capture(input:{content:"private content",description:"private description"}) { entry { id } error } }'});
+      await host.tool(root, 'query_artifacts', {});
       const registry = new InstanceRegistry([root]); registry.activate(root);
-      await host.graphqlSchema(new InstanceSession(registry, {knownInstances: async () => [root], issues: async () => []}));
+      await host.graphqlSchema(new InstanceSession(registry, lifecycleOperationsFixture({knownInstances: async () => [root], issues: async () => [],
+        instanceRecord: async path => host.metadata(path)})));
     } finally { await host.close(); }
     const logged = events(root);
     expect(logged.map(value => value.operation)).toEqual(['query', 'mutation']);
@@ -92,14 +124,20 @@ describe('per-instance GraphQL usage', () => {
 
   it('isolates requests and attributes selection changes and confirmed writes to their actual instances', async () => {
     const a = fixture(), b = fixture(), aStore = store(a), bStore = store(b), usageLog = logger();
+    const metadata = lifecycleMetadataFixture(a, b);
     const registry = new InstanceRegistry([a, b]); registry.activate(a);
-    const instances = new InstanceSession(registry, {knownInstances: async () => [a, b], issues: async () => []}, [], false, true);
+    const instances = new InstanceSession(registry, lifecycleOperationsFixture({knownInstances: async () => [a, b], issues: async () => [], instanceRecord: metadata.instanceRecord}), [], false);
     const active = () => instances.requireInstance() === a ? aStore : bStore;
-    await executeGraphQL(active, 'query', {document: '{entries {count}}'}, {instances, usageLog});
+    await executeGraphQL(active, 'query', {document: '{entries {count}}'}, {instances, usageLog, loadedInstance: metadata.loadedInstance});
     const result = await executeGraphQL(active, 'mutation', {
       document: 'mutation($destination:String!) { first:capture(input:{content:"First secret",description:"First"}){error} selectInstance(path:$destination){error} second:updateInstance(input:{body:"Second secret"}){error} }',
       variables: {destination: b},
-    }, {instances, usageLog, mutate: (operation, args: any) => operation === 'capture' ? handleCapture(active(), args) : {text: handleUpdateInstance(active(), args)}});
+    }, {instances, usageLog, loadedInstance: metadata.loadedInstance,
+      mutate: (operation, args: any) => {
+        if (operation === 'capture') return handleCapture(active(), args);
+        handleUpdateInstance(active(), args);
+        return {};
+      }});
     expect(result.errors).toBeUndefined();
     await usageLog.flush();
     expect(events(a)).toHaveLength(2); expect(events(b)).toHaveLength(1);
@@ -113,11 +151,13 @@ describe('per-instance GraphQL usage', () => {
   it('logs instance creation in the new instance instead of the previously active one', async () => {
     const a = fixture(), usageLog = logger();
     const b = join(a, 'new-instance');
+    const metadata = lifecycleMetadataFixture(a);
     const registry = new InstanceRegistry([a]); registry.activate(a);
-    const instances = new InstanceSession(registry, {knownInstances: async () => [a], issues: async () => []}, [], false, true);
+    const instances = new InstanceSession(registry, lifecycleOperationsFixture({knownInstances: async () => [a], issues: async () => [], instanceRecord: metadata.instanceRecord,
+      created: async (path: string) => {metadata.publish(path); return [];}}), [], false);
     const result = await executeGraphQL(() => { throw new Error('Must stay passive'); }, 'mutation', {
       document: 'mutation($path:String!){createInstance(input:{path:$path,name:"New",description:"New"}){error}}', variables: {path: b},
-    }, {instances, usageLog});
+    }, {instances, usageLog, loadedInstance: metadata.loadedInstance});
     expect(result.errors).toBeUndefined(); await usageLog.flush();
     expect(events(a)).toHaveLength(0); expect(events(b)).toHaveLength(1);
     expect(events(b)[0].effects.created).toBeGreaterThan(0);
@@ -125,8 +165,10 @@ describe('per-instance GraphQL usage', () => {
 
   it('leaves unscoped discovery and introspection unlogged without loading records', async () => {
     const root = fixture(), usageLog = logger();
-    const instances = new InstanceSession(new InstanceRegistry([]), {knownInstances: async () => [root], issues: async () => []}, [], false, true);
-    const result = await executeGraphQL(() => { throw new Error('Must stay passive'); }, 'query', {document: '{instances {id} __schema {queryType {name}}}'}, {instances, usageLog});
+    const metadata = lifecycleMetadataFixture(root);
+    const instances = new InstanceSession(new InstanceRegistry([]), lifecycleOperationsFixture({knownInstances: async () => [root], issues: async () => [], instanceRecord: metadata.instanceRecord}), [], false);
+    const result = await executeGraphQL(() => { throw new Error('Must stay passive'); }, 'query', {document: '{instances {id} __schema {queryType {name}}}'},
+      {instances, usageLog, loadedInstance: metadata.loadedInstance});
     expect(result.errors).toBeUndefined(); await usageLog.flush(); expect(events(root)).toEqual([]);
   });
 
@@ -153,14 +195,27 @@ describe('per-instance GraphQL usage', () => {
       const result = await executeGraphQL(value, 'query', {document: 'query($id:ID!){entry(id:$id){id}}', variables}, {usageLog});
       expect(result.errors).toBeDefined();
     }
+    const metadata = lifecycleMetadataFixture(root);
     const registry = new InstanceRegistry([root]); registry.activate(root);
-    const instances = new InstanceSession(registry, {knownInstances: async () => [root], issues: async () => []});
+    const instances = new InstanceSession(registry, lifecycleOperationsFixture({knownInstances: async () => [root], issues: async () => [], instanceRecord: metadata.instanceRecord}));
     const unavailable = await executeGraphQL(() => { throw new Error('Instance unavailable'); }, 'query',
-      {document: '{entries{count}}'}, {instances, usageLog});
+      {document: '{entries{count}}'}, {instances, usageLog, loadedInstance: () => ({value: value.getInstance()!, issues: []})});
     expect(unavailable.errors).toBeDefined();
     await usageLog.flush();
     expect(events(root).map(event => event.errorCategory)).toEqual(['validation', 'validation', 'execution']);
     expect(events(root).every(event => event.outcome === 'failure')).toBe(true);
+  });
+
+  it('does not invent log attribution for an unobserved passive selection', async () => {
+    const root = fixture(), usageLog = logger();
+    const metadata = lifecycleMetadataFixture();
+    const registry = new InstanceRegistry([root]); registry.activate(root);
+    const instances = new InstanceSession(registry, lifecycleOperationsFixture({knownInstances: async () => [root], issues: async () => [], instanceRecord: metadata.instanceRecord}));
+    const source = vi.fn(() => {throw new Error('Static inspection must not activate a source');});
+    const result = await executeGraphQL(source, 'query', {document: '{__typename}'}, {instances, usageLog, loadedInstance: metadata.loadedInstance});
+    await usageLog.flush();
+    expect(result.errors).toBeUndefined(); expect(source).not.toHaveBeenCalled();
+    expect(events(root)).toEqual([]);
   });
 
   it('preserves the next completed event after a crash leaves an unterminated line', async () => {
@@ -235,20 +290,41 @@ describe('per-instance GraphQL usage', () => {
     expect(existsSync(join(daemonHome, 'known.json'))).toBe(false);
   });
 
-  it('links canonical aliases to one bucket and keeps duplicate IDs in separate buckets', async () => {
+  it('uses owner-normalized aliases for one bucket and keeps duplicate IDs in separate buckets', async () => {
     const a = fixture(), b = fixture(), usageLog = logger();
     const alias = join(b, 'alias'); symlinkSync(a, alias);
-    expect(usageDirectory(alias)).toBe(usageDirectory(a));
+    const admittedAlias = instanceKey(alias);
+    expect(admittedAlias).toBe(a);
+    expect(usageDirectory(admittedAlias)).toBe(usageDirectory(a));
     expect(usageDirectory(b)).not.toBe(usageDirectory(a));
-    usageLog.record(a, event()); usageLog.record(alias, event({requestId: 'alias'})); usageLog.record(b, event()); await usageLog.flush();
+    usageLog.record(a, event(), 'usage-fixture'); usageLog.record(admittedAlias, event({requestId: 'alias'}), 'usage-fixture'); usageLog.record(b, event(), 'usage-fixture'); await usageLog.flush();
     expect(events(a)).toHaveLength(2);
     for (const root of [a, b]) expect(JSON.parse(readFileSync(join(usageDirectory(root), 'instance.json'), 'utf8'))).toMatchObject({path: root, id: 'usage-fixture'});
+  });
+
+  it('never probes an instance root after admission, including a removed root and retargeted alias', async () => {
+    const a = fixture(), b = fixture(), usageLog = logger();
+    const alias = join(b, 'alias'); symlinkSync(a, alias);
+    const admittedRoot = instanceKey(alias);
+    rmSync(a, {recursive: true}); rmSync(alias); symlinkSync(b, alias);
+    const resolveSource = vi.mocked(realpathSync); resolveSource.mockClear();
+    const request = usageLog.start('mutation');
+    request.touch(admittedRoot, 'published-identity');
+    request.changes(admittedRoot, [{kind: 'instance', id: 'published-identity', effect: 'UPDATED', path: join(admittedRoot, 'aside.md')}], 'published-identity');
+    request.finish({data: {updateInstance: {error: null}}}, admittedRoot, false);
+    usageLog.record(admittedRoot, event({requestId: 'direct'}), 'published-identity');
+    await usageLog.flush();
+    expect(resolveSource).not.toHaveBeenCalled();
+    expect(events(admittedRoot)).toHaveLength(2); expect(events(b)).toEqual([]);
+    expect(JSON.parse(readFileSync(join(usageDirectory(admittedRoot), 'instance.json'), 'utf8')))
+      .toEqual({schemaVersion: 1, path: a, id: 'published-identity'});
+    expect(usageLog.status()).toMatchObject({dropped: 0, errors: 0});
   });
 
   it('uses the daemon-configured log folder and reads legacy logs without moving them', async () => {
     const root = fixture(), logs = join(fixture(), 'custom-logs');
     const host = new InstanceHost(new CalClient(null)); host.configureUsage(logs);
-    try { await host.tool(root, 'query', {document: '{entries{count}}'}); } finally { await host.close(); }
+    try { await hostGraphQL(host, root, 'query', {document: '{entries{count}}'}); } finally { await host.close(); }
     expect(existsSync(join(usageDirectory(root, logs), 'instance.json'))).toBe(true);
     expect(existsSync(usageDirectory(root))).toBe(false);
     mkdirSync(legacyUsageDirectory(root), {recursive: true});

@@ -100,6 +100,13 @@ export async function createMockServer({ port = 24801, host = '127.0.0.1', watch
       inject: [path.join(mockDir, 'node-clock.mjs')],
       banner: { js: "import {createRequire as __createRequire} from 'node:module'; const require = __createRequire(import.meta.url);" },
     });
+    // The bundled query runtime resolves its bounded regex worker beside
+    // itself, just like the production daemon bundle.
+    await build({
+      entryPoints: [path.join(webappDir, '../cli/src/mcp/regex-worker.ts')],
+      outfile: path.join(outputDir, 'regex-worker.js'), bundle: true,
+      platform: 'node', format: 'esm', target: 'node22.12', logLevel: 'silent',
+    });
     const runtime = await import(pathToFileURL(path.join(outputDir, 'runtime.mjs')).href);
     if (buildBrowser) {
       const builds = [
@@ -293,6 +300,20 @@ export async function createMockServer({ port = 24801, host = '127.0.0.1', watch
           if (endpoint === 'data') {
             const body = Buffer.from(JSON.stringify(snapshotFor(session, instance.id)));
             return sendFile(req, res, 'snapshot.json', body);
+          }
+          if (endpoint === 'sidebar') {
+            if (req.method !== 'POST') return fail(req, res, 405, 'Use POST.');
+            const origin = req.headers.origin, site = req.headers['sec-fetch-site'];
+            if (req.headers['x-aside-control'] !== '1' || origin !== undefined && origin !== base
+              || origin === undefined && site !== undefined && !['same-origin', 'none'].includes(site)) return fail(req, res, 403, 'Forbidden.');
+            if (faults.operations === 'error') return fail(req, res, 503, 'Demonstration: could not save the sidebar.');
+            const input = await readJson(req);
+            try {
+              if (!input || typeof input !== 'object' || Array.isArray(input) || Object.keys(input).some(key => !['sidebar', 'expectedSidebar'].includes(key))
+                || !Object.hasOwn(input, 'sidebar') || !Object.hasOwn(input, 'expectedSidebar')) throw new Error('Provide sidebar and expectedSidebar declarations.');
+              const sidebar = runtime.updateFixtureSidebar(session.fixtures[instance.id], input.sidebar, input.expectedSidebar);
+              return json(req, res, { sidebar });
+            } catch (error) { return fail(req, res, error instanceof runtime.SidebarConflictError ? 409 : 400, error.message); }
           }
           if (endpoint === 'years') return json(req, res, ['2026']);
           if (endpoint === 'control' || endpoint === 'watch') return req.method === 'POST' ? json(req, res, {}) : stream(req, res, session, endpoint);

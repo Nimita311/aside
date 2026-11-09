@@ -1,10 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { init } from '../src/commands/init.js';
+import { init } from '../src/source/bootstrap.js';
 import { entryEntityIds, entryReferences } from '../src/core/record-reference.js';
 import { extractArtifactReferences } from '../src/core/artifact-reference.js';
 import { validate } from '../src/core/validator.js';
-import { Store } from '../src/mcp/store.js';
+import { Store } from '../src/source/store.js';
 import { handleCapture } from '../src/mcp/tools/capture.js';
 import { createArtifact } from '../src/mcp/tools/artifact.js';
 import { executeGraphQL } from '../src/graphql/schema.js';
@@ -181,8 +181,8 @@ describe('GraphQL reference consistency', () => {
     const template = context.createdActionIds[0];
     const relations = store.getRelations();
     const before = {
-      backlinks: structuredClone(relations.artifactBacklinks),
-      artifactActions: structuredClone(relations.actionsByArtifact),
+      backlinks: structuredClone([...relations.artifactBacklinks]),
+      artifactActions: structuredClone([...relations.actionsByArtifact]),
       actions: store.getActions().size,
     };
     vi.useFakeTimers({toFake: ['Date']});
@@ -211,8 +211,8 @@ describe('GraphQL reference consistency', () => {
     expect(data.bodyArtifact.backlinks.nodes).toEqual([{handle: `#action/${template}`}]);
     expect(data.bodyArtifact.actions.nodes).toEqual([{id: template}]);
     expect(store.getRelations()).toBe(relations);
-    expect(relations.artifactBacklinks).toEqual(before.backlinks);
-    expect(relations.actionsByArtifact).toEqual(before.artifactActions);
+    expect([...relations.artifactBacklinks]).toEqual(before.backlinks);
+    expect([...relations.actionsByArtifact]).toEqual(before.artifactActions);
     expect(store.getActions().size).toBe(before.actions);
   });
 

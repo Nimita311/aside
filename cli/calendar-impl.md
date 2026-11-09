@@ -5,19 +5,21 @@ doc owns the model, this one the mechanics.
 
 ## Architecture
 
-Node can't call EventKit, so calendar access goes through a **native Swift helper**
-the CLI ships. The helper is **long-lived**: it serves commands over JSON/stdio
+Node can't call EventKit, so calendar access goes through the **`calendar`
+subcommand of the native Swift helper** the CLI ships. The Calendar process is
+**long-lived**: it serves commands over JSON/stdio
 and observes the store, pushing a change signal when the calendar changes. The
-[daemon](../design/daemon.md) owns the one helper and one syncer per loaded
-instance; each catches up when its instance loads and reconciles on each signal.
+[daemon](../design/daemon.md) owns the Calendar process and a syncer per loaded
+instance; each syncer catches up when its instance loads and reconciles on each signal.
 
 ```
-daemon (Node) <──JSON/stdio──> aside-cal (Swift, EventKit) ──> Calendar.app
+daemon (Node) <──JSON/stdio──> aside-native calendar (Swift, EventKit) ──> Calendar.app
 ```
 
-## The helper (`aside-cal`)
+## The Calendar subcommand
 
-A Swift binary bundled with the CLI; one JSON object per line each way. A
+The shared `aside-native` binary is bundled with the CLI. Calendar mode uses
+one JSON object per line each way. A
 request is `{ id, cmd, ...args }`, answered by one response with the same `id` —
 `{ id, ok: true, result }` or `{ id, ok: false, error, code? }`. `code` is a
 machine-readable failure class — `calendar-not-found`, `calendar-ambiguous`, `calendar-read-only`,
@@ -72,13 +74,16 @@ its hands off too. Hand-made events are invisible to it.
   re-execs itself with the disclaim spawn attribute
   (`responsibility_spawnattrs_setdisclaim`) to stand as its **own** responsible
   process; TCC then consults *its* identity and embedded usage string, so one grant
-  binds to aside-cal whoever launches it. The stub supervises the disclaimed child
+  binds to the helper whoever launches it. The stub supervises the disclaimed child
   over the inherited stdio, so the protocol is unchanged.
 - Code-signed with a fixed identifier (`sh.117.aside.cal`) so the grant binds to
-  a stable identity. `native/build.sh` (run by the repo-root `build.sh` on macOS)
-  builds a universal binary (arm64 + x86_64) to `dist/aside-cal` and ad-hoc signs
-  it — changing the ad-hoc binary can require regranting calendar access. `dist/aside-cal` is gitignored; until it's built, calendar sync
-  reports `unavailable`.
+  a stable identity. `native/build.sh` builds the universal shared binary
+  (arm64 + x86_64) to `dist/aside-native` and ad-hoc signs it. The CLI package
+  build invokes it only when native sources or build inputs changed or the
+  binary is missing. Changing any native service can therefore require
+  regranting Calendar access. `dist/aside-native` is gitignored; until it's built,
+  calendar sync reports `unavailable`. The responsible-process re-exec and
+  EventKit initialization run only in Calendar mode.
 - Requests **full access** (macOS 14+) — write-only can't read back.
 - Starts cross as wall-clock strings (`YYYY-MM-DDTHH:MM`). Node passes
   positive whole `durationMinutes` for timed events (default 30); the helper
@@ -92,9 +97,9 @@ its hands off too. Hand-made events are invisible to it.
 
 ## Auth
 
-An OS permission, no credentials. `calendar_info` reports the status
-(`notDetermined / denied / restricted / writeOnly / fullAccess`) and, when access
-hasn't been decided or is write-only, requests full access — surfacing the OS prompt or an upgrade request. Denied access directs the user to System Settings → Privacy & Security → Calendars; restricted access directs them to device policy or an administrator. A returned undecided state gives no evidence about why the prompt did not complete. Authorization-command failures are distinct from helper communication failures. The sync caches a positive access check
+An OS permission, no credentials. `SystemInfo.calendar` reports the status
+(`notDetermined / denied / restricted / writeOnly / fullAccess`). When access
+hasn't been decided or is write-only, `requestCalendarAccess` requests full access — surfacing the OS prompt or an upgrade request. Denied access directs the user to System Settings → Privacy & Security → Calendars; restricted access directs them to device policy or an administrator. A returned undecided state gives no evidence about why the prompt did not complete. Authorization-command failures are distinct from helper communication failures. The sync caches a positive access check
 but drops it whenever the helper process dies. Helper death reports its
 observed process failure and does not establish a permission change; the next
 attempt rechecks authorization.
@@ -103,7 +108,7 @@ attempt rechecks authorization.
 
 The sync reads these fields:
 
-- **Action** — optional `calendar` and `calendar_account` (readable names), `duration` (positive fixed ISO duration in whole minutes), `timezone` (IANA). Forward routing requires a unique name or name/account match. Reverse sweeps search all calendars to recover cross-account moves; routing failures leave action schedules intact.
+- **Action** — optional `calendar` and `calendar_account` (readable names), `duration` (positive fixed ISO duration in whole minutes), `timezone` (IANA), and `location` (one bare location handle). Forward routing requires a unique name or name/account match. Reverse sweeps search all calendars to recover cross-account moves; routing failures leave action schedules intact.
 - **`aside.md`** — the required `id` (slug of `name`, immutable), which is the
   marker's `<instance>`. Without it sync is disabled (surfaced, not silent). Optional
   `config.scheduledEventTitlePrefix` / `config.doneEventTitlePrefix` are prepended to
@@ -114,7 +119,9 @@ The sync reads these fields:
 ## Forward sync (inside `capture` / `update`)
 
 **Any** change to a synced action re-syncs its event in full (current title,
-time, notes), not just the changed field. A successful floating timed save is
+time, notes, location), not just the changed field. Location is action-owned:
+unset clears the event location, Calendar edits are not imported, and no sync
+path geocodes. A successful floating timed save is
 immediately read back by its saved event ID to confirm the effective wall clock,
 including for scheduled done actions. As described in the design's accepted
 floating normalization, Foundation may turn a local gap clock such as `02:30`
@@ -142,14 +149,14 @@ the action alone — neither importing the pre-op calendar state over the fresh
 local change nor reading the not-yet-created event as a deletion.
 
 A scheduled action with **no `calendar`** isn't routed to forward sync at all;
-`capture` / `update` report a disabled calendar state in their receipt so the
-agent can route it, and reconcile records it as a `calendar_info` issue.
+it holds a disabled calendar state so the agent can route it, and reconcile
+records it as an `Instance.calendarSync` issue.
 
 Forward operations retain a per-action observation: pending while in flight or
 queued for retry, synced after a successful upsert and any required floating
 confirmation, removed after confirmed
 removal, disabled when no helper/instance identity/routing is available, or failed
-for a standing error. Mutation receipts and `calendar_info` expose these states;
+for a standing error. Mutation warnings and `Instance.calendarSync` expose these states;
 neither treats a local save or an empty issue list as event completion. States are
 observations since the instance loaded and are superseded by the next operation for that action.
 Positive observations are invalidated when the action's desired event changes.
@@ -172,8 +179,8 @@ Nothing persists; all of it is rebuilt when the daemon loads the instance:
   retaining their event IDs and sent snapshots until confirmed or superseded.
 - **recurring** — actions whose event joined a recurring series, parked until it
   isn't one anymore (see Recurring events).
-- **changes** — reverse edits applied since the instance loaded, for `calendar_info`.
-- **failures** — calendar errors `calendar_info` surfaces beyond the per-action
+- **changes** — reverse edits applied since the instance loaded, for `Instance.calendarSync`.
+- **failures** — calendar errors `Instance.calendarSync` surfaces beyond the per-action
   issues/outbox: reverse-reconcile failures (rebuilt each pass) and sweep failures.
 
 ## Concurrency
@@ -238,7 +245,7 @@ A suffix gesture wins over a move/resize; aliases match case-insensitively
 canonical. One pass feeds all loaded instances, routing each event by its marker's
 instance id; reverse edits and any failures (a read that failed, an edit that
 couldn't be written back, an event that couldn't be removed) are recorded for
-`calendar_info`. The event re-derivation that follows an import is a forward effect,
+`Instance.calendarSync`. The event re-derivation that follows an import is a forward effect,
 logged only as the reverse edit that triggered it.
 
 **Why a missing event deschedules.** Forward sync applies local changes and
@@ -277,7 +284,7 @@ rule. The two cases differ only in how "no event" is established:
   disappearance (offline account, truncated query), not a set of user
   gestures — none executes, the cache and all tracking stay untouched, and one
   pass failure records the action ids with a recovery hint (surfaced via
-  `calendar_info`), keeping the load pass retrying until the events return
+  `Instance.calendarSync`), keeping the load pass retrying until the events return
   or the user deschedules deliberately. Live deschedules are uncapped:
   the warm cache vouches for each event having existed since the load.
 - **Live** — warm cache, so a `changed` signal runs **incrementally**:
@@ -299,20 +306,21 @@ applied, so the reconcile imports nothing from it (absence included).
 occurrence sharing the identifier, so none of the sync's single-event operations
 apply. If a synced event joins a series (the user added a recurrence rule), the
 action is parked: forward sync skips it, the reconcile imports nothing from it and
-never deletes it (duplicate pruning skips recurring events too), and `calendar_info`
+never deletes it (duplicate pruning skips recurring events too), and `Instance.calendarSync`
 carries a per-action issue saying the event became recurring and is no longer
 synced. The event stays tracked, so removing the recurrence resumes sync.
 
-## `calendar_info` (MCP tool)
+## Calendar state (GraphQL)
 
-Metadata, never events (it requests full access when undecided or write-only — see Auth — but never
-reads or writes calendar events):
+Metadata, never events. `SystemInfo.calendar` and `requestCalendarAccess` (see Auth) report:
 
-- `authStatus` (+ whether full access is held)
+- `authorization` and `helperPath`
 - `calendars[]`: `{ id, name, account, writable, type, color }`
-- `calendar_sync[]`: per-action `{ id, status, reason?, event_id?, retry?, category?, recovery?, auth?, helper_path?, log_path?, stderr?, command?, exit_code?, signal? }`;
-  pending and positive outcomes as well as disabled/failed states. Instance
-  observations, issues, and changes are appended even when auth/helper calls fail.
+
+`Instance.calendarSync` reports, even when auth/helper calls fail:
+
+- `syncStates[]`: per-action `{ id, status, reason?, eventId?, retry?, diagnostic? }`;
+  pending and positive outcomes as well as disabled/failed states.
 - `issues[]`: every known sync failure — the instance missing its `id` (sync
   disabled), scheduled actions left unsynced (no `calendar`, or a missing /
   read-only one), actions parked because their event became recurring, forward
@@ -321,19 +329,19 @@ reads or writes calendar events):
   duplicate couldn't be pruned, a bulk load deschedule was deferred). Forward
   issues clear when the action next syncs; reverse failures are rebuilt each
   reconcile pass, so a clean pass clears them.
-- `changesSinceStart[]`: reverse edits applied (rescheduled / done / cancelled /
+- `changes[]`: reverse edits applied (rescheduled / done / cancelled /
   descheduled, and any duplicate events pruned)
 
 ## Source helper diagnostics
 
-The source helper is ad-hoc signed. Building or replacing it can require regranting calendar access; changing only TypeScript or webapp code uses the package build and preserves the helper. Missing helpers report the expected path, source build command, daemon restart (resolution is cached at daemon startup), and a final `calendar_info` check. Non-macOS or pre-macOS-14 systems report `platform-unsupported` separately.
+The shared native helper is ad-hoc signed. Building or replacing it can require regranting calendar access; changing only TypeScript or webapp code uses the package build and preserves the helper. `ASIDE_NATIVE_BIN` selects a shared executable, launched with `calendar`; `ASIDE_CAL_BIN` and an explicitly injected Calendar helper retain the standalone protocol for tests and compatibility. Missing helpers report the expected path, source build command, daemon restart (resolution is cached at daemon startup), and a final `SystemInfo.calendar` check. Non-macOS or pre-macOS-14 systems report `platform-unsupported` separately.
 
 Failures use observed categories: `authorization-<status>`, `authorization-request-failed`, `helper-start-failed`, `helper-communication-failed`, `helper-command-failed`, `helper-exited`, `helper-timeout`, and `operation-failed` for other observed operation errors. Process failures retain the last 4096 characters of helper stderr, helper and daemon-log paths, and command/exit/signal when observed; they do not infer a TCC or GUI cause. Per-action receipts retain diagnostics with queued retries and clear them after confirmed sync. Failed duplicate removals retain their own diagnostics even after the primary event succeeds; relocated-event failures retain the same evidence as ordinary reverse failures. Identity changes discard observations from the previous identity.
 
 ### Calendar timing blocks
 
 `event-time-unrepresentable` is a standing per-action failure, surfaced with
-recovery through `calendar_info` and mutation receipts. Reverse preflight checks
+recovery through `Instance.calendarSync` and mutation warnings. Reverse preflight checks
 actual finite `startInstant`/`endInstant`, explicit `timezone` or floating `null`,
 wall/instant agreement, and positive whole-minute elapsed length before changing
 any fields. An event ending in the second repeated hour is representable by

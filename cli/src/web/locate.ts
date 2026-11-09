@@ -4,6 +4,7 @@ import { existsSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { AsideWebServer, type WebBackend, type WebServerOptions } from './server.js';
+import { nativeCommand } from '../native/helper.js';
 
 const WEB_PORT = 24800;
 export async function startWeb(appDir: string, backend: WebBackend, port = WEB_PORT, options: WebServerOptions): Promise<AsideWebServer> {
@@ -37,9 +38,10 @@ export async function openBrowser(url: string): Promise<boolean> {
     // A private HTML handoff must use the HTTP browser, even when .html files
     // are associated with an editor. AppKit reads Launch Services without
     // asking the browser for automation permission.
-    const script = `ObjC.import('AppKit'); ObjC.unwrap($.NSWorkspace.sharedWorkspace.URLForApplicationToOpenURL($.NSURL.URLWithString('http://localhost')).path)`;
+    const command = nativeCommand('default-browser');
+    if (!command) return false;
     browser = await new Promise<string | null>(resolve => {
-      execFile('/usr/bin/osascript', ['-l', 'JavaScript', '-e', script], { timeout: 5000, maxBuffer: 16 * 1024 }, (error, stdout) => {
+      execFile(command.file, command.args, { timeout: 5000, maxBuffer: 16 * 1024 }, (error, stdout) => {
         const application = stdout?.trim();
         resolve(!error && application && path.isAbsolute(application) && application.endsWith('.app') ? application : null);
       });

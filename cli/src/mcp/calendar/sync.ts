@@ -1,18 +1,15 @@
 import { RecurrenceCalSync, isNativeOccurrence } from './recurrence-sync.js';
-import { CALENDAR_SYNC_LOCK_TIMEOUT_MS, CALENDAR_SYNC_RETRY_MS, CALENDAR_RECONCILE_RETRY_MS } from '../../core/system-config.js';
-import { readManagedText } from '../../core/managed-path.js';
+import { CALENDAR_SYNC_LOCK_TIMEOUT_MS } from '../../core/system-config.js';
 import { formatUtcTimestamp } from '../../core/date.js';
-import { dirname, join, relative } from 'node:path';
 import { CalClient, CalError, CalUnavailable } from './client.js';
 import { SyncLock } from './lock.js';
 import { schedulingIssues, isRepeatedSchedule, scheduleInstant } from '../../core/scheduling.js';
 import { authorizationDiagnostic, type CalendarDiagnostic } from './diagnostics.js';
 import { eventTimingDiagnostic, canReplaceEventTime } from './timing.js';
 import { calendarRoutingError, matchingCalendars } from './routing.js';
-import { parseActionFile, parseIndex } from '../../core/parser.js';
-import { readManifest, readManifestResult } from '../../core/instance.js';
+import { actionLocationIssues, calendarLocation, sameCalendarLocation } from './location.js';
 import { isInstanceId, INSTANCE_ID_RULE } from '../../core/identity.js';
-import type { Store } from '../store.js';
+import type { Store } from '../../source/store.js';
 import type { ActionFrontMatter, InstanceConfig } from '../../core/types.js';
 import type { UpsertEventArgs, CalEvent, CalErrorCode, CalCalendar } from './protocol.js';
 import {
@@ -35,6 +32,10 @@ export interface SyncAction {
   description?: string;
 }
 
+function calendarDefinitionIssues(frontMatter: ActionFrontMatter): string[] {
+  return [...schedulingIssues(frontMatter), ...actionLocationIssues(frontMatter.location)];
+}
+
 export type SyncStatus = 'synced' | 'deleted' | 'skipped' | 'error';
 
 export interface SyncResult {
@@ -46,8 +47,8 @@ export interface SyncResult {
   diagnostic?: CalendarDiagnostic;
 }
 
-// Latest observable outcome for an action. Pending includes both an active
-// helper call and a queued retry; it never means the calendar was updated.
+// Latest observable outcome for an action. Pending includes lifecycle work,
+// an active helper call, or a queued retry; it never means Calendar was updated.
 export interface CalendarSyncStatus {
   id: string;
   status: 'pending' | 'synced' | 'removed' | 'disabled' | 'failed';
@@ -63,9 +64,9 @@ interface CalendarFailure {
   diagnostic?: CalendarDiagnostic;
 }
 
-type IndexSnapshot =
-  | { descriptions: Map<string, string | undefined> }
-  | { error: NodeJS.ErrnoException };
+export interface CalendarReconciliationRequest {
+  reason: 'pending-delivery' | 'lock-contention';
+}
 
 class CalendarIdentityChanged extends Error {}
 
@@ -122,23 +123,22 @@ export class CalSync {
   // Reset when the helper dies (a TCC revocation kills it), so revocation
   // degrades to the accurate "no calendar access" path.
   private hasAccess = false;
-  // Reporting state for calendar_info. `issues`: actions that should sync but
+  // Reporting state for calendarSync. `issues`: actions that should sync but
   // can't (no / missing / read-only calendar) — re-evaluated when the action is
   // next synced. `outbox`: actions whose op hit a transient helper error, retried
-  // by the next syncActions or, when no further op comes, by `outboxRetry` — a
-  // single self-rescheduling timer, so "will retry" holds even with no further
-  // tool call. An action is in at most one of them.
+  // by the next lifecycle reconciliation. The owner schedules that retry even
+  // when no further tool call arrives. An action is in at most one of them.
   private issues = new Map<string, string>();
   private outbox = new Map<string, { action: SyncAction; reason: string }>();
-  private outboxRetry: ReturnType<typeof setTimeout> | null = null;
+  private reconciliationOwner?: (request: CalendarReconciliationRequest) => void;
   // Actions whose event became part of a recurring series. Sync never modifies,
   // deletes, or imports a recurring event — the action is left unsynced and the
   // condition surfaced via report() until the event is non-recurring again.
   private recurring = new Set<string>();
-  // Reverse edits applied since the instance loaded, for calendar_info (capped to the tail).
+  // Reverse edits applied since the instance loaded, for calendarSync (capped to the tail).
   private changes: Array<{ id: string; summary: string }> = [];
   // Calendar failures beyond the per-action issues/outbox, also surfaced by
-  // calendar_info. `reconcileFailures` is rebuilt every reverse-reconcile pass so
+  // calendarSync. `reconcileFailures` is rebuilt every reverse-reconcile pass so
   // it reflects the current state (a clean pass clears it); `sweepFailures` holds
   // problems from the one-time cache sweep (e.g. a duplicate it couldn't prune).
   // Both are scoped by action id, or by the literal `reverse sync` when the whole
@@ -149,16 +149,16 @@ export class CalSync {
   // coalescing queue — a call landing mid-run replaces it, so the single re-run
   // uses the latest caller's action set.
   private reconciling = false;
-  private pendingReconcile: SyncAction[] | null = null;
+  private pendingReconcile: {actions: SyncAction[]; canImport?: (action: SyncAction) => boolean} | null = null;
   // Mutation lock on the store's data dir (see lock.ts). Every
   // calendar-mutating phase — a forward batch and a reverse pass, both of which
   // can also prune duplicates via the sweep — runs under it; neither phase calls
-  // the other, so holding it across a phase cannot deadlock. `lockRetry` is the
-  // single pending re-run of a reconcile that found the lock held — one timer,
-  // so contention can't queue retries unboundedly.
+  // the other, so holding it across a phase cannot deadlock. Lock contention
+  // requests another pass from the owner, which selects the current snapshot.
   private lock: SyncLock;
-  private lockRetry: ReturnType<typeof setTimeout> | null = null;
   private observedIdentity: string | undefined;
+  private disposed = false;
+  private readonly stopObservingExit: () => void;
 
   // The manifest values sync depends on (the instance `id` anchoring every
   // marker, and the title-prefix config) are read from the store at use time, so
@@ -171,21 +171,34 @@ export class CalSync {
     private store?: Store, // backs reverse sync's action reads and writes; reconcile needs it
     private fallbackConfig?: InstanceConfig,
     private identityBlock?: () => string | null,
+    private sourceMutation?: (write: () => void) => void,
   ) {
-    this.recurrenceSync = new RecurrenceCalSync(cal);
+    this.recurrenceSync = new RecurrenceCalSync(cal, sourceMutation);
     this.lock = new SyncLock(store?.getDataDir());
-    cal.onExit(() => {
+    this.stopObservingExit = cal.onExit(() => {
       this.hasAccess = false;
     });
   }
 
-  // Stop the retry timers when the instance unloads; nothing runs on its
-  // behalf afterwards.
+  /** Retry scheduling belongs to the instance owner, not this protocol adapter. */
+  setReconciliationOwner(owner: (request: CalendarReconciliationRequest) => void): () => void {
+    if (typeof owner !== 'function') throw new Error('Calendar reconciliation requires a lifecycle owner.');
+    this.reconciliationOwner = owner;
+    return () => {if (this.reconciliationOwner === owner) this.reconciliationOwner = undefined;};
+  }
+
+  private requestReconciliation(reason: CalendarReconciliationRequest['reason']): void {
+    if (this.disposed) return;
+    if (!this.reconciliationOwner) throw new Error('Calendar reconciliation requires a lifecycle owner.');
+    this.reconciliationOwner({reason});
+  }
+
+  // The owner cancels scheduled work when the instance unloads.
   dispose(): void {
-    if (this.outboxRetry !== null) clearTimeout(this.outboxRetry);
-    if (this.lockRetry !== null) clearTimeout(this.lockRetry);
-    this.outboxRetry = null;
-    this.lockRetry = null;
+    if (this.disposed) return;
+    this.disposed = true;
+    this.stopObservingExit();
+    this.reconciliationOwner = undefined;
   }
 
   // Persist the prior lookup coordinate before an API conversion removes it
@@ -200,19 +213,28 @@ export class CalSync {
   }
 
   private get instanceId(): string {
-    return (this.store ? readManifest(this.store.getDataDir()).id : '') || this.fallbackId;
+    return this.store?.getManifest().id || this.fallbackId;
   }
 
   private manifestReadDiagnostic(): CalendarDiagnostic | undefined {
     if (!this.store) return undefined;
-    const issue = readManifestResult(this.store.getDataDir()).issues.find(issue => issue.code === 'read_error');
+    const {issue} = this.store.getManifestSourceHealth();
     return issue ? {
       category: 'instance-manifest-read-error', reason: issue.message,
-      recovery: 'Restore the existing aside.md file or its read permissions, preserving its id, then check calendar_info. Pending sync retries remain queued.',
+      recovery: 'Restore the existing aside.md file or its read permissions, preserving its id, then check Instance.calendarSync through query. Pending sync retries remain queued.',
     } : undefined;
   }
 
   private identityReason(): string | null {
+    const unreadable = this.manifestReadDiagnostic();
+    if (unreadable) return unreadable.reason;
+    const id = this.instanceId;
+    if (!id) return 'instance has no id';
+    if (!isInstanceId(id)) return `Invalid instance id ${JSON.stringify(id)}: ${INSTANCE_ID_RULE}; calendar sync is disabled`;
+    return this.identityBlock?.() ?? null;
+  }
+
+  private refreshIdentity(): string | null {
     // A failed read is uncertainty, not an observed identity edit. Keep marker
     // caches and saved-event confirmations intact while all helper work pauses.
     const unreadable = this.manifestReadDiagnostic();
@@ -220,7 +242,7 @@ export class CalSync {
     const id = this.instanceId;
     if (this.observedIdentity !== undefined && this.observedIdentity !== id) {
       // A deliberate manifest identity edit must never reuse another identity's
-      // cached event IDs. Queue the current records before reverse reconciliation.
+      // cached event IDs. The instance owner selects records to replay.
       this.recurrenceSync.reset();
       this.recurrenceFailures.clear();
       this.cache.clear();
@@ -237,28 +259,24 @@ export class CalSync {
       this.confirmations.clear();
       this.swept = false;
       this.coldReconciled = false;
-      if (this.store) {
-        for (const actionId of this.store.getActionIds()) {
-          const action = storeAction(this.store, actionId);
-          if (action?.frontMatter.scheduled && action.frontMatter.calendar) {
-            this.outbox.set(actionId, { action, reason: 'instance identity changed; calendar sync will retry' });
-          }
-        }
-        this.scheduleOutboxRetry();
-      }
     }
     this.observedIdentity = id;
-    if (!id) return 'instance has no id';
-    if (!isInstanceId(id)) return `Invalid instance id ${JSON.stringify(id)}: ${INSTANCE_ID_RULE}; calendar sync is disabled`;
-    return this.identityBlock?.() ?? null;
+    return this.identityReason();
   }
 
   private requireIdentity(expectedId = this.instanceId): void {
+    if (this.disposed) throw new CalendarIdentityChanged('Instance is no longer loaded for Calendar sync');
     const previous = this.observedIdentity;
-    const reason = this.identityReason();
+    const reason = this.refreshIdentity();
     if (reason) throw new Error(reason);
     if (expectedId !== this.instanceId || (previous !== undefined && previous !== this.instanceId)) {
       throw new CalendarIdentityChanged('Instance identity changed during calendar sync; retry with the current identity');
+    }
+    // This is an actual Calendar write guard, not query-time freshness work.
+    // Never save/import through a manifest edit the lifecycle has not loaded yet.
+    if (this.store) {
+      try { this.store.assertSourceIdentity(expectedId, this.fallbackId); }
+      catch (error) { throw new CalendarIdentityChanged(error instanceof Error ? error.message : String(error)); }
     }
   }
 
@@ -271,7 +289,7 @@ export class CalSync {
     return { active: config?.scheduledEventTitlePrefix ?? '▢ ', done: config?.doneEventTitlePrefix ?? '✓ ' };
   }
 
-  // The "failure" bucket calendar_info surfaces — the union of every way a change
+  // The "failure" bucket calendarSync surfaces — the union of every way a change
   // can fail: the instance-level blocker (no id), per-action forward issues and
   // errors, transient forward failures awaiting retry (outbox), actions parked
   // because their event became recurring, and reverse / sweep failures. (The
@@ -309,22 +327,22 @@ export class CalSync {
     return [...unique.values()];
   }
 
-  // Synchronous, so mutation receipts can call this immediately after starting
-  // syncActions without waiting on the helper. Live work takes precedence over
-  // a previous success, including when multiple updates to one action overlap.
+  // Synchronous, so receipts can observe pending loaded revisions before the
+  // lifecycle starts helper work. Live work takes precedence over a previous
+  // success, including when multiple updates to one action overlap.
   status(id: string): CalendarSyncStatus | undefined {
-    return this.statusForSnapshot(id, new Map());
+    return this.statusForSnapshot(id);
   }
 
-  private statusForSnapshot(id: string, indexes: Map<string, IndexSnapshot>): CalendarSyncStatus | undefined {
-    const state = this.rawStatusForSnapshot(id, indexes);
+  private statusForSnapshot(id: string): CalendarSyncStatus | undefined {
+    const state = this.rawStatusForSnapshot(id);
     if (!state || state.status === 'synced' || state.status === 'removed') return state;
     const diagnostic = this.manifestReadDiagnostic() ?? (!this.cal.available() ? this.cal.availabilityDiagnostic()
-      : state.diagnostic ?? this.diagnostics.get(id) ?? (state.status === 'pending' ? { category: 'sync-pending', reason: state.reason ?? 'Calendar sync has not yet been confirmed.', recovery: 'The local record is saved. Check calendar_info for completion; pending retries remain queued.' } : undefined));
+      : state.diagnostic ?? this.diagnostics.get(id) ?? (state.status === 'pending' ? { category: 'sync-pending', reason: state.reason ?? 'Calendar sync has not yet been confirmed.', recovery: 'The local record is saved. Check Instance.calendarSync through query for completion; pending retries remain queued.' } : undefined));
     return { ...state, ...(diagnostic ? { diagnostic } : {}) };
   }
 
-  private rawStatusForSnapshot(id: string, indexes: Map<string, IndexSnapshot>): CalendarSyncStatus | undefined {
+  private rawStatusForSnapshot(id: string): CalendarSyncStatus | undefined {
     const identityReason = this.identityReason();
     if (identityReason) return { id, status: 'disabled', reason: identityReason };
     if (!this.cal.available()) return { id, status: 'disabled', reason: 'calendar helper unavailable' };
@@ -341,27 +359,20 @@ export class CalSync {
     const result = this.settled.get(id);
     if (result) {
       if (this.store && (result.status === 'synced' || result.status === 'removed')) {
-        const file = this.store.getActionFile(id);
-        if (!file || !this.store.getAction(id)) return { id, status: 'disabled', reason: 'action no longer exists' };
-        let current: SyncAction;
-        try {
-          const disk = parseActionFile(readManagedText(this.store!.getDataDir(), file)).value;
-          current = { id, ...disk };
-        } catch (e) {
-          if ((e as NodeJS.ErrnoException).code === 'ENOENT') return { id, status: 'disabled', reason: 'action no longer exists' };
-          return { id, status: 'failed', reason: `action file unavailable: ${(e as Error).message}` };
-        }
-        try {
-          current.description = this.indexDescriptions(join(dirname(file), 'index.yaml'), indexes).get(id);
-        } catch (e) {
-          if ((e as NodeJS.ErrnoException).code === 'ENOENT') current.description = undefined;
-          else return { id, status: 'failed', reason: `action index unavailable: ${(e as Error).message}` };
-        }
-        const invalid = schedulingIssues(current.frontMatter);
+        const current = storeAction(this.store, id);
+        if (!current) return { id, status: 'disabled', reason: 'action no longer exists' };
+        const sourceIssue = this.store.getRecordSourceHealth('action', id).issue;
+        if (sourceIssue) return {id, status: 'failed', reason: sourceIssue.message};
+        const recurrenceIssue = this.recurrenceSourceIssue(current);
+        if (recurrenceIssue) return { id, status: 'failed', reason: recurrenceIssue };
+        const invalid = calendarDefinitionIssues(current.frontMatter);
         if (invalid.length) return { id, status: 'failed', reason: invalid.join(' ') };
         if (this.settledVersions.get(id) !== this.desiredVersion(current)) {
-          // Direct edits do not queue a forward op. Omit the obsolete positive
-          // result until this version is observed, rather than invent pending work.
+          // Lifecycle maintenance has not yet confirmed this loaded revision.
+          // A tracked event still needs removal even before work is dequeued.
+          const removal = this.pendingRemoval(current);
+          if (removal) return removal;
+          // Omit the old positive observation without doing source I/O here.
           if (current.frontMatter.scheduled && !current.frontMatter.calendar) {
             return { id, status: 'disabled', reason: 'no calendar' };
           }
@@ -370,31 +381,20 @@ export class CalSync {
       }
       return { ...result };
     }
-    const action = this.store?.getAction(id);
+    const action = this.store ? storeAction(this.store, id) : undefined;
+    const removal = action && this.pendingRemoval(action);
+    if (removal) return removal;
     if (action?.frontMatter.scheduled && !action.frontMatter.calendar) {
       return { id, status: 'disabled', reason: 'no calendar' };
     }
     return undefined;
   }
 
-  // Share one disk read/parse per year within a report, including read failures.
-  // Each new report gets a fresh snapshot so hand edits remain visible.
-  private indexDescriptions(file: string, indexes: Map<string, IndexSnapshot>): Map<string, string | undefined> {
-    let index = indexes.get(file);
-    if (!index) {
-      try {
-        const descriptions = new Map<string, string | undefined>();
-        for (const item of parseIndex(readManagedText(this.store!.getDataDir(), file)).value) {
-          if (!descriptions.has(item.id)) descriptions.set(item.id, item.description || undefined);
-        }
-        index = { descriptions };
-      } catch (e) {
-        index = { error: e as NodeJS.ErrnoException };
-      }
-      indexes.set(file, index);
-    }
-    if ('error' in index) throw index.error;
-    return index.descriptions;
+  private pendingRemoval(action: SyncAction): CalendarSyncStatus | undefined {
+    const knownEvent = this.cache.has(action.id) || this.confirmations.has(action.id)
+      || this.recurrenceSync.ordinaryEvent(action.id);
+    return knownEvent && !desiredFromAction(action, this.instanceId, this.prefixes).have
+      ? { id: action.id, status: 'pending', reason: 'calendar event removal pending' } : undefined;
   }
 
   private desiredVersion(action: SyncAction, desired = desiredFromAction(action, this.instanceId, this.prefixes)): string {
@@ -445,11 +445,10 @@ export class CalSync {
       const action = this.store!.getAction(id);
       if (action?.frontMatter.scheduled && !action.frontMatter.calendar) ids.add(id);
     }
-    const indexes = new Map<string, IndexSnapshot>();
-    return [...ids].map((id) => this.statusForSnapshot(id, indexes)!).filter(Boolean);
+    return [...ids].map((id) => this.statusForSnapshot(id)!).filter(Boolean);
   }
 
-  // Reverse edits applied since the instance loaded (calendar → action), for calendar_info.
+  // Reverse edits applied since the instance loaded (calendar → action), for calendarSync.
   changesSinceStart(): Array<{ id: string; summary: string }> {
     return this.changes;
   }
@@ -490,8 +489,9 @@ export class CalSync {
   // Every attempted action is observable as pending, completed, disabled, or
   // failed. Permanent instance-level blockers skip helper work; transient ones
   // stay in the outbox and remain pending until a retry succeeds.
-  async syncActions(actions: SyncAction[], allScheduled: SyncAction[]): Promise<SyncResult[]> {
-    const identityReason = this.identityReason();
+  async syncActions(actions: SyncAction[], allScheduled: SyncAction[], options: {importRecurrenceChanges?: boolean} = {}): Promise<SyncResult[]> {
+    if (this.disposed) return skip(actions, 'instance is no longer loaded');
+    const identityReason = this.refreshIdentity();
     if (identityReason) return this.defer(actions, identityReason);
     if (!this.cal.available()) return this.disable(actions, 'calendar helper unavailable');
     // Registered before the first await, so a reconcile overlapping any part of
@@ -518,7 +518,10 @@ export class CalSync {
         if (!(await this.ensureCache(allScheduled.filter(a => !a.frontMatter.recurrence && !isNativeOccurrence(this.store, a))))) return this.defer(actions, 'calendar cache unavailable, will retry', this.failureDiagnostic);
 
         const out: SyncResult[] = [];
-        out.push(...await this.syncRecurrences(false));
+        // Lifecycle batches also service unchanged families. Import their
+        // witnessed Calendar gestures before exporting saved exceptions; the
+        // recurrence protocol's source witnesses still protect local edits.
+        out.push(...await this.syncRecurrences(options.importRecurrenceChanges ?? false));
         for (const a of actions.filter(a => !a.frontMatter.recurrence && !isNativeOccurrence(this.store, a))) out.push(this.record(a, await this.syncOne(a)));
         // Retry transiently-failed/deferred ops from earlier, unless superseded by
         // this batch. Retry the action's *current* state — the snapshot captured at
@@ -595,27 +598,14 @@ export class CalSync {
       this.issues.delete(a.id);
       this.outbox.set(a.id, { action: a, reason });
     }
-    this.scheduleOutboxRetry();
+    this.requestOutboxRetry();
     return actions.map((a) => ({ id: a.id, status: 'skipped' as const, reason }));
   }
 
-  // Drive the outbox's "will retry" without waiting for another tool call: one
-  // unref'd timer per non-empty outbox, re-armed after each attempt that leaves
-  // it non-empty. The empty forward batch makes syncActions drain the outbox
-  // alone; scheduled actions seed the sweep as usual.
-  private scheduleOutboxRetry(): void {
-    if (this.outboxRetry !== null || this.outbox.size === 0) return;
-    this.outboxRetry = setTimeout(() => {
-      this.outboxRetry = null;
-      if (this.outbox.size === 0) return;
-      const all = this.store
-        ? this.store.getActionIds().map((id) => storeAction(this.store!, id)!).filter((a) => a.frontMatter.scheduled)
-        : [...this.outbox.values()].map((o) => o.action);
-      void this.syncActions([], all)
-        .catch(() => {})
-        .then(() => this.scheduleOutboxRetry());
-    }, CALENDAR_SYNC_RETRY_MS);
-    this.outboxRetry.unref?.();
+  // The protocol adapter reports pending work. Lifecycle owns the timer and
+  // selects current loaded actions when another pass is due.
+  private requestOutboxRetry(): void {
+    if (this.outbox.size) this.requestReconciliation('pending-delivery');
   }
 
   // Update issues/outbox from a result and pass it through. An action lands in at
@@ -646,7 +636,7 @@ export class CalSync {
         this.issues.set(action.id, reason);
       } else {
         this.outbox.set(action.id, { action, reason: `sync failed, will retry: ${reason || 'unknown error'}` });
-        this.scheduleOutboxRetry();
+        this.requestOutboxRetry();
       }
     }
     return res;
@@ -709,16 +699,14 @@ export class CalSync {
       this.issues.delete(id);
       this.outbox.set(id, { action, reason: failure ?? 'recurrence schedule changed; awaiting ordinary Calendar sync' });
     }
-    this.scheduleOutboxRetry();
+    this.requestOutboxRetry();
     return out;
   }
 
   private recurrenceSourceIssue(action: SyncAction): string | undefined {
     if (!this.store) return undefined;
-    const file = this.store.getActionFile(action.id);
-    const issue = this.store.getIssues().find(issue => issue.severity === 'error' &&
-      (/recurrence|occurrence/.test(issue.code) || /^(recurrence|occurrence)(?:\W|$)/.test(issue.field ?? '')) &&
-      (file && (issue.file === file || issue.file === relative(this.store!.getDataDir(), file)) || issue.message.startsWith(action.id + ':')));
+    const issue = this.store.getRecordIssues('action', action.id).find(issue => issue.severity === 'error' &&
+      (/recurrence|occurrence/.test(issue.code) || /^(recurrence|occurrence)(?:\W|$)/.test(issue.field ?? '')));
     return issue ? `${issue.message} Preserve the Calendar representation until its recurrence or provenance is repaired.` : undefined;
   }
 
@@ -734,7 +722,7 @@ export class CalSync {
   private explicitReschedule(action: SyncAction): boolean {
     const blocked = this.timeBlocked.get(action.id), fm = action.frontMatter;
     return !!blocked && !!fm.calendar && fm.resolution !== 'cancelled' && blocked.definition !== this.startDefinition(action) && !!fm.scheduled &&
-      schedulingIssues(fm).length === 0 && scheduleInstant(fm.scheduled, fm.timezone) !== undefined &&
+      calendarDefinitionIssues(fm).length === 0 && scheduleInstant(fm.scheduled, fm.timezone) !== undefined &&
       !isRepeatedSchedule(fm.scheduled, fm.timezone);
   }
 
@@ -774,7 +762,7 @@ export class CalSync {
     if (recurrenceFailure) return { id: action.id, status: 'error', reason: recurrenceFailure };
     const recurrenceIssue = this.recurrenceSourceIssue(action);
     if (recurrenceIssue) return { id: action.id, status: 'error', code: 'invalid-scheduling', reason: recurrenceIssue };
-    const invalid = schedulingIssues(action.frontMatter);
+    const invalid = calendarDefinitionIssues(action.frontMatter);
     if (invalid.length) return { id: action.id, status: 'error', code: 'invalid-scheduling', reason: invalid.join(' ') };
     const routing = calendarRoutingError(this.calendars, action.frontMatter);
     if (routing) {
@@ -916,27 +904,28 @@ export class CalSync {
   // Serialized: overlapping calls (back-to-back `changed` signals) don't run
   // concurrently; a signal arriving mid-run re-runs once after, against the
   // latest caller's action set.
-  async reconcile(allScheduled: SyncAction[]): Promise<void> {
-    this.pendingReconcile = allScheduled;
+  async reconcile(allScheduled: SyncAction[], canImport?: (action: SyncAction) => boolean): Promise<void> {
+    if (this.disposed) return;
+    this.pendingReconcile = {actions: allScheduled, canImport};
     if (this.reconciling) return;
     this.reconciling = true;
     try {
       while (this.pendingReconcile) {
         const batch = this.pendingReconcile;
         this.pendingReconcile = null;
-        await this.reconcileOnce(batch);
+        await this.reconcileOnce(batch.actions, batch.canImport);
       }
     } finally {
       this.reconciling = false;
     }
   }
 
-  private async reconcileOnce(allScheduled: SyncAction[]): Promise<void> {
+  private async reconcileOnce(allScheduled: SyncAction[], canImport?: (action: SyncAction) => boolean): Promise<void> {
     // No id / no helper / no access: reverse sync can't run, but none is an
     // unreported change — each is already surfaced elsewhere (report()'s standing
-    // `instance` failure, calendar_info's `auth: unavailable`, and the auth status
+    // `instance` failure, systemInfo.calendar's `unavailable` authorization, and the auth status
     // plus the forward outbox). Return without recording a duplicate.
-    if (this.identityReason() || !this.cal.available()) return;
+    if (this.refreshIdentity() || !this.cal.available()) return;
     const access = await this.checkAccess();
     if (access === 'no-access') return;
     if (access !== 'ok') {
@@ -954,13 +943,7 @@ export class CalSync {
     // the data-dir lock. A held lock means another phase is running; one
     // delayed re-run covers the (coarse) signal afterwards.
     if (!this.lock.tryAcquire()) {
-      if (this.lockRetry === null) {
-        this.lockRetry = setTimeout(() => {
-          this.lockRetry = null;
-          void this.reconcile(allScheduled).catch(() => {});
-        }, CALENDAR_RECONCILE_RETRY_MS);
-        this.lockRetry.unref?.();
-      }
+      this.requestReconciliation('lock-contention');
       return;
     }
     try {
@@ -973,7 +956,7 @@ export class CalSync {
         return;
       }
       this.requireIdentity();
-      await this.reconcileLocked(allScheduled, store);
+      await this.reconcileLocked(allScheduled, store, canImport);
     } catch (e) {
       if (!this.identityReason()) {
         this.reconcileFailures = [{ id: 'reverse sync', reason: `reverse sync failed: ${(e as Error).message}` }];
@@ -983,7 +966,7 @@ export class CalSync {
     }
   }
 
-  private async reconcileLocked(allScheduled: SyncAction[], store: Store): Promise<void> {
+  private async reconcileLocked(allScheduled: SyncAction[], store: Store, canImport?: (action: SyncAction) => boolean): Promise<void> {
     const instanceId = this.instanceId;
     await this.syncRecurrences(true);
     allScheduled = allScheduled.filter(a => !a.frontMatter.recurrence && !isNativeOccurrence(this.store, a));
@@ -1007,7 +990,7 @@ export class CalSync {
     this.diagnostics.delete('reverse sync');
 
     // Failures from this pass; committed at the end so a clean pass clears the
-    // last one's (calendar_info reflects the current state, not history).
+    // last one's (calendarSync reflects the current state, not history).
     const failures: CalendarFailure[] = [];
     // A cold pass collects its deschedules instead of executing them inline, so
     // a bulk disappearance can be capped after the whole calendar has been seen
@@ -1045,6 +1028,10 @@ export class CalSync {
       try {
         const action = storeAction(store, id);
         if (!action) this.cache.delete(id);
+        // The lifecycle may have a newer local intent buffered while this pass
+        // awaits Calendar. Leave that revision for forward sync before importing
+        // an older event over it, including the final cold deschedule re-read.
+        if (action && canImport && !canImport(action)) return undefined;
         return action;
       } catch (e) {
         fail(id, e);
@@ -1104,7 +1091,7 @@ export class CalSync {
         failures.push({
           id: 'reverse sync',
           reason: `deferred descheduling ${ids.length} actions (calendar returned no events for them): ${ids.join(', ')}. ` +
-            `If these deletions were intentional, clear 'scheduled' on them via update_action; otherwise check the calendar account.`,
+            `If these deletions were intentional, clear 'scheduled' on them through updateAction; otherwise check the calendar account.`,
         });
       } else {
         for (const stale of deschedules) {
@@ -1153,7 +1140,7 @@ export class CalSync {
     // its local state is ahead of the calendar, so neither import the stale event
     // nor read its absence as a deletion — the op or its retry pushes the truth.
     if (this.inFlight.has(action.id) || this.outbox.has(action.id)) return;
-    const invalid = schedulingIssues(action.frontMatter);
+    const invalid = calendarDefinitionIssues(action.frontMatter);
     if (invalid.length) throw new CalError(invalid.join(' '), 'invalid-scheduling');
     const routing = calendarRoutingError(this.calendars, action.frontMatter);
     if (routing) {
@@ -1164,7 +1151,7 @@ export class CalSync {
       // A previously unroutable action may never have had an event. Repair
       // forward first; absence here does not establish a calendar deletion.
       this.outbox.set(action.id, { action, reason: 'calendar routing restored; awaiting sync' });
-      this.scheduleOutboxRetry();
+      this.requestOutboxRetry();
       return;
     }
     if (!actual && this.unconfirmedRemovals.has(action.id)) return;
@@ -1189,7 +1176,7 @@ export class CalSync {
       this.recurring.delete(action.id);
       if (this.explicitReschedule(action)) {
         this.outbox.set(action.id, { action, reason: 'calendar start definition changed; awaiting explicit reschedule' });
-        this.scheduleOutboxRetry();
+        this.requestOutboxRetry();
         return;
       }
       const timing = eventTimingDiagnostic(actual);
@@ -1201,7 +1188,7 @@ export class CalSync {
       this.issues.delete(action.id);
       this.diagnostics.delete(action.id);
       const imported = importFromEvent(action, actual, this.calendars);
-      const invalidImport = schedulingIssues(imported.fm);
+      const invalidImport = calendarDefinitionIssues(imported.fm);
       if (invalidImport.length) throw new CalError(invalidImport.join(' '), 'invalid-scheduling');
       if (imported.summaries.length > 0) {
         if (!this.freshOnDisk(action)) return;
@@ -1303,7 +1290,7 @@ export class CalSync {
   // caller holds off descheduling rather than act on an unreliable miss.
   private async relocate(actions: SyncAction[]): Promise<{ found: Map<string, CalEvent>; conclusive: boolean }> {
     const found = new Map<string, CalEvent>();
-    const syncable = actions.filter((a) => a.frontMatter.scheduled && a.frontMatter.calendar && schedulingIssues(a.frontMatter).length === 0);
+    const syncable = actions.filter((a) => a.frontMatter.scheduled && a.frontMatter.calendar && calendarDefinitionIssues(a.frontMatter).length === 0);
     if (syncable.length === 0) return { found, conclusive: true };
 
     const { min, max, want } = sweepWindow(syncable);
@@ -1327,45 +1314,26 @@ export class CalSync {
     return { found, conclusive: true };
   }
 
-  // Snapshot-consistency guard, the on-disk analog of the in-process inFlight
-  // rule: a tool call or a direct file edit may rewrite an action file at any
-  // time (tools write markdown before pushing to the calendar), and this pass's
-  // snapshot of the action predates its awaits. Re-read the file from disk —
-  // not the store map, whose watcher lags an outside edit by ~100ms+; the
-  // guard exists precisely for that staleness — and compare EVERY
-  // field the write rewrites: writeAction serializes the whole file, so the
-  // compare surface must match the write surface (front matter and body), or
-  // a foreign mid-pass edit to an unsynced field would still be clobbered.
-  // A mismatch (or an unreadable file) means writing would clobber a change
-  // this pass never saw: the caller skips the action, and the next pass
-  // reconciles it against current reality. Synchronous, so it sits on
-  // reconcileAction's no-await read→write path.
+  // The source owner checks the entire write surface after Calendar awaits.
+  // An external edit can precede watcher publication; importing against that
+  // older snapshot could clobber a field unrelated to Calendar. A mismatch or
+  // unreadable source defers the import until lifecycle publishes current data.
+  // This synchronous guard stays on reconcileAction's no-await commit path.
   private freshOnDisk(action: SyncAction): boolean {
-    const file = this.store?.getActionFile(action.id);
-    if (!file) return false;
-    let disk: { frontMatter: ActionFrontMatter; body: string };
-    try {
-      disk = parseActionFile(readManagedText(this.store!.getDataDir(), file)).value;
-    } catch {
-      return false;
-    }
-    const d = disk.frontMatter;
-    const fm = action.frontMatter;
-    return d.name === fm.name && d.created === fm.created &&
-      d.scheduled === fm.scheduled && d.timezone === fm.timezone &&
-      d.duration === fm.duration && d.calendar === fm.calendar && d.calendar_account === fm.calendar_account &&
-      d.deadline === fm.deadline && d.resolution === fm.resolution &&
-      disk.body === action.body;
+    return this.store?.actionMatchesSource(action.id, action) ?? false;
   }
 
   // Write an action back through the store (disk + memory). Throws when the action
   // is unknown so the caller (the reconcile pass) records a failure instead of
   // silently claiming success.
   private writeAction(actionId: string, fm: ActionFrontMatter, body: string): void {
+    if (!this.sourceMutation) throw new Error('Lifecycle mutation owner is unavailable for Calendar source writes.');
     this.requireIdentity();
     const file = this.store?.getActionFile(actionId);
     if (!this.store || !file) throw new Error(`action file not found: ${actionId}`);
-    this.store.saveAction(actionId, fm, body === this.store.getAction(actionId)?.body ? undefined : body, file);
+    const store = this.store;
+    const write = () => store.saveAction(actionId, fm, body === store.getAction(actionId)?.body ? undefined : body, file);
+    this.sourceMutation(write);
   }
 
   // The action id of an event whose marker belongs to this instance, else null.
@@ -1425,7 +1393,7 @@ export class CalSync {
     // Sweep for events of every scheduled, calendar-pinned action regardless of
     // resolution: done events are kept (and updated), cancelled ones need their
     // id cached so they can be deleted even after a restart.
-    const syncable = allScheduled.filter((a) => a.frontMatter.scheduled && a.frontMatter.calendar && schedulingIssues(a.frontMatter).length === 0 && !this.recurrenceSourceIssue(a));
+    const syncable = allScheduled.filter((a) => a.frontMatter.scheduled && a.frontMatter.calendar && calendarDefinitionIssues(a.frontMatter).length === 0 && !this.recurrenceSourceIssue(a));
     if (syncable.length === 0) return;
 
     const { min, max, want } = sweepWindow(syncable);
@@ -1460,7 +1428,7 @@ export class CalSync {
       const actionId = this.ownActionId(ev);
       if (!actionId || unsafe.has(actionId)) continue;
       const action = this.store ? storeAction(this.store, actionId) : undefined;
-      if (action && (this.recurrenceSourceIssue(action) || calendarRoutingError(this.calendars, action.frontMatter) || schedulingIssues(action.frontMatter).length)) continue;
+      if (action && (this.recurrenceSourceIssue(action) || calendarRoutingError(this.calendars, action.frontMatter) || calendarDefinitionIssues(action.frontMatter).length)) continue;
       if (want.has(actionId)) {
         this.cache.set(actionId, ev.id);
         this.sweptEvents.set(actionId, ev);
@@ -1497,7 +1465,10 @@ function skip(actions: SyncAction[], reason: string): SyncResult[] {
 }
 
 function sourceSnapshot(action: SyncAction): string {
-  return JSON.stringify([Object.entries(action.frontMatter).sort(([a], [b]) => a.localeCompare(b)), action.body, action.description ?? null]);
+  // Delegation does not affect Calendar state and can retain malformed cyclic
+  // YAML for authoring diagnostics. It must not participate in this fingerprint.
+  const {delegation: _delegation, ...metadata} = action.frontMatter;
+  return JSON.stringify([Object.entries(metadata).sort(([a], [b]) => a.localeCompare(b)), action.body, action.description ?? null]);
 }
 
 // The helper's structured failure class from a caught error, if it sent one.
@@ -1544,6 +1515,7 @@ export function desiredFromAction(action: SyncAction, instance: string, prefixes
     title: (state === 'done' ? prefixes.done : prefixes.active) + fm.name,
     start,
     end,
+    location: calendarLocation(fm.location),
   };
   if (fm.calendar_account) up.calendar_account = fm.calendar_account;
   if (allDay) up.allDay = true;
@@ -1575,6 +1547,7 @@ function eventsDiffer(up: UpsertEventArgs, ev: CalEvent): boolean {
   if (up.marker !== ev.url) return true;
   if (up.calendar !== ev.calendar) return true;
   if (up.calendar_account && up.calendar_account !== ev.calendar_account) return true;
+  if (!sameCalendarLocation(up.location, ev.location)) return true;
   if (!!up.allDay !== !!ev.allDay) return true;
   if (up.allDay) return up.start.slice(0, 10) !== ev.start.slice(0, 10);
   if (!sameEventZone(up.timezone, ev.timezone)) return true;

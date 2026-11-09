@@ -1,0 +1,361 @@
+{
+  "label": "before",
+  "snapshotSha256": "e85603b3cab1d7a464efa226c7b15ddd3a212a90220b1eb138d6063465a20ab4",
+  "system": {
+    "platform": "darwin",
+    "arch": "arm64",
+    "release": "27.0.0",
+    "cpu": "Apple M3 Ultra",
+    "cores": 32,
+    "ramGiB": 256,
+    "node": "v26.12.1"
+  },
+  "method": {
+    "warmups": 5,
+    "sourceSamples": 30,
+    "rankedSamples": 30,
+    "rankedSamplesAt10000OrMore": 10,
+    "dimension": 1024,
+    "cache": "Warm OS filesystem cache and completed native semantic index; no file watchers or periodic reconciliation.",
+    "sourceOnly": "Actual Store.rebuild, assertSearchSourceReadable and first searchSourceVersion; unchanged bytes and exact source hash asserted.",
+    "ranked": "Sequential SemanticReconciler.ensureCurrent then SemanticSearchService.search; includes source verification, model checks, native index validation and vector ranking.",
+    "vectors": "Deterministic SHA256-seeded 1024-dimensional vectors (or --dimension); document and query inference excluded. Actual configured Ollama /api/tags identity calls are measured during ranked searches.",
+    "setup": "Index creation excluded. Setup identity uses one captured real model digest to avoid measuring HTTP checks for synthetic document batches.",
+    "fixture": "Existing synthetic writeSemanticFixture;12 entries share a weekly note, most remaining records occupy individual Markdown files.",
+    "percentiles": "Nearest-rank percentiles; sequential single client; phase percentiles must not be added to derive a total percentile.",
+    "exclusions": "No real embedding inference, daemon socket transport, GraphQL filtering/serialization, first indexing or cold disk cache. This is a freshness/retrieval benchmark, not embedding quality or complete production latency.",
+    "checks": "Warm queries must embed no documents, preserve native table version/checkpoint, and produce identical handles per query within and across revisions."
+  },
+  "results": [
+    {
+      "records": 100,
+      "files": 94,
+      "bytes": 31269,
+      "sourceOnly": {
+        "refresh": {
+          "samples": 30,
+          "p50Ms": 7.7011249999999905,
+          "p95Ms": 9.061959000000002,
+          "minMs": 7.216791000000001,
+          "maxMs": 10.208916000000016,
+          "meanMs": 7.927741599999998
+        },
+        "fingerprint": {
+          "samples": 30,
+          "p50Ms": 0.3342920000000049,
+          "p95Ms": 0.513542000000001,
+          "minMs": 0.295833000000016,
+          "maxMs": 0.5627089999999839,
+          "meanMs": 0.3485515333333344
+        },
+        "total": {
+          "samples": 30,
+          "p50Ms": 8.044125000000008,
+          "p95Ms": 9.378292000000016,
+          "minMs": 7.529875000000004,
+          "maxMs": 10.722458000000017,
+          "meanMs": 8.276293133333333
+        }
+      },
+      "ranked": {
+        "total": {
+          "samples": 30,
+          "p50Ms": 184.71795900000052,
+          "p95Ms": 193.01900000000023,
+          "minMs": 171.21716599999945,
+          "maxMs": 193.3010830000003,
+          "meanMs": 184.85116940000006
+        },
+        "ensureCurrent": {
+          "samples": 30,
+          "p50Ms": 9.606790999999703,
+          "p95Ms": 20.305374999999913,
+          "minMs": 8.003499999999804,
+          "maxMs": 21.89091600000029,
+          "meanMs": 11.163961066666683
+        },
+        "serviceSearch": {
+          "samples": 30,
+          "p50Ms": 175.10920799999985,
+          "p95Ms": 178.6915409999997,
+          "minMs": 163.21366599999965,
+          "maxMs": 179.193667,
+          "meanMs": 173.6872083333334
+        },
+        "identity": {
+          "samples": 30,
+          "p50Ms": 170.68633400000044,
+          "p95Ms": 173.72104199999967,
+          "minMs": 158.268876000001,
+          "maxMs": 173.97416599999974,
+          "meanMs": 168.46226119999994
+        },
+        "identityCallsPerQuery": [
+          4
+        ],
+        "documentEmbeddings": 0,
+        "queryEmbeddings": 35,
+        "nativeStorageUnchanged": true,
+        "rankedHandlesEqualToComparison": null
+      },
+      "rankedHandles": {
+        "How can I recover my notes if my computer disappears?": [
+          "#action/2026-06-09-distractor-000052",
+          "#action/2026-06-09-distractor-000076",
+          "#project/2026-06-08-air-gap",
+          "#action/2026-06-08-handrail",
+          "#project/2026-06-09-distractor-000075",
+          "#artifact/2026-06-09-distractor-000068",
+          "#artifact/2026-06-09-distractor-000080",
+          "#action/2026-06-08-small-envelope",
+          "#entry/2026-06-08T09:09",
+          "#artifact/2026-06-09-distractor-000086"
+        ],
+        "Cold copy": [
+          "#project/2026-06-08-small-envelope",
+          "#action/2026-06-08-handrail",
+          "#artifact/2026-06-09-distractor-000098",
+          "#entry/2026-06-08T09:00",
+          "#artifact/2026-06-09-distractor-000053",
+          "#project/2026-06-09-distractor-000051",
+          "#entry/2026-06-08T09:05",
+          "#action/2026-06-09-distractor-000058",
+          "#project/2026-06-08-handrail",
+          "#action/2026-06-09-distractor-000052"
+        ],
+        "What did we decide about the ending without any dialogue?": [
+          "#artifact/2026-06-09-distractor-000086",
+          "#action/2026-06-09-distractor-000055",
+          "#project/2026-06-09-distractor-000042",
+          "#entry/2026-06-08T09:09",
+          "#action/2026-06-08-green-room",
+          "#project/2026-06-08-paper-trail",
+          "#entry/2026-06-08T09:00",
+          "#action/2026-06-09-distractor-000079",
+          "#action/2026-06-09-distractor-000094",
+          "#action/2026-06-08-paper-trail"
+        ]
+      }
+    },
+    {
+      "records": 1000,
+      "files": 994,
+      "bytes": 310794,
+      "sourceOnly": {
+        "refresh": {
+          "samples": 30,
+          "p50Ms": 78.05012499999975,
+          "p95Ms": 84.07387500000004,
+          "minMs": 73.00283300000046,
+          "maxMs": 84.5797079999993,
+          "meanMs": 78.22764150000025
+        },
+        "fingerprint": {
+          "samples": 30,
+          "p50Ms": 2.451500000001033,
+          "p95Ms": 2.744833999999173,
+          "minMs": 2.223707999999533,
+          "maxMs": 2.9082500000004075,
+          "meanMs": 2.4689570666665834
+        },
+        "total": {
+          "samples": 30,
+          "p50Ms": 80.79666600000019,
+          "p95Ms": 86.68629200000032,
+          "minMs": 75.63025000000016,
+          "maxMs": 87.03120800000033,
+          "meanMs": 80.69659856666682
+        }
+      },
+      "ranked": {
+        "total": {
+          "samples": 30,
+          "p50Ms": 266.2831249999999,
+          "p95Ms": 275.8910420000029,
+          "minMs": 258.6958330000016,
+          "maxMs": 276.3885829999999,
+          "meanMs": 266.98088760000013
+        },
+        "ensureCurrent": {
+          "samples": 30,
+          "p50Ms": 89.015625,
+          "p95Ms": 94.74962500000038,
+          "minMs": 82.40912500000013,
+          "maxMs": 97.69462500000009,
+          "meanMs": 88.51399856666703
+        },
+        "serviceSearch": {
+          "samples": 30,
+          "p50Ms": 178.33579199999986,
+          "p95Ms": 183.9979999999996,
+          "minMs": 171.98558400000002,
+          "maxMs": 184.12666699999863,
+          "meanMs": 178.46688903333313
+        },
+        "identity": {
+          "samples": 30,
+          "p50Ms": 167.18712400000186,
+          "p95Ms": 172.890664999999,
+          "minMs": 161.34799999999814,
+          "maxMs": 172.98387600000387,
+          "meanMs": 167.3601931333332
+        },
+        "identityCallsPerQuery": [
+          4
+        ],
+        "documentEmbeddings": 0,
+        "queryEmbeddings": 35,
+        "nativeStorageUnchanged": true,
+        "rankedHandlesEqualToComparison": null
+      },
+      "rankedHandles": {
+        "How can I recover my notes if my computer disappears?": [
+          "#artifact/2026-06-09-distractor-000386",
+          "#action/2026-06-09-distractor-000424",
+          "#action/2026-06-09-distractor-000052",
+          "#artifact/2026-06-09-distractor-000956",
+          "#action/2026-06-09-distractor-000715",
+          "#project/2026-06-09-distractor-000222",
+          "#project/2026-06-09-distractor-000363",
+          "#artifact/2026-06-09-distractor-000599",
+          "#project/2026-06-09-distractor-000564",
+          "#action/2026-06-09-distractor-000076"
+        ],
+        "Cold copy": [
+          "#artifact/2026-06-09-distractor-000203",
+          "#action/2026-06-09-distractor-000451",
+          "#project/2026-06-08-small-envelope",
+          "#artifact/2026-06-09-distractor-000857",
+          "#action/2026-06-09-distractor-000934",
+          "#action/2026-06-09-distractor-000610",
+          "#artifact/2026-06-09-distractor-000494",
+          "#action/2026-06-09-distractor-000376",
+          "#artifact/2026-06-09-distractor-000713",
+          "#action/2026-06-09-distractor-000712"
+        ],
+        "What did we decide about the ending without any dialogue?": [
+          "#project/2026-06-09-distractor-000228",
+          "#action/2026-06-09-distractor-000607",
+          "#action/2026-06-09-distractor-000862",
+          "#project/2026-06-09-distractor-000675",
+          "#artifact/2026-06-09-distractor-000404",
+          "#action/2026-06-09-distractor-000937",
+          "#action/2026-06-09-distractor-000502",
+          "#action/2026-06-09-distractor-000454",
+          "#artifact/2026-06-09-distractor-000506",
+          "#artifact/2026-06-09-distractor-000809"
+        ]
+      }
+    },
+    {
+      "records": 10000,
+      "files": 9994,
+      "bytes": 3133044,
+      "sourceOnly": {
+        "refresh": {
+          "samples": 30,
+          "p50Ms": 816.8155839999963,
+          "p95Ms": 980.1944579999981,
+          "minMs": 789.5374169999996,
+          "maxMs": 990.1289160000015,
+          "meanMs": 837.9648597666671
+        },
+        "fingerprint": {
+          "samples": 30,
+          "p50Ms": 24.081083999997645,
+          "p95Ms": 25.7309580000001,
+          "minMs": 22.932667000000947,
+          "maxMs": 27.832374999998137,
+          "meanMs": 24.236643033333166
+        },
+        "total": {
+          "samples": 30,
+          "p50Ms": 840.5224999999991,
+          "p95Ms": 1004.5051250000033,
+          "minMs": 813.4220419999983,
+          "maxMs": 1014.227082999998,
+          "meanMs": 862.2015028000003
+        }
+      },
+      "ranked": {
+        "total": {
+          "samples": 10,
+          "p50Ms": 1172.650957999991,
+          "p95Ms": 1230.5436670000054,
+          "minMs": 1160.9557910000003,
+          "maxMs": 1230.5436670000054,
+          "meanMs": 1191.6317332999993
+        },
+        "ensureCurrent": {
+          "samples": 10,
+          "p50Ms": 851.6460829999996,
+          "p95Ms": 905.4472919999971,
+          "minMs": 840.1109999999899,
+          "maxMs": 905.4472919999971,
+          "meanMs": 864.8581749999997
+        },
+        "serviceSearch": {
+          "samples": 10,
+          "p50Ms": 325.09637500000827,
+          "p95Ms": 343.8822499999951,
+          "minMs": 314.62166600000637,
+          "maxMs": 343.8822499999951,
+          "meanMs": 326.7735582999994
+        },
+        "identity": {
+          "samples": 10,
+          "p50Ms": 198.09341700001096,
+          "p95Ms": 205.42012500001874,
+          "minMs": 193.49616700001934,
+          "maxMs": 205.42012500001874,
+          "meanMs": 199.13858320000145
+        },
+        "identityCallsPerQuery": [
+          4
+        ],
+        "documentEmbeddings": 0,
+        "queryEmbeddings": 15,
+        "nativeStorageUnchanged": true,
+        "rankedHandlesEqualToComparison": null
+      },
+      "rankedHandles": {
+        "How can I recover my notes if my computer disappears?": [
+          "#artifact/2026-06-09-distractor-001085",
+          "#artifact/2026-06-09-distractor-008081",
+          "#action/2026-06-09-distractor-002164",
+          "#artifact/2026-06-09-distractor-002417",
+          "#artifact/2026-06-09-distractor-004475",
+          "#artifact/2026-06-09-distractor-003152",
+          "#project/2026-06-09-distractor-004686",
+          "#project/2026-06-09-distractor-009606",
+          "#action/2026-06-09-distractor-002752",
+          "#artifact/2026-06-09-distractor-005264"
+        ],
+        "Cold copy": [
+          "#project/2026-06-09-distractor-007086",
+          "#action/2026-06-09-distractor-007825",
+          "#project/2026-06-09-distractor-003126",
+          "#artifact/2026-06-09-distractor-005324",
+          "#action/2026-06-09-distractor-007732",
+          "#artifact/2026-06-09-distractor-009668",
+          "#action/2026-06-09-distractor-001051",
+          "#artifact/2026-06-09-distractor-006134",
+          "#project/2026-06-09-distractor-005193",
+          "#project/2026-06-09-distractor-006687"
+        ],
+        "What did we decide about the ending without any dialogue?": [
+          "#artifact/2026-06-09-distractor-005537",
+          "#action/2026-06-09-distractor-007276",
+          "#artifact/2026-06-09-distractor-003596",
+          "#project/2026-06-09-distractor-001905",
+          "#project/2026-06-09-distractor-000228",
+          "#project/2026-06-09-distractor-006774",
+          "#project/2026-06-09-distractor-008772",
+          "#project/2026-06-09-distractor-003162",
+          "#project/2026-06-09-distractor-001104",
+          "#artifact/2026-06-09-distractor-004004"
+        ]
+      }
+    }
+  ]
+}

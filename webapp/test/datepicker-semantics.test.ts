@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createDatePicker } from '../src/datepicker';
-import { addLatchMarker, mountLatch, resetLatchMarkers, resetReadoutPad, updateLatchNow, REDUCED_MOTION } from '../src/latch';
+import { addLatchMarker, mountLatch, resetLatchMarkers, updateLatchNow, REDUCED_MOTION } from '../src/latch';
 
 let picker: ReturnType<typeof createDatePicker> | undefined;
 
@@ -12,7 +12,7 @@ beforeEach(() => {
 
 afterEach(() => {
   picker?.close(); picker?.close(); picker = undefined;
-  resetLatchMarkers(); resetReadoutPad();
+  resetLatchMarkers();
   delete document.documentElement.dataset.timelineLayout;
   document.body.replaceChildren();
   vi.restoreAllMocks();
@@ -26,6 +26,7 @@ function fixture() {
   mountLatch(flow, () => picker!.toggle());
   const latch = document.getElementById('date-latch')!;
   const chip = latch.querySelector<HTMLElement>('.date-latch-chip')!;
+  chip.querySelector<HTMLElement>('.latch-date-row')!.style.paddingTop = '12.5px';
   const marker = flow.appendChild(document.createElement('div')); marker.dataset.date = '2026-10-03';
   addLatchMarker(marker); updateLatchNow();
   picker = createDatePicker({ jumpToDate: vi.fn(), jumpNear: vi.fn(async () => true) });
@@ -52,14 +53,14 @@ describe('date picker semantics', () => {
     expect(f.chip.getAttribute('aria-label')).toBe('Jump to date');
   });
 
-  it('measures the readout offset after a hidden timeline becomes visible', () => {
+  it('keeps the standard readout position when a hidden timeline becomes visible', () => {
     const f = fixture();
     const scroller = document.getElementById('flow-scroll')!;
     vi.spyOn(f.marker, 'getBoundingClientRect').mockImplementation(() => new DOMRect(0, scroller.hidden ? 0 : 13.5, 100, 20));
     scroller.hidden = true;
-    resetReadoutPad(); updateLatchNow();
+    updateLatchNow();
     scroller.hidden = false; updateLatchNow();
-    expect(f.chip.querySelector<HTMLElement>('.latch-date-row')!.style.paddingTop).toBe('13.5px');
+    expect(f.chip.querySelector<HTMLElement>('.latch-date-row')!.style.paddingTop).toBe('12.5px');
   });
 
   it('tracks the top timestamp date with reduced motion in the stacked layout', () => {
@@ -71,11 +72,11 @@ describe('date picker semantics', () => {
     vi.spyOn(row, 'getBoundingClientRect').mockReturnValue(new DOMRect(0, 0, 16, 20));
     const next = document.createElement('div'); next.dataset.date = '2026-10-02';
     f.marker.parentElement!.append(next); addLatchMarker(next);
-    let top = 10;
+    let top = 22.5;
     vi.spyOn(next, 'getBoundingClientRect').mockImplementation(() => new DOMRect(0, top, 100, 20));
     updateLatchNow();
     expect(f.latch.dataset.date).toBe('2026-10-03');
-    top = 0; updateLatchNow();
+    top = 12.5; updateLatchNow();
     expect(f.latch.dataset.date).toBe('2026-10-02');
     expect(f.chip.title).toBe('Jump to date: Oct 2, 2026');
   });

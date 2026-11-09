@@ -13,6 +13,13 @@ A client names the instance on every request; the daemon holds no session state 
 
 Every agent session runs its own MCP server over stdio, and that server is a client. CLI commands that read or write records are clients too; `instance init` and `instance validate` work on files directly and need no daemon.
 
+On macOS the bundled `aside-native` executable provides native services through
+subcommands. Calendar and system-event notifications use independent long-lived
+processes; geocoding, the instance picker, and default-browser discovery use
+short-lived processes. Sharing one binary does not couple their request streams
+or lifetimes. Native initialization and Calendar permission handling occur only
+in the selected subcommand.
+
 ## Guarantees
 
 On the [supported release platform](#constraints):
@@ -24,11 +31,55 @@ On the [supported release platform](#constraints):
 
 Direct file edits remain valid: the daemon watches each loaded instance and reloads what changed.
 
+Loaded-instance reads use published memory. They do not rescan source files,
+reload for diagnostics, or run feature-specific freshness checks. Known persisted
+writes update that memory and notify the instance lifecycle; feature maintenance
+can complete asynchronously.
+
 The daemon owns each instance's portable [data core](record-model.md), shared by MCP and the webpage. HTTP supplies parsed snapshots, derived relationships and diagnostics; browser tabs keep a presentation cache. Raw file endpoints supply supporting text and media.
 
 ## Lifecycle
 
 Once started, the daemon stays running until explicitly stopped or shut down for replacement. It watches and syncs every known instance, even with no clients or browser tabs connected. `aside daemon start` starts or reuses it; `aside daemon install` also starts it at login.
+
+### Consistency ownership
+
+`InstanceLifecycle` owns source repair and delivery to identity, semantic search,
+automation, and Calendar features. Features expose load, changed, reconcile, and
+unload hooks. They consume loaded snapshots and keep their domain-specific work;
+they do not each watch or reload authored files. Event bursts coalesce, and one
+failed feature is retried with bounded backoff without stopping other features.
+Loaded diagnostics expose failed feature hooks as `instance_feature_failed`.
+
+| Event | Lifecycle action |
+|---|---|
+| Startup, registration, or first load | Load content, establish feature baselines, start watching, and queue initial reconciliation. Retained registrations whose load fails retry without a client request. |
+| MCP, CLI, or GraphQL mutation; attachment operation; delegation completion | The shared mutation journal notifies lifecycle management, including partially persisted operations and uncertain readback. Publish loaded changes and notify features; reload when memory may not reflect a saved write. |
+| File watcher, watcher readiness, or attachment change | Queue a coalesced source refresh, then notify features from the resulting loaded snapshot. |
+| Calendar helper signal or changed identity/catalogue observations | Reconcile the affected feature through the same owner. An integration signal alone does not require a source scan. |
+| Periodic reconciliation | Re-read source bytes and run feature maintenance, covering missed file/helper events, model changes, and repaired dependencies. |
+| Unload or shutdown | Cancel watchers and pending retries, unregister features, and dispose integrations. Shutdown first drains accepted lifecycle work and attempts Calendar flushing within its existing deadline. |
+
+Semantic reconciliation owns model discovery, durable certificates, native index
+version checks, and index cleanup. A warm semantic read checks the loaded hash
+and its published generation binding in memory, then ranks through the captured
+index. Calendar status and identity blockers likewise use loaded/cached state.
+Loaded action changes forward to Calendar before reverse import; periodic work
+also catches missed Calendar signals. The initial action baseline preserves cold
+startup import of Calendar deletions instead of recreating every missing event.
+Native recurrence maintenance imports witnessed Calendar gestures before
+exporting unchanged saved occurrences; local source edits retain priority.
+Deleting an action file alone retains the existing policy: it does not authorize
+deleting its Calendar event.
+
+Queries observe the latest published lifecycle snapshot. Known writes notify the
+owner; an unseen external edit or a racing operation can leave observations
+temporarily behind until watching or periodic
+reconciliation catches up. Atomic persistence, metadata merging, immediate
+pre-write guards, and external-operation validation remain where needed to avoid
+overwriting authored data or writing to the wrong Calendar identity. Read-only
+passive GraphQL scopes may load temporary content without activating an instance
+or starting its features; they do not create another managed lifecycle.
 
 `instance list` and offline daemon status garbage-collect the saved registry
 before returning valid instances. Direct cleanup uses the startup and lifetime locks and re-reads under
@@ -38,7 +89,7 @@ saved list and report unavailability without modifying its files.
 
 ### Instances
 
-- **Known.** The daemon remembers every instance named by a client or registered through the browser, across restarts. Registrations and loaded stores use canonical directory paths: an alias is accepted but its later removal or retargeting cannot redirect the registered instance. Before returning an instance list or after a failed instance operation, garbage-collect verified non-instances from the saved registry, cached stores, and connection references. Public listings include only paths that currently pass `isAsideDir`; a removed, repurposed, or unreadable directory is never advertised as an instance. Manifest read failures retain internal registration metadata and its [identity blocker](instance.md#identity-conflicts) until repair or explicit forgetting. Recheck validity even when a store is already cached, before permitting another operation. Each client keeps independent selection and workspace auto-selection rules.
+- **Known.** The daemon remembers every instance named by a client or registered through the browser, across restarts. Registrations and loaded stores use canonical directory paths: an alias is accepted but its later removal or retargeting cannot redirect the registered instance. Catalogue checks garbage-collect verified non-instances from the saved registry, cached stores, and connection references. Public listings include only paths that currently pass `isAsideDir`; a removed, repurposed, or unreadable directory is never advertised as an instance. Manifest read failures retain internal registration metadata and its [identity blocker](instance.md#identity-conflicts) until repair or explicit forgetting. Persistence preflight checks cached instances before writes; ordinary loaded reads do not repeat that filesystem validation. Each client keeps independent selection and workspace auto-selection rules.
 - **Loaded.** Every known instance loads at startup or registration and stays cached, watched, and synced. A failed load is reported in status and does not remove a valid registration. A forgotten instance unloads after its last client or browser tab disconnects; verified non-instances unload immediately.
 
 ### Commands
@@ -49,7 +100,7 @@ saved list and report unavailability without modifying its files.
 | `aside daemon install` | Install the login job and restart the daemon under it. |
 | `aside daemon uninstall` | Remove the saved job for future logins, leaving the running daemon and any loaded launchd job as they are. |
 | `aside instance add --dir <path> [--dir <path>]…` | Add instances to the known list. |
-| `aside instance forget --dir <path> [--dir <path>]…` | Remove instances from the known list, preserving their files. |
+| `aside instance forget --dir <path> [--dir <path>]… [--clear-cache]` | Remove registrations, preserving instance files. Optionally clear semantic caches after active use ends. |
 | `aside instance list` | List all known instances without starting the daemon. |
 | `aside daemon status` | Whether it is running, version, connections, the login job, and known and loaded instances. |
 | `aside daemon stop [-f\|--force]` | Exit when no other clients or tabs are connected; force a graceful shutdown when in use. |

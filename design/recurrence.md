@@ -29,7 +29,7 @@ ordinary action and is prohibited.
 
 ## Schedule changes
 
-`update_action.recurrence` accepts exactly one command:
+`updateAction.input.recurrence` accepts exactly one command:
 
 | Command | Input | Effect |
 |---|---|---|
@@ -56,23 +56,19 @@ Past occurrences remain editable.
 
 ## Projection
 
-Project all past occurrences and a configurable future window, defaulting to
-seven days and extending to at least one future occurrence if any remain.
-Planning prioritizes upcoming work, backlog, then recent history. History has no
-cutoff; cursors fix the page boundary in time.
-Configure the window with `update_instance.recurrenceLookaheadDays`, stored in
-instance `config`.
+GraphQL action collections use [projection schedule ranges](graphql.md#projection-schedule-ranges).
+The webapp panel previews seven days ahead and at least the next future
+occurrence of each template. It prioritizes upcoming work, backlog, then recent
+history, with no history cutoff; cursors fix the page boundary in time. Saved
+actions appear independently of the preview window.
 
 Only edits materialize occurrences, including completion or cancellation by a
 user, agent, automation, or Calendar gesture. Reading or reaching the scheduled
 time or starting delegation leaves an occurrence projected and unresolved.
-Exact GraphQL action lookup and edits resolve projection handles independently of
-query lookahead; after saving, the same handle resolves the saved occurrence.
-
-Backlog and timeline combine labeled projections with saved actions. Ordinary
-queries, indexes, counts, and relationship graphs contain saved records only.
-Saved occurrences follow ordinary dates, states, and filters, including outside
-the lookahead. Projection handles are planning references, never ordinary IDs.
+Unsaved occurrences have no creation time. Exact GraphQL action lookup and edits
+resolve projection handles independently of collection ranges; after saving,
+the same handle resolves the saved occurrence. Projection handles are transient
+references; indexes and stored relationship graphs contain saved records only.
 
 ## Identity
 
@@ -92,7 +88,7 @@ Never match occurrences by current timing or sequence position.
 
 ## Materialization
 
-`update_occurrence` reuses an existing action for the identity. Otherwise allocate
+`updateOccurrence` reuses an existing action for the identity. Otherwise allocate
 an ordinary ID from the current local creation date and name after the edit:
 `YYYY-MM-DD-{slug}`, then `-2`, `-3`, etc. for collisions. This applies to Calendar
 imports too; the occurrence date does not determine creation time or ID.
@@ -100,12 +96,14 @@ Save the action and index with its provenance.
 
 Creating a template requires entry context once. Occurrences inherit its live
 entry-derived project associations; their own entries may add associations.
-Materialization creates no entry and leaves the template's entry intact.
+Materialization creates no entry and leaves the template's entry intact, so a
+saved occurrence needs no entry tag; validation requires one on every other
+action, templates included.
 
 ## Calendar
 
 Aside is authoritative. Prefer native recurring series and exceptions, with a
-visible rule and previous/next navigation, independently of Aside's lookahead.
+visible rule and previous/next navigation, independently of collection ranges.
 Materialization reuses the native occurrence.
 
 Translate schedules independently; decompose RRULEs into exact native series

@@ -1,17 +1,18 @@
-import { eventTimes, savedEvent } from './calendar-fixture.js';
+import { calendarMutationFixture, eventTimes, savedEvent } from './calendar-fixture.js';
 import { describe, it, expect, afterEach, vi } from 'vitest';
 import { writeFileSync, chmodSync, rmSync, readFileSync, existsSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { CalClient, CalUnavailable, resolveCalBin } from '../src/mcp/calendar/client.js';
-import { handleCalendarInfo } from '../src/mcp/calendar/info.js';
-import { CalSync as BaseCalSync, storeAction, type SyncAction } from '../src/mcp/calendar/sync.js';
+import { calendarReport } from './support/calendar-report.js';
+import { CalSync as BaseCalSync, storeAction, type SyncAction, type CalendarReconciliationRequest } from '../src/mcp/calendar/sync.js';
 import { SyncLock } from '../src/mcp/calendar/lock.js';
-import { Store } from '../src/mcp/store.js';
+import { Store } from '../src/source/store.js';
 import { buildMarker } from '../src/mcp/calendar/markers.js';
 import * as parser from '../src/core/parser.js';
 
 interface FakeOpts {
+  expectedArgs?: string[];
   silent?: boolean; // read requests but never reply (drives the timeout path)
   exitOnRequest?: boolean; // exit without replying (drives the in-flight-death path)
   recordTo?: string; // append each received request (JSON per line) for assertions
@@ -35,6 +36,7 @@ function writeFake(responses: Record<string, unknown>, opts: FakeOpts = {}): str
   const script = `#!/usr/bin/env node
 const R = ${JSON.stringify(responses)};
 const OPTS = ${JSON.stringify(opts)};
+if (OPTS.expectedArgs && JSON.stringify(process.argv.slice(2)) !== JSON.stringify(OPTS.expectedArgs)) process.exit(9);
 let confirmation;
 const wall = date => [String(date.getFullYear()).padStart(4,'0'), String(date.getMonth()+1).padStart(2,'0'), String(date.getDate()).padStart(2,'0')].join('-') + 'T' + [date.getHours(),date.getMinutes()].map(n=>String(n).padStart(2,'0')).join(':');
 const rl = require('readline').createInterface({ input: process.stdin });
@@ -60,7 +62,7 @@ rl.on('line', (line) => {
   if (msg.cmd === 'upsert-event' && r.ok && !msg.allDay && !msg.timezone) {
     const start = new Date(msg.start), end = new Date(start.getTime() + msg.durationMinutes*60000);
     confirmation = { id:r.result.eventId, calendar:msg.calendar, calendar_account:msg.calendar_account, title:msg.title, url:msg.marker, timezone:null,
-      start:wall(start), end:wall(end), startInstant:start.getTime(), endInstant:end.getTime(), durationMinutes:msg.durationMinutes };
+      start:wall(start), end:wall(end), startInstant:start.getTime(), endInstant:end.getTime(), durationMinutes:msg.durationMinutes, location:msg.location ?? null };
   }
   const out = JSON.stringify(Object.assign({ id: msg.id }, r)) + '\\n';
   if (OPTS.listDelayMs && msg.cmd === 'list-events') setTimeout(() => process.stdout.write(out), OPTS.listDelayMs);
@@ -78,11 +80,14 @@ rl.on('line', (line) => {
 const clients: CalClient[] = [];
 const scripts: string[] = [];
 const syncs: BaseCalSync[] = [];
-// Track even inline-created syncers so their retry timers cannot outlive the
-// helper scripts and instance directories owned by this test fixture.
+// Unit operations capture retry notifications explicitly. Lifecycle tests own
+// automatic retries; this adapter fixture never starts background work.
 class CalSync extends BaseCalSync {
+  readonly retryRequests: CalendarReconciliationRequest[] = [];
   constructor(...args: ConstructorParameters<typeof BaseCalSync>) {
+    if (args[2] && !args[5]) args[5] = calendarMutationFixture(args[2]);
     super(...args);
+    this.setReconciliationOwner(request => {this.retryRequests.push(request);});
     syncs.push(this);
   }
 }
@@ -130,18 +135,7 @@ async function reconcileInSession(sync: CalSync, scheduled: SyncAction[]): Promi
 
 function cleanupFixtures(): void {
   for (const sync of syncs.splice(0)) {
-    const retries = sync as unknown as {
-      outboxRetry: ReturnType<typeof setTimeout> | null;
-      lockRetry: ReturnType<typeof setTimeout> | null;
-      outbox: Map<string, unknown>;
-      pendingReconcile: SyncAction[] | null;
-    };
-    for (const key of ['outboxRetry', 'lockRetry'] as const) {
-      if (retries[key] !== null) clearTimeout(retries[key]);
-      retries[key] = null;
-    }
-    retries.outbox.clear();
-    retries.pendingReconcile = null;
+    sync.dispose();
   }
   for (const c of clients.splice(0)) c.close();
   for (const p of scripts.splice(0)) rmSync(p, { force: true });
@@ -151,20 +145,24 @@ function cleanupFixtures(): void {
 afterEach(cleanupFixtures);
 
 describe('calendar test fixtures', () => {
-  it('cancels pending forward and reverse retries before deleting their helper scripts', async () => {
+  it('reports forward and reverse retries to its owner without installing timers', async () => {
     vi.useFakeTimers();
     const lock = vi.spyOn(SyncLock.prototype, 'tryAcquire').mockReturnValue(false);
     try {
       const c = client({});
       const auth = vi.spyOn(c, 'authStatus').mockResolvedValue({ status: 'denied' });
       const a: SyncAction = { id: '2026-05-15-deploy', frontMatter: { name: 'Deploy', created: '2026-05-15T09:00', scheduled: '2026-05-15T10:00', calendar: 'Work' }, body: 'body' };
-      await new CalSync(c, 'work').syncActions([a], [a]); // authorization queues a 30s retry
+      const forward = new CalSync(c, 'work');
+      await forward.syncActions([a], [a]);
       const { dir } = makeInstance('name: Deploy\ncreated: 2026-05-15T09:00\nscheduled: 2026-05-15T10:00\ncalendar: Work');
       const reverseClient = client({});
       const reverseAuth = vi.spyOn(reverseClient, 'authStatus').mockResolvedValue({ status: 'fullAccess' });
-      await new CalSync(reverseClient, 'work', new Store(dir)).reconcile([a]); // held lock queues a 2s retry
+      const reverse = new CalSync(reverseClient, 'work', new Store(dir));
+      await reverse.reconcile([a]);
       const helpers = [...scripts];
-      expect(vi.getTimerCount()).toBe(2);
+      expect(forward.retryRequests).toEqual([{reason: 'pending-delivery'}]);
+      expect(reverse.retryRequests).toEqual([{reason: 'lock-contention'}]);
+      expect(vi.getTimerCount()).toBe(0);
       cleanupFixtures();
       expect(helpers.every(path => !existsSync(path))).toBe(true);
       await vi.advanceTimersByTimeAsync(30_000);
@@ -256,6 +254,26 @@ describe('CalClient', () => {
 });
 
 describe('resolveCalBin', () => {
+  it.runIf(process.platform === 'darwin')('dispatches the unified calendar mode while preserving explicit and environment stand-ins', async () => {
+    const response = { 'auth-status': { ok: true, result: { status: 'fullAccess' } } };
+    const unified = writeFake(response, { expectedArgs: ['calendar'] });
+    const legacy = writeFake(response, { expectedArgs: [] });
+    scripts.push(unified, legacy);
+    vi.stubEnv('ASIDE_CAL_BIN', '');
+    vi.stubEnv('ASIDE_NATIVE_BIN', unified);
+    try {
+      const native = new CalClient(); clients.push(native);
+      expect(native.helperPath()).toBe(unified);
+      expect(await native.authStatus()).toEqual({ status: 'fullAccess' });
+      vi.stubEnv('ASIDE_CAL_BIN', legacy);
+      const environment = new CalClient(); clients.push(environment);
+      expect(await environment.authStatus()).toEqual({ status: 'fullAccess' });
+      const explicit = new CalClient(legacy); clients.push(explicit);
+      expect(await explicit.authStatus()).toEqual({ status: 'fullAccess' });
+      expect(new CalClient(null).available()).toBe(false);
+    } finally { vi.unstubAllEnvs(); }
+  });
+
   it('honors ASIDE_CAL_BIN when the path exists', () => {
     const p = writeFake({});
     scripts.push(p);
@@ -272,7 +290,7 @@ describe('resolveCalBin', () => {
   });
 });
 
-describe('calendar_info', () => {
+describe('calendar info', () => {
   it('reports auth and calendars when full access is held', async () => {
     const c = client({
       'auth-status': { ok: true, result: { status: 'fullAccess' } },
@@ -281,10 +299,10 @@ describe('calendar_info', () => {
         { id: 'c2', name: 'Birthdays', account: 'Other', writable: false, type: 'birthday' },
       ] } },
     });
-    const out = await handleCalendarInfo(c);
-    expect(out).toContain('auth: fullAccess');
-    expect(out).toContain('Work (iCloud, writable)');
-    expect(out).toContain('Birthdays (Other, read-only)');
+    const info = await calendarReport(c);
+    expect(info.authorization).toBe('fullAccess');
+    expect(info.calendars).toMatchObject([{ name: 'Work', account: 'iCloud', writable: true }, { name: 'Birthdays', account: 'Other', writable: false }]);
+    expect(info.diagnostics).toEqual([]);
   });
 
   it('auto-requests access when undecided and reports the granted state', async () => {
@@ -293,9 +311,9 @@ describe('calendar_info', () => {
       'request-access': { ok: true, result: { granted: true, status: 'fullAccess' } },
       'list-calendars': { ok: true, result: { calendars: [{ id: 'c1', name: 'Work', account: 'iCloud', writable: true, type: 'calDAV' }] } },
     });
-    const out = await handleCalendarInfo(c);
-    expect(out).toContain('auth: fullAccess');
-    expect(out).toContain('Work (iCloud, writable)');
+    const info = await calendarReport(c);
+    expect(info.authorization).toBe('fullAccess');
+    expect(info.calendars).toMatchObject([{ name: 'Work', account: 'iCloud', writable: true }]);
   });
 
   it('explains an undecided authorization response without guessing why', async () => {
@@ -303,11 +321,11 @@ describe('calendar_info', () => {
       'auth-status': { ok: true, result: { status: 'notDetermined' } },
       'request-access': { ok: true, result: { granted: false, status: 'notDetermined' } },
     });
-    const out = await handleCalendarInfo(c);
-    expect(out).toContain('auth: notDetermined');
-    expect(out).toContain('undecided');
-    expect(out).not.toContain('no interactive session');
-    expect(out).toContain('cause is unknown');
+    const info = await calendarReport(c), [diagnostic] = info.diagnostics;
+    expect(info.authorization).toBe('notDetermined');
+    expect(diagnostic.recovery).toContain('undecided');
+    expect(JSON.stringify(diagnostic)).not.toContain('no interactive session');
+    expect(diagnostic.recovery).toContain('cause is unknown');
   });
 
   it('directs denied access to System Settings after auto-requesting', async () => {
@@ -315,9 +333,9 @@ describe('calendar_info', () => {
       'auth-status': { ok: true, result: { status: 'notDetermined' } },
       'request-access': { ok: true, result: { granted: false, status: 'denied' } },
     });
-    const out = await handleCalendarInfo(c);
-    expect(out).toContain('auth: denied');
-    expect(out).toContain('System Settings');
+    const info = await calendarReport(c);
+    expect(info.authorization).toBe('denied');
+    expect(info.diagnostics[0].recovery).toContain('System Settings');
   });
 
   it('distinguishes a list failure from genuinely-empty calendars', async () => {
@@ -325,22 +343,25 @@ describe('calendar_info', () => {
       'auth-status': { ok: true, result: { status: 'fullAccess' } },
       'list-calendars': { ok: false, error: 'kaboom' },
     });
-    const out = await handleCalendarInfo(c);
-    expect(out).toContain('calendars: (unavailable)');
-    expect(out).not.toContain('(none)');
+    const info = await calendarReport(c);
+    expect(info.calendars).toBeNull();
+    expect(info.diagnostics[0]).toMatchObject({ category: 'helper-command-failed', command: 'list-calendars', reason: 'kaboom' });
+    const empty = await calendarReport(client({ 'auth-status': { ok: true, result: { status: 'fullAccess' } }, 'list-calendars': { ok: true, result: { calendars: [] } } }));
+    expect(empty.calendars).toEqual([]);
+    expect(empty.diagnostics).toEqual([]);
   });
 
   it('hints toward System Settings when access is denied', async () => {
     const c = client({ 'auth-status': { ok: true, result: { status: 'denied' } } });
-    const out = await handleCalendarInfo(c);
-    expect(out).toContain('auth: denied');
-    expect(out).toContain('System Settings');
+    const info = await calendarReport(c);
+    expect(info.authorization).toBe('denied');
+    expect(info.diagnostics[0].recovery).toContain('System Settings');
   });
 
   it('reports unavailable when the helper is missing', async () => {
-    const out = await handleCalendarInfo(new CalClient(null));
-    expect(out).toContain('auth: unavailable');
-    expect(out).toContain('build.sh');
+    const info = await calendarReport(new CalClient(null));
+    expect(info.authorization).toBe('unavailable');
+    expect(info.diagnostics[0].recovery).toContain('build.sh');
   });
 });
 
@@ -848,7 +869,7 @@ describe('CalSync issues + outbox', () => {
   });
 });
 
-describe('calendar_info issues', () => {
+describe('calendar info issues', () => {
   it('lists the active instance unsynced actions', async () => {
     const c = client({
       'auth-status': { ok: true, result: { status: 'fullAccess' } },
@@ -859,20 +880,18 @@ describe('calendar_info issues', () => {
     const sync = new CalSync(c, 'work');
     const a: SyncAction = { id: '2026-05-15-deploy', frontMatter: { name: 'Deploy', created: '2026-05-15T09:00', scheduled: '2026-05-15T10:00', calendar: 'Ops' }, body: 'x' };
     await sync.syncActions([a], [a]);
-    const out = await handleCalendarInfo(c, sync);
-    expect(out).toContain('auth: fullAccess');
-    expect(out).toContain('issues:');
-    expect(out).toContain('2026-05-15-deploy — calendar not found: Ops');
+    const info = await calendarReport(c, sync);
+    expect(info.authorization).toBe('fullAccess');
+    expect(info.issues).toContainEqual(expect.objectContaining({ id: '2026-05-15-deploy', reason: 'calendar not found: Ops' }));
   });
 
   it('surfaces sync failures even when access is not fullAccess', async () => {
     // A failure like a missing instance id is real regardless of auth — it must
     // not be hidden behind the auth gate.
     const c = client({ 'auth-status': { ok: true, result: { status: 'denied' } } });
-    const out = await handleCalendarInfo(c, new CalSync(c, '')); // no instance id
-    expect(out).toContain('auth: denied');
-    expect(out).toContain('issues:');
-    expect(out).toContain('instance — aside.md has no `id`');
+    const info = await calendarReport(c, new CalSync(c, '')); // no instance id
+    expect(info.authorization).toBe('denied');
+    expect(info.issues).toContainEqual(expect.objectContaining({ id: 'instance', reason: expect.stringContaining('aside.md has no `id`') }));
   });
 });
 
@@ -925,6 +944,19 @@ describe('CalSync reverse reconcile', () => {
   const got = (over: Record<string, unknown>) => ({ 'get-events': { ok: true, result: { events: [
     { id: 'ev-1', url: MARKER, calendar: 'Work', title: '▢ Deploy', start: '2026-05-15T10:00', end: '2026-05-15T10:30', allDay: false, ...over },
   ] } } });
+
+  it('rejects a reverse write when no lifecycle mutation owner was supplied', async () => {
+    const {dir} = makeInstance(FM), store = new Store(dir);
+    const c = client({...FULL, 'list-events': {ok: true, result: {events: [
+      {...SWEPT_EVENT, start: '2026-05-15T14:00', end: '2026-05-15T14:30'},
+    ]}}});
+    const sync = new BaseCalSync(c, INSTANCE, store); syncs.push(sync);
+    const save = vi.spyOn(store, 'saveAction'), original = readActionFile(dir, ID);
+    await sync.reconcile([scheduled]);
+    expect(save).not.toHaveBeenCalled();
+    expect(readActionFile(dir, ID)).toBe(original);
+    expect(sync.report()).toContainEqual(expect.objectContaining({reason: expect.stringContaining('Lifecycle mutation owner is unavailable')}));
+  });
 
   it('applies a move to the action scheduled time', async () => {
     const { dir } = makeInstance(FM);
@@ -1173,7 +1205,7 @@ describe('CalSync reverse reconcile', () => {
     const sync = new CalSync(c, INSTANCE, new Store(dir));
     await reconcileInSession(sync, [scheduled]);
     // The edit applied (write succeeded) but the event removal failed — both true,
-    // both surfaced: the change is recorded, and the failure reaches calendar_info.
+    // both surfaced: the change is recorded, and the failure reaches the calendar report.
     expect(readActionFile(dir, ID)).toContain('resolution: cancelled');
     expect(sync.report()).toEqual([{ id: ID, reason: 'reverse sync failed: remove failed', diagnostic: expect.objectContaining({ category: 'operation-failed', reason: 'remove failed' }) }]);
   });
@@ -1609,7 +1641,7 @@ describe('CalSync mutation lock', () => {
   const FULL = { 'auth-status': { ok: true, result: { status: 'fullAccess' } } };
   const FM = 'name: Deploy\ncreated: 2026-05-15T09:00\nscheduled: 2026-05-15T10:00\ncalendar: Work';
 
-  it('reconcile skips while another phase holds the lock, then retries once released', async () => {
+  it('requests lifecycle reconciliation while another phase holds the lock', async () => {
     const { dir } = makeInstance(FM);
     const rec = recordPath();
     const c = client({ ...FULL, 'list-events': { ok: true, result: { events: [] } } }, { recordTo: rec });
@@ -1622,12 +1654,9 @@ describe('CalSync mutation lock', () => {
     expect(readRequests(rec).some((r) => r.cmd === 'list-events')).toBe(false);
     expect(readActionFile(dir, ID)).toContain('scheduled:');
     holder.release();
-    // The single retry timer (~2s) re-runs the pass, which now finds no event
-    // and imports the deletion.
-    const until = Date.now() + 8000;
-    while (Date.now() < until && readActionFile(dir, ID).includes('scheduled:')) {
-      await new Promise((r) => setTimeout(r, 100));
-    }
+    expect(sync.retryRequests).toEqual([{reason: 'lock-contention'}]);
+    // The owner supplies current actions when it delivers the requested pass.
+    await sync.reconcile(store.getActionIds().map(id => storeAction(store, id)!));
     expect(readActionFile(dir, ID)).not.toContain('scheduled:');
   }, 15_000);
 
@@ -1719,12 +1748,11 @@ describe('calendar sync observability', () => {
     const forward = sync.syncActions([a], [a]);
     expect(sync.status(ID)?.status).toBe('pending'); // available synchronously to a receipt
     await vi.waitFor(() => expect(upsert).toHaveBeenCalledOnce());
-    expect(await handleCalendarInfo(c, sync)).toContain(`- id: ${ID}\n    status: pending`);
-    expect(await handleCalendarInfo(c, sync)).toContain('calendar_sync:');
+    expect((await calendarReport(c, sync)).syncStates).toContainEqual(expect.objectContaining({ id: ID, status: 'pending' }));
     created.resolve({ eventId: 'ev-1' });
     await forward;
     expect(sync.status(ID)).toEqual({ id: ID, status: 'synced', eventId: 'ev-1' });
-    expect(await handleCalendarInfo(c, sync)).toContain('status: synced');
+    expect((await calendarReport(c, sync)).syncStates).toContainEqual({ id: ID, status: 'synced', eventId: 'ev-1' });
 
     const deleted = deferred<{ deleted: boolean }>();
     const remove = vi.spyOn(c, 'deleteEvent').mockReturnValueOnce(deleted.promise);
@@ -1734,7 +1762,7 @@ describe('calendar sync observability', () => {
     deleted.resolve({ deleted: true });
     await removal;
     expect(sync.status(ID)).toEqual({ id: ID, status: 'removed' });
-    expect(await handleCalendarInfo(c, sync)).toContain('status: removed');
+    expect((await calendarReport(c, sync)).syncStates).toContainEqual({ id: ID, status: 'removed' });
   });
 
   it('keeps an overlapping newer operation pending after an older operation completes', async () => {
@@ -1888,19 +1916,18 @@ describe('calendar sync observability', () => {
 
   it.each(['unavailable', 'error'])('preserves per-instance reporting when helper auth is %s', async (state) => {
     const c = state === 'unavailable' ? new CalClient(null) : client({ 'auth-status': { ok: false, error: 'helper down' } });
-    const out = await handleCalendarInfo(c, {
+    const info = await calendarReport(c, {
       report: () => [{ id: 'instance', reason: 'missing instance id' }],
       changesSinceStart: () => [{ id: ID, summary: 'descheduled (event deleted)' }],
       statuses: () => [{ id: ID, status: 'pending', reason: 'waiting for helper', retry: true }],
     });
-    expect(out).toContain(`auth: ${state}`);
-    expect(out).toContain(`- id: ${ID}\n    status: pending`);
-    expect(out).toContain('retry: true');
-    expect(out).toContain('instance — missing instance id');
-    expect(out).toContain(`${ID} — descheduled (event deleted)`);
+    expect(info.authorization).toBe(state);
+    expect(info.syncStates).toEqual([{ id: ID, status: 'pending', reason: 'waiting for helper', retry: true }]);
+    expect(info.issues).toEqual([{ id: 'instance', reason: 'missing instance id' }]);
+    expect(info.changes).toEqual([{ id: ID, summary: 'descheduled (event deleted)' }]);
   });
 
-  it('omits a settled positive after a direct edit, and disables it after deletion', async () => {
+  it('omits a settled positive after lifecycle loads an edit, and disables it after loaded deletion', async () => {
     const { dir } = makeInstance('name: Deploy\ncreated: 2026-05-15T09:00\nscheduled: 2026-05-15T10:00\ncalendar: Work');
     const store = new Store(dir);
     const c = client({ ...FULL, 'upsert-event': { ok: true, result: { eventId: 'ev-1' } } });
@@ -1908,16 +1935,16 @@ describe('calendar sync observability', () => {
     await sync.syncActions([storeAction(store, ID)!], []);
     expect(sync.status(ID)?.status).toBe('synced');
     const file = store.getActionFile(ID)!;
-    // Status sees the direct disk edit before the Store watcher rebuilds.
+    // Status consumes the loaded snapshot; the source lifecycle owns disk edits.
     writeFileSync(file, readFileSync(file, 'utf8').replace('2026-05-15T10:00', '2026-05-15T14:00'));
-    expect(sync.status(ID)).toBeUndefined();
-    expect(sync.statuses()).toEqual([]);
+    expect(sync.status(ID)?.status).toBe('synced');
+    expect(sync.statuses()).toHaveLength(1);
     store.rebuild();
     expect(sync.status(ID)).toBeUndefined();
     await sync.syncActions([storeAction(store, ID)!], []);
     expect(sync.status(ID)?.status).toBe('synced');
     rmSync(file);
-    expect(sync.status(ID)).toEqual({ id: ID, status: 'disabled', reason: 'action no longer exists' });
+    expect(sync.status(ID)?.status).toBe('synced');
     store.rebuild();
     expect(sync.status(ID)).toEqual({ id: ID, status: 'disabled', reason: 'action no longer exists' });
   });
@@ -1966,7 +1993,7 @@ describe('calendar sync observability', () => {
     await sync.reconcile([storeAction(store, ID)!]);
     expect(sync.status(ID)).toBeUndefined();
     expect(sync.statuses()).toEqual([]);
-    expect(await handleCalendarInfo(c, sync)).not.toContain('status: synced');
+    expect((await calendarReport(c, sync)).syncStates).toEqual([]);
     expect(readActionFile(dir, ID)).toBe(before);
     expect(sync.changesSinceStart()).toEqual([]);
     expect(readRequests(rec).filter((r) => r.cmd === 'upsert-event' || r.cmd === 'delete-event')).toEqual([]);
@@ -1974,7 +2001,7 @@ describe('calendar sync observability', () => {
     expect(sync.status(ID)).toEqual({ id: ID, status: 'synced', eventId: 'ev-1' });
   });
 
-  it('parses each year index once per report and observes direct edits on the next report', async () => {
+  it('uses loaded action and index descriptions without parsing source during reports', async () => {
     const fm = 'name: Deploy\ncreated: 2026-05-15T09:00\nscheduled: 2026-05-15T10:00\ncalendar: Work';
     const { dir } = makeInstance(fm);
     const ids = [ID, '2026-05-15-second', '2027-05-15-third'];
@@ -1993,16 +2020,20 @@ describe('calendar sync observability', () => {
     const parse = vi.spyOn(parser, 'parseIndex');
     try {
       expect(sync.statuses().map(({ id }) => id)).toEqual(ids);
-      expect(parse).toHaveBeenCalledTimes(2);
-      // Both index notes and action contents must be read from disk, without
-      // requiring the Store watcher to catch up between reports.
+      expect(parse).not.toHaveBeenCalled();
+      // Unobserved edits remain the source lifecycle's responsibility.
       writeFileSync(firstIndex, yearIndex(ids.slice(0, 2)).replace('Original notes', 'Edited notes'));
       const secondFile = store.getActionFile(ids[1])!;
       writeFileSync(secondFile, readFileSync(secondFile, 'utf8').replace('body', 'Changed body'));
       parse.mockClear();
+      expect(sync.statuses().map(({id}) => id)).toEqual(ids);
+      expect(parse).not.toHaveBeenCalled();
+      store.rebuild(); parse.mockClear();
       expect(sync.statuses()).toEqual([{ id: ids[2], status: 'synced', eventId: 'ev-1' }]);
-      expect(parse).toHaveBeenCalledTimes(2);
+      expect(parse).not.toHaveBeenCalled();
       writeFileSync(secondIndex, yearIndex(ids.slice(2)).replace('Original notes', 'Edited third notes'));
+      expect(sync.status(ids[2])?.status).toBe('synced');
+      store.rebuild();
       expect(sync.status(ids[2])).toBeUndefined();
     } finally {
       parse.mockRestore();
@@ -2031,7 +2062,7 @@ describe('calendar sync observability', () => {
     expect(sync.status(ID)?.status).toBe('synced');
   });
 
-  it('sees a direct index-description edit before the watcher and leaves it unconfirmed after reverse reads', async () => {
+  it('sees a loaded index-description edit and leaves it unconfirmed after reverse reads', async () => {
     const { dir } = makeInstance('name: Deploy\ncreated: 2026-05-15T09:00\nscheduled: 2026-05-15T10:00\ncalendar: Work');
     const index = join(dir, 'actions', '2026', 'index.yaml');
     writeFileSync(index, `- id: ${ID}\n  description: Original notes\n`);
@@ -2045,7 +2076,7 @@ describe('calendar sync observability', () => {
     await sync.syncActions([storeAction(store, ID)!], []);
     expect(sync.status(ID)?.status).toBe('synced');
     writeFileSync(index, `- id: ${ID}\n  description: Edited notes\n`);
-    expect(sync.status(ID)).toBeUndefined();
+    expect(sync.status(ID)?.status).toBe('synced');
     store.rebuild();
     await sync.reconcile([storeAction(store, ID)!]);
     expect(sync.status(ID)).toBeUndefined();
@@ -2185,20 +2216,18 @@ describe('calendar sync observability', () => {
       ...FULL,
       'list-calendars': { ok: true, result: { calendars: [{ name: 'Work\nauth: denied', account: 'Cloud\u0085service', writable: true }] } },
     });
-    const out = await handleCalendarInfo(c, {
+    const info = await calendarReport(c, {
       report: () => [{ id: 'action\nchanges:', reason: 'failed\nauth: denied' }],
       changesSinceStart: () => [{ id: ID, summary: 'moved\u2028auth: denied' }],
       statuses: () => [{ id: 'action\nissues:', status: 'failed', reason: 'failed\u0085auth: denied', eventId: 'event\u2028next' }],
     });
-    expect(out.match(/^auth:/gm)).toHaveLength(1);
-    expect(out.match(/^issues:/gm)).toHaveLength(1);
-    expect(out.match(/^changes:/gm)).toHaveLength(1);
-    expect(out).toContain('Work\\nauth: denied');
-    expect(out).toContain('Cloud\\u0085service');
-    expect(out).not.toMatch(/[\u0085\u2028]/);
-    expect(JSON.parse(out.match(/^    reason: (.+)$/m)![1])).toBe('failed\u0085auth: denied');
-    const helperError = await handleCalendarInfo(client({ 'auth-status': { ok: false, error: 'down\nauth: fullAccess' } }));
-    expect(helperError.match(/^auth:/gm)).toHaveLength(1);
-    expect(helperError).toContain('down\\nauth: fullAccess');
+    expect(info.authorization).toBe('fullAccess');
+    expect(info.calendars).toEqual([{ name: 'Work\nauth: denied', account: 'Cloud\u0085service', writable: true }]);
+    expect(info.issues).toEqual([{ id: 'action\nchanges:', reason: 'failed\nauth: denied' }]);
+    expect(info.changes).toEqual([{ id: ID, summary: 'moved\u2028auth: denied' }]);
+    expect(info.syncStates).toEqual([{ id: 'action\nissues:', status: 'failed', reason: 'failed\u0085auth: denied', eventId: 'event\u2028next' }]);
+    const helperError = await calendarReport(client({ 'auth-status': { ok: false, error: 'down\nauth: fullAccess' } }));
+    expect(helperError.authorization).toBe('error');
+    expect(helperError.diagnostics[0].reason).toBe('down\nauth: fullAccess');
   });
 });

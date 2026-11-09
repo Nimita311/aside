@@ -1,11 +1,12 @@
-import { eventTimes } from './calendar-fixture.js';
+import { calendarMutationFixture, eventTimes } from './calendar-fixture.js';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { Store } from '../src/mcp/store.js';
+import { Store } from '../src/source/store.js';
 import { handleCapture } from '../src/mcp/tools/capture.js';
 import { CalClient } from '../src/mcp/calendar/client.js';
-import { CalSync, storeAction } from '../src/mcp/calendar/sync.js';
+import {storeAction} from '../src/mcp/calendar/sync.js';
+import {CalendarSyncFixture as CalSync} from './calendar-fixture.js';
 import { buildMarker } from '../src/mcp/calendar/markers.js';
 import type { CalEvent } from '../src/mcp/calendar/protocol.js';
 
@@ -29,7 +30,7 @@ function fixture(scheduled: string, duration?: string) {
   const get = vi.spyOn(cal, 'getEvents').mockResolvedValue({ events: [] });
   const upsert = vi.spyOn(cal, 'upsertEvent').mockResolvedValue({ eventId: 'event' });
   vi.spyOn(cal, 'deleteEvent').mockResolvedValue({ deleted: true });
-  const sync = new CalSync(cal, 'work', store); syncers.push(sync);
+  const sync = new CalSync(cal, 'work', store, undefined, undefined, calendarMutationFixture(store)); syncers.push(sync);
   const event = (end: string, durationMinutes?: number): CalEvent => eventTimes({ id: 'event', url: buildMarker('work', id, 'active'), calendar: 'Work', title: '▢ Deploy', start: scheduled.includes('T') ? scheduled : `${scheduled}T00:00`, end, durationMinutes }, 'America/Los_Angeles');
   const actual = (ev: CalEvent) => { list.mockResolvedValue({ events: [ev] }); get.mockResolvedValue({ events: [ev] }); };
   return { store, id, sync, upsert, actual, event, action: () => storeAction(store, id)! };

@@ -1,12 +1,38 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { mkdirSync, mkdtempSync, rmSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { Store } from '../src/mcp/store.js';
+import { Store } from '../src/source/store.js';
 import { instanceCardSummary } from '../src/web/summary.js';
 
 let root: string;
 afterEach(() => { if (root) rmSync(root, { recursive: true, force: true }); vi.restoreAllMocks(); });
 describe('instance card summary', () => {
+  it.skipIf(process.platform === 'win32' || process.getuid?.() === 0)('keeps retained content years on read failure and removes years after confirmed deletion', () => {
+    root = mkdtempSync('/tmp/aside-card-summary-');
+    writeFileSync(join(root, 'aside.md'), '---\nid: work\n---\n');
+    const projects = join(root, 'projects'), id = '2026-10-07-report';
+    mkdirSync(join(projects, '2026'), {recursive: true});
+    writeFileSync(join(projects, '2026', `${id}.md`), '---\nname: Report\ncreated: 2026-10-07T10:00\n---\n');
+    // Retained index records also keep their own years discoverable.
+    mkdirSync(join(projects, '2025'));
+    writeFileSync(join(projects, '2025', 'index.yaml'), '- id: 2025-10-07-indexed\n');
+    const store = new Store(root);
+    try {
+      expect(store.getSourceMetadata().years).toEqual(['2025', '2026']);
+      chmodSync(projects, 0);
+      try {store.rebuild();} finally {chmodSync(projects, 0o700);}
+      expect(store.getIssues()).toContainEqual(expect.objectContaining({code: 'read_error', file: 'projects'}));
+      expect(store.getProject(id)).toBeDefined();
+      expect(store.getProjectIndex()).toEqual([expect.objectContaining({id: '2025-10-07-indexed'})]);
+      expect(store.getSourceMetadata().years).toEqual(['2025', '2026']);
+      rmSync(projects, {recursive: true});
+      store.rebuild();
+      expect(store.getProject(id)).toBeUndefined();
+      expect(store.getProjectIndex()).toEqual([]);
+      expect(store.getSourceMetadata().years).toEqual([]);
+    } finally {store.close();}
+  });
+
   it('includes directory edits so deleting a record updates last edit', () => {
     root = mkdtempSync('/tmp/aside-card-summary-');
     writeFileSync(join(root, 'aside.md'), '---\nid: work\n---\n');
@@ -14,11 +40,14 @@ describe('instance card summary', () => {
     const file = join(attachments, 'attachment.pdf'); writeFileSync(file, 'Attachment');
     const store = new Store(root), edited = new Date('2030-10-07T20:00:00Z');
     utimesSync(file, edited, edited);
+    store.rebuild();
     expect(instanceCardSummary(store).lastEdited).toBe(edited.toISOString());
     rmSync(file);
     const deleted = new Date('2030-10-08T20:00:00Z'); utimesSync(attachments, deleted, deleted);
-    vi.spyOn(Date, 'now').mockReturnValue(Date.now() + 1001);
+    expect(instanceCardSummary(store).lastEdited).toBe(edited.toISOString());
+    store.rebuild();
     expect(instanceCardSummary(store).lastEdited).toBe(deleted.toISOString());
+    store.close();
   });
 
   it('does not treat user file locations or workspace configuration as managed data edits', () => {
@@ -56,11 +85,14 @@ describe('instance card summary', () => {
     const file = join(attachments, 'report.pdf'); writeFileSync(file, 'Attachment');
     const edited = new Date('2030-10-07T20:00:00Z'); utimesSync(file, edited, edited);
     symlinkSync(root, join(attachments, 'cycle'));
+    store.rebuild();
     const summary = instanceCardSummary(store);
     expect(summary).toMatchObject({ projects: { open: 1, total: 2 }, actions: { open: 1, total: 2 }, entries: 0, lastEdited: edited.toISOString() });
     expect(instanceCardSummary(store)).toBe(summary);
     const later = new Date('2030-10-08T20:00:00Z'); utimesSync(file, later, later);
-    vi.spyOn(Date, 'now').mockReturnValue(Date.now() + 1001);
+    expect(instanceCardSummary(store)).toBe(summary);
+    store.rebuild();
     expect(instanceCardSummary(store).lastEdited).toBe(later.toISOString());
+    store.close();
   });
 });

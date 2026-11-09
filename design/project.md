@@ -96,10 +96,10 @@ These are computed from entity records and references:
 
 ## Lifecycle
 
-- **Creating a project**: `capture` or `update_entry` creates it with a `created` timestamp, index description, and context entry
-- **Renaming a project**: `update_project` changes its nonblank display name while preserving the ID, filename, creation timestamp, and references
-- **Closing a project**: `update_project` sets the `ended` timestamp
-- **Reopening**: `update_project` clears the `ended` field
+- **Creating a project**: `capture` or `updateEntry` creates it with a `created` timestamp, index description, and context entry
+- **Renaming a project**: `updateProject` changes its nonblank display name while preserving the ID, filename, creation timestamp, and references
+- **Closing a project**: `updateProject` sets the `ended` timestamp
+- **Reopening**: `updateProject` clears the `ended` field
 
 ## Check-ins
 

@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { renderAssetDetail, renderArtifactDetail, renderEntryDetail, type RenderOptions } from '../src/render';
+import { readerDetails, renderAssetDetail, renderArtifactDetail, renderEntryDetail, type RenderOptions } from '../src/render';
 import { webpageSources } from '../src/webpage';
 
 const id = '2026-10-02-dashboard';
@@ -34,7 +34,34 @@ describe('webpage previews', () => {
       expect(frame.getAttribute('sandbox')).toBe('allow-scripts');
       expect(frame.getAttribute('referrerpolicy')).toBe('no-referrer');
       expect(frame.title).toBe('index');
+      expect(root.dataset.readerPresentation).toBe('html');
+      expect([...root.children]).toEqual([frame]);
+      expect(root.querySelector('.entity-title, .asset-path, .entity-related')).toBeNull();
+      const details = readerDetails(root)!;
+      expect(details.querySelector('.entity-title')?.textContent).toBe(filename ?? 'Dashboard');
+      expect(details.querySelector('.asset-path')?.textContent).toBe(`#artifact/${id}${filename ? '/index.html' : ''}`);
+      expect(details.querySelector('iframe')).toBeNull();
+      expect(webpageSources(root)).toEqual([{ path: `artifacts/2026/${id}/index.html`, artifactId: id }]);
     }
+  });
+
+  it('keeps one registered HTML frame while exposing its native context separately', () => {
+    const frames: HTMLIFrameElement[] = [], visited: string[] = [];
+    const root = renderArtifactDetail(id, {
+      frontMatter: { name: 'Dashboard', created: opts.now, attachments: ['index.html'] }, body: '',
+    }, 'Release dashboard', {
+      ...opts, onWebpageReady: frame => frames.push(frame),
+      onTagClick: ref => visited.push(`${ref.type}/${ref.id}`),
+    }, { projects: ['2026-10-01-launch'], actions: [], backlinks: [] },
+    { kind: 'webpage', url: 'http://localhost/files/index.html' });
+    const frame = root.querySelector('iframe')!;
+    const details = readerDetails(root)!;
+    document.body.append(root, details);
+    details.querySelector<HTMLAnchorElement>('.tag-project')!.click();
+    expect(visited).toEqual(['project/2026-10-01-launch']);
+    expect(frames).toEqual([frame]);
+    expect(document.querySelectorAll('iframe')).toHaveLength(1);
+    expect(details.textContent).toContain('Release dashboard');
   });
 
   it('supports non-addressable HTML sources without executing their markup in the host', () => {
@@ -44,6 +71,21 @@ describe('webpage previews', () => {
     expect(frame.srcdoc).toBe(html);
     expect(frame.getAttribute('sandbox')).toBe('allow-scripts');
     expect(root.querySelector('script')).toBeNull();
+    expect(root.dataset.readerPresentation).toBe('html');
+    expect(readerDetails(root)?.querySelector('.asset-path')?.textContent).toBe('assets/index.html');
+  });
+
+  it('keeps PDF and Markdown readers native even when their content contains an iframe', () => {
+    const pdf = renderAssetDetail('assets/report.pdf', { kind: 'pdf', url: 'http://localhost/files/report.pdf' }, opts, []);
+    const markdown = renderAssetDetail('assets/report.md', {
+      kind: 'markdown', text: 'Inline report.\n\n<iframe src="https://example.com/" title="Inline report" height="450"></iframe>',
+    }, opts, []);
+    for (const root of [pdf, markdown]) {
+      expect(root.dataset.readerPresentation).toBeUndefined();
+      expect(root.querySelector('.entity-title')).not.toBeNull();
+      expect(readerDetails(root)).toBeUndefined();
+    }
+    expect(markdown.querySelector('iframe')!.style.height).toBe('450px');
   });
 
   it('replaces authored iframe privileges, handlers and source documents', () => {

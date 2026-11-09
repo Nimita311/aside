@@ -6,13 +6,16 @@ import { VERSION } from '../src/version.js';
 // handwritten top-level dispatcher and individual command parsers.
 describe('CLI command tree', () => {
   afterEach(() => vi.unstubAllEnvs());
-  it('defaults to GraphQL and requires an MCP flag to opt into legacy tools', () => {
-    expect(parseCli(['mcp']).has('--legacy')).toBe(false);
-    expect(parseCli(['mcp', '--legacy', '--dir', '/tmp/aside']).has('--legacy')).toBe(true);
-    expect(parseCli(['mcp', '--help']).helpText).toContain('--legacy');
+  it('runs MCP as GraphQL with no interface selection', () => {
+    expect(parseCli(['mcp'])).toMatchObject({ command: 'mcp' });
+    expect(parseCli(['mcp', '--dir', '/tmp/aside']).get('--dir')).toBe('/tmp/aside');
+    expect(parseCli(['mcp', '--help']).helpText).not.toContain('--legacy');
     expect(parseCli(['mcp', '--help']).helpText).toContain('GraphQL');
     expect(parseCli(['mcp', '--help']).helpText).not.toContain('--graphql');
-    expect(() => parseCli(['mcp', '--legacy', '--legacy'])).toThrow(/duplicate option/);
+    expect(() => parseCli(['mcp', '--dir=/one', '--dir=/two'])).toThrow(/duplicate option/);
+    expect(() => parseCli(['mcp', '--legacy'])).toThrow(/unknown option/);
+    expect(() => parseCli(['mcp', '--legacy', '--dir', '/tmp/aside'])).toThrow(/unknown option/);
+    expect(() => parseCli(['mcp', '--legacy', '--legacy'])).toThrow(/unknown option/);
     expect(() => parseCli(['mcp', '--legacy', '--graphql'])).toThrow(/unknown option/);
     expect(() => parseCli(['mcp', '--graphql', '--legacy'])).toThrow(/unknown option/);
     expect(() => parseCli(['instance', 'list', '--legacy'])).toThrow(/unknown option/);
@@ -73,12 +76,13 @@ describe('CLI command tree', () => {
     expect(parseCli(['help', 'plugin', 'install']).helpText).toBe(parseCli(['plugin', 'install', '--help']).helpText);
   });
 
-  it.each(['install', 'remove', 'status'])('selects the legacy plugin for %s only when requested', operation => {
+  it.each(['install', 'remove', 'status'])('offers no package selection for plugin %s', operation => {
     const args = ['plugin', operation, ...(operation === 'status' ? [] : ['--agent', 'codex'])];
-    expect(parseCli(args).has('--legacy')).toBe(false);
-    expect(parseCli([...args, '--legacy']).has('--legacy')).toBe(true);
-    expect(parseCli([...args, '--help']).helpText).toContain('--legacy');
-    expect(() => parseCli([...args, '--legacy', '--legacy'])).toThrow(/duplicate option/);
+    expect(parseCli(args)).toMatchObject({ command: 'plugin', operation });
+    expect(() => parseCli([...args, '--legacy'])).toThrow(/unknown option/);
+    expect(parseCli([...args, '--help']).helpText).not.toContain('--legacy');
+    expect(() => parseCli([...args, '--legacy', '--legacy'])).toThrow(/unknown option/);
+    expect(() => parseCli([...args, '--json', '--json'])).toThrow(/duplicate option/);
   });
 
   it('exposes registry commands under instance with repeatable paths', () => {
@@ -108,6 +112,19 @@ describe('CLI command tree', () => {
     for (const command of ['serve', 'validate']) {
       expect(() => parseCli([command])).toThrow(/unknown command/);
       expect(parseCli(['--help']).helpText).not.toContain(`${command} [options]`);
+    }
+  });
+
+  it('offers semantic cache removal only when forgetting an instance', () => {
+    expect(parseCli(['instance', 'forget', '--dir=/one', '--clear-cache']).has('--clear-cache')).toBe(true);
+    expect(parseCli(['instance', 'forget', '--dir=/one']).has('--clear-cache')).toBe(false);
+    const help = parseCli(['instance', 'forget', '--help']).helpText!;
+    expect(help).toContain('--clear-cache');
+    expect(help).toContain('30 days');
+    expect(help).toContain('active use to finish');
+    expect(() => parseCli(['instance', 'forget', '--dir=/one', '--clear-cache', '--clear-cache'])).toThrow(/duplicate option/);
+    for (const operation of ['add', 'list', 'validate']) {
+      expect(() => parseCli(['instance', operation, '--clear-cache', ...(operation === 'add' ? ['--dir=/one'] : [])])).toThrow(/unknown option/);
     }
   });
 

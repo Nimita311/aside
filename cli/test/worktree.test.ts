@@ -4,7 +4,8 @@ import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync
 import { join } from 'node:path';
 import { checkoutInfo, instanceFamily, withPrimaryInstances, withoutInstanceFamilies, worktreeCalendarReason } from '../src/core/worktree.js';
 import { parseConfig } from '../src/core/parser.js';
-import { availableInstances, resolveInstanceAddress } from '../src/web/catalogue.js';
+import {availableInstances} from '../src/source/instance-admission.js';
+import {resolveInstanceAddress} from '../src/core/catalogue.js';
 import { InstanceHost } from '../src/daemon/host.js';
 import { CalClient } from '../src/mcp/calendar/client.js';
 import { storeAction } from '../src/mcp/calendar/sync.js';

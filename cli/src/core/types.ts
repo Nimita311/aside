@@ -42,10 +42,11 @@ export interface ActionFrontMatter {
   recurrence?: RecurrenceSchedule[];
   occurrence?: OccurrenceIdentity;
   name: string;
-  created: string;
+  created?: string;
   scheduled?: string;
   timezone?: string; // IANA zone for `scheduled`; floating if unset
   duration?: string; // ISO 8601 event length; default if unset
+  location?: string; // complete bare #location/? handle; labels belong in Markdown
   calendar?: string; // readable calendar name; unsynced if unset
   calendar_account?: string; // optional readable account qualifier
   deadline?: string;
@@ -87,10 +88,23 @@ export interface Manifest {
 // An explicit empty string is a real value (e.g. drop the done `✓`), distinct from
 // an absent key, which takes the default.
 export interface InstanceConfig {
-  recurrenceLookaheadDays?: number;
+  webapp?: WebappConfig;
   scheduledEventTitlePrefix?: string;
   doneEventTitlePrefix?: string;
 }
+
+export interface WebappConfig {
+  sidebar?: WebappSidebarSection[];
+}
+
+export interface WebappSidebarSection {
+  title?: string;
+  items: WebappSidebarItem[];
+}
+
+export type WebappSidebarItem = { label?: string } & (
+  { timeline: string; entity?: never } | { entity: string; timeline?: never }
+);
 
 // `.aside` config file (control plane): pointers to data directories and an
 // optional default selection (a path; it need not be one of the pointers).

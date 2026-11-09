@@ -1,9 +1,9 @@
 import type { AvailableInstance } from './backend';
 import { entityIcon } from './render';
+import { ICON_SIZE } from './entity-icons';
 
 export const CALENDAR_OFF_ICON = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 4a2 2 0 0 0-1 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 1.4-.6M21 17V6a2 2 0 0 0-2-2h-7M16 2v4M8 2v2M3 10h7m4 0h7M2 2l20 20"/></svg>';
 export const WARNING_ICON = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m10.3 3.9-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.7-3.1l-8-14a2 2 0 0 0-3.4 0Z"/><path d="M12 9v4m0 4h.01"/></svg>';
-export const WORKTREE_ICON = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 3v12m12-9a6 6 0 0 1-6 6H6"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="3" r="3"/></svg>';
 
 export function instanceGroup(instance: AvailableInstance): string {
   return JSON.stringify([instance.id, instance.worktree?.commonDir, instance.worktree?.primaryPath ?? instance.path]);
@@ -24,10 +24,12 @@ export function catalogueRows(instances: AvailableInstance[]) {
     });
 }
 
-export function instanceIdentity(instance: AvailableInstance, instances: AvailableInstance[], compact = false): HTMLElement {
+// The notebook names the instance: half open for the one open in this tab,
+// the git branch across its cover for a linked worktree.
+export function instanceIdentity(instance: AvailableInstance, instances: AvailableInstance[], compact = false, open = false): HTMLElement {
   const identity = document.createElement('span'); identity.className = 'instance-identity';
   const icon = document.createElement('span'); icon.className = 'instance-type-icon';
-  icon.innerHTML = instance.worktree?.linked ? WORKTREE_ICON : entityIcon('instance');
+  icon.innerHTML = entityIcon('instance', instance.worktree?.linked ? 'worktree' : open ? 'active' : 'available', ICON_SIZE.list);
   identity.append(icon);
   const text = document.createElement('span'); text.className = 'instance-identity-text'; identity.append(text);
   const label = document.createElement('strong');

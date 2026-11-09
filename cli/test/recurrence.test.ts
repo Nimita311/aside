@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
-import { assertRecurrence, assertRecurrenceUpdate, assertOccurrence, CompiledRecurrence, planningActions, occurrenceKey, projectionId, resolveProjection } from '../src/core/recurrence.js';
+import { assertRecurrence, assertRecurrenceUpdate, assertOccurrence, CompiledRecurrence, planningActions, occurrenceKey, projectedAction, projectionId, resolveProjection } from '../src/core/recurrence.js';
 import { parseActionFile } from '../src/core/parser.js';
-import { serializeAction } from '../src/mcp/tools/serialize.js';
+import { serializeAction } from '../src/source/serialize.js';
 import { scheduleInstant } from '../src/core/scheduling.js';
 import type { Action } from '../src/core/types.js';
 const weekly = { dtstart: '2026-10-02T09:00', timezone: 'America/Los_Angeles', rrule: 'FREQ=WEEKLY;BYDAY=FR' };
@@ -203,6 +203,19 @@ describe('recurrence identity and history', () => {
   it('serializes recurrence and provenance losslessly', () => {
     const fm = { name: 'Review', created: '2026-10-09T09:00', recurrence: [weekly] };
     expect(parseActionFile(serializeAction(fm, 'Body')).value.frontMatter).toEqual(fm);
+  });
+  it('leaves projections without creation time while persisted actions require it', () => {
+    const template: Action = { frontMatter: { name: 'Review', created: '2026-10-01T09:00', recurrence: [weekly] }, body: 'Instructions' };
+    const identity = { template: 't', original: '2026-10-09T16:00:00Z', timezone: weekly.timezone };
+    const projection = projectedAction(template, identity, '2026-10-09T09:00');
+    expect(projection.frontMatter).not.toHaveProperty('created');
+    expect(projection.frontMatter.scheduled).toBe('2026-10-09T09:00');
+    expect(template.frontMatter.created).toBe('2026-10-01T09:00');
+    expect(() => serializeAction(projection.frontMatter, projection.body)).toThrow('Saved actions require created.');
+    expect(parseActionFile('---\nname: Unsaved\n---\n\nBody').issues)
+      .toEqual(expect.arrayContaining([expect.objectContaining({code: 'missing_field', field: 'created'})]));
+    expect(planningActions(new Map([['t', template]]), { now }).nodes.filter(row => row.projected)
+      .every(row => row.action.frontMatter.created === undefined)).toBe(true);
   });
   it('suppresses only exact materialized identities, even outside lookahead', () => {
     const occurrence = { template: 't', original: '2026-10-09T16:00:00Z', timezone: weekly.timezone };

@@ -6,9 +6,10 @@ import { toDateStr, type Action, type ActionFrontMatter, type ProjectFrontMatter
 
 // The lifecycle status a reference carries — one model shared by the pill
 // status marks, the summary stage pills, and the open-action grouping below.
-// 'backlog' and 'slipped' are the two faces of the waiting mark: a time
-// never set versus a set time that lapsed.
-export type RefStatus = 'due' | 'overdue' | 'scheduled' | 'backlog' | 'slipped' | 'done' | 'cancelled' | 'open' | 'ended';
+// 'backlog' and 'slipped' are the two faces of waiting: a time never set
+// versus a set time that lapsed. 'recurring' marks a recurrence template,
+// which repeats rather than waits or resolves.
+export type RefStatus = 'due' | 'overdue' | 'scheduled' | 'backlog' | 'slipped' | 'done' | 'cancelled' | 'recurring' | 'open' | 'ended';
 
 // Production clocks retain their actual instant, including repeated hours.
 export type ClockNow = string | Date;
@@ -41,11 +42,11 @@ export function waiting(fm: ActionFrontMatter, now: ClockNow): boolean {
 // wins over any scheduled time — escalating to overdue once breached, and no
 // time ahead on the calendar leaves it waiting; deadline and waiting can
 // apply together. The waiting mark keeps its cause: 'backlog' when a time
-// was never set, 'slipped' when a set one lapsed — the glyph splits on it.
-// A resolution stands alone, as does a project's ended; the live states
-// carry no mark.
+// was never set, 'slipped' when a set one lapsed — the icon splits on it.
+// A resolution stands alone, as do a recurrence template and a project's
+// ended; the live states carry no mark.
 export function actionMarks(fm: ActionFrontMatter, now: ClockNow): RefStatus[] {
-  if (fm.recurrence) return [];
+  if (fm.recurrence) return ['recurring'];
   if (fm.resolution) return [fm.resolution];
   const marks: RefStatus[] = [];
   if (fm.deadline) marks.push(breached(fm.deadline, now) ? 'overdue' : 'due');
@@ -63,7 +64,7 @@ export function projectMarks(fm: ProjectFrontMatter): RefStatus[] {
 // shows it. The panel files a dated action under Scheduled whether or not
 // the date has passed — the waiting mark is time-aware, the grouping is
 // not, so a lapsed scheduled action stays in Scheduled (below the now tick)
-// while its chip regains the clock.
+// while its chip's ring takes clock hands.
 export function actionStatus(fm: ActionFrontMatter): RefStatus {
   if (fm.resolution) return fm.resolution;
   return fm.scheduled ? 'scheduled' : 'backlog';
@@ -78,9 +79,9 @@ export function projectStatus(fm: ProjectFrontMatter): RefStatus {
 // distance to a pending event, because that distance is the magnitude of the
 // status (due in 3 hours and due in 2 months are different states); time
 // since a past event is a fact and reads in the updated line instead. `marks`
-// are the chip channels the pill paints (the due ring, the calendar-slot glyph,
-// the closed mute); an `exception` pill flags an anomaly rather than a
-// state, and styles as an absence.
+// are the chip channels the pill paints (the due ring, the closed mute); an
+// `exception` pill flags an anomaly rather than a state, and styles as an
+// absence.
 export interface SummaryPill {
   label: string;
   marks: RefStatus[];
@@ -98,14 +99,14 @@ export interface SummaryPill {
 // breached (relativeDate's bare past count reads wrong after 'Due'). The
 // calendar pill reads 'Scheduled in 2h' while the event is ahead or running
 // ('Scheduled 2h ago' mid-event); once it lapses unresolved it is its own
-// state — 'Slipped 2mo', wearing the slipped clock: waiting to be
-// rescheduled; never scheduled at all reads 'Backlog', wearing the empty
-// slot — beside the due pill, not riding it. A resolution stands alone. A
-// live schedule synced to no calendar adds the one exception pill; a
-// slipped one doesn't — rescheduling, not syncing, is its fix (the synced
-// norm shows nothing either way).
+// state — 'Slipped 2mo': waiting to be rescheduled; never scheduled at all
+// reads 'Backlog' — beside the due pill, not riding it. A resolution stands
+// alone, as does a recurrence template (wearing its recurring mark). A live
+// schedule synced to no calendar adds the one exception pill; a slipped one
+// doesn't — rescheduling, not syncing, is its fix (the synced norm shows
+// nothing either way).
 export function actionPills(fm: ActionFrontMatter, now: ClockNow): SummaryPill[] {
-  if (fm.recurrence) return [{ label: 'Recurrence template', marks: [] }];
+  if (fm.recurrence) return [{ label: 'Recurrence template', marks: ['recurring'] }];
   // The hover behind any pill stating the scheduled time — a resolution's
   // stamp is the scheduled time too, the design's done time.
   const scheduledHover = (prefix: string) => {
@@ -197,7 +198,8 @@ export function groupOpenActions(
     if (fm.recurrence) continue;
     switch (actionStatus(fm)) {
       case 'scheduled': scheduled.push({ id, scheduled: fm.scheduled!, ...(fm.timezone && { timezone: fm.timezone }) }); break;
-      case 'backlog': backlog.push({ id, updated: latestEntry(id) ?? fm.created }); break;
+      // Unsaved projections are always scheduled, so backlog rows are saved.
+      case 'backlog': backlog.push({ id, updated: latestEntry(id) ?? fm.created! }); break;
     }
   }
 

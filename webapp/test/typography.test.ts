@@ -3,9 +3,9 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 
-// Guardrail for the type-scale pairing invariant declared at the token block
-// in style.css: line-height tokens are whole pixels, and every font-size
-// above the base carries its paired line-height.
+// Guardrail for the UI type-scale pairing invariant declared at the token
+// block in style.css. Markdown headings inherit GitHub's shared 1.25 ratio;
+// rendered prose and code also retain GitHub's ratios.
 
 const css = readFileSync(join(dirname(fileURLToPath(import.meta.url)), '..', 'style.css'), 'utf8');
 
@@ -45,9 +45,11 @@ describe('type scale pairing', () => {
     }
   });
 
-  it('pairs a line-height with every font-size above the base', () => {
+  it('pairs a line-height with every font-size above the base outside Markdown headings', () => {
     const unpaired = blocks()
-      .filter(({ decls }) => {
+      .filter(({ selector, decls }) => {
+        // H1–H6 share the line-height in the common Markdown heading rule.
+        if (/^\.rendered-content h[1-6]$/.test(selector)) return false;
         const fs = decls.match(/font-size:\s*([^;]+);/);
         return fs && isAboveBase(fs[1].trim()) && !/line-height:/.test(decls);
       })
@@ -55,18 +57,18 @@ describe('type scale pairing', () => {
     expect(unpaired, 'blocks setting font-size above the base without the paired line-height').toEqual([]);
   });
 
-  it('keeps unitless line-heights integral against their block font-size', () => {
+  it('keeps directly paired UI line-heights integral', () => {
     const offenders: string[] = [];
     for (const { selector, decls } of blocks()) {
       const lh = decls.match(/line-height:\s*(\d+(?:\.\d+)?)\s*;/);
       if (!lh) continue;
       const fs = decls.match(/font-size:\s*(\d+(?:\.\d+)?)px/);
-      if (!fs) continue; // ratio against an inherited size — not checkable here
+      if (!fs) continue; // relative Markdown sizes and inherited sizes are not checked here
       const product = parseFloat(lh[1]) * parseFloat(fs[1]);
       if (Math.abs(product - Math.round(product)) > 1e-6) {
         offenders.push(`${selector} → ${fs[1]}px × ${lh[1]} = ${product}px`);
       }
     }
-    expect(offenders, 'unitless line-heights must land on whole pixels').toEqual([]);
+    expect(offenders, 'directly paired UI line-heights must land on whole pixels').toEqual([]);
   });
 });

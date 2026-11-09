@@ -1,6 +1,7 @@
 import { Marked, Renderer } from 'marked';
 import DOMPurify from 'dompurify';
 import { prepareDiagrams } from './diagrams';
+import { prepareWideBlocks } from './wide-content';
 import { webpageFrame } from './webpage';
 import type { Artifact } from '../../cli/src/core/types';
 import { splitFrontMatter } from '../../cli/src/core/markdown';
@@ -22,9 +23,11 @@ import { buildRoute } from './route';
 import { bindDisplay, setDisplayText, moveDisplayNode, refreshRevealed } from './display';
 import { entityMentions, parseEntityHandle } from './entity-reference';
 import { dateHandle, dateMentions, dateTimeAttribute, localDateStamp, type DateReference } from './date-reference';
+import { parseLocationHandle, locationDisplay, locationMentions, type LocationReference } from './location-reference';
 import type { HierarchyNode } from './hierarchy';
 import { scheduleInstant, wallTimeAt } from '../../cli/src/core/scheduling';
-import { relativeDate, timelineWindow, stampInstant, clockInstant, actionPills, projectPills, ago, type OpenActionGroups, type RefStatus, type SummaryPill } from './instance';
+import { ICON_SIZE, actionIconState, artifactIconState, dateIconState, fileIconState, iconMarkup, locationIconState, projectIconState, refIconState, setEntityIcon, type IconKind } from './entity-icons';
+import { relativeDate, timelineWindow, stampInstant, clockInstant, actionMarks, actionPills, projectMarks, projectPills, ago, type OpenActionGroups, type RefStatus, type SummaryPill } from './instance';
 
 import { formatStamp, formatTime, formatDate, formatClock, dateColumns, calendarLabel, type DateTimeFormat } from './date-display';
 import type { DateTimePreferences } from './preferences';
@@ -47,6 +50,17 @@ const markdownParser = new Marked({ extensions: [{
     if (match) return { type: 'dateReference', raw: match[0] };
   },
   renderer: token => token.raw.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'),
+}, {
+  name: 'locationReference', level: 'inline',
+  start: source => source.indexOf('#location/'),
+  tokenizer(source) {
+    const match = /^#location\/[^\s<>()[\]{}"'`]+/.exec(source);
+    if (match) return { type: 'locationReference', raw: match[0] };
+  },
+  renderer: token => {
+    const escaped = token.raw.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    return locationMentions(token.raw).length ? escaped : `<span class="literal-location">${escaped}</span>`;
+  },
 }] });
 
 export interface RenderOptions extends DateTimePreferences {
@@ -64,6 +78,8 @@ export interface RenderOptions extends DateTimePreferences {
   onAssetClick: OnAssetClick;
   onArtifactClick?: (id: string, filename?: string) => void;
   resolveArtifactName?: (id: string) => string;
+  // The artifact record when it is at hand, for the icon of what it opens.
+  resolveArtifact?: (id: string) => Artifact | undefined;
   artifactHref?: (id: string, filename?: string) => string;
   artifactFileUrl?: (id: string, filename?: string) => string | null;
   assetFileUrl?: (path: string) => string | null;
@@ -93,36 +109,22 @@ export interface EntityRelations {
   assets?: AssetLink[];
 }
 
-const ENTITY_ICONS: Record<string, string> = {
-  instance: '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12.83 2.18a2 2 0 0 0-1.66 0L2.6 6.08a1 1 0 0 0 0 1.83l8.58 3.91a2 2 0 0 0 1.66 0l8.58-3.9a1 1 0 0 0 0-1.83Z"/><path d="m22 17.65-9.17 4.16a2 2 0 0 1-1.66 0L2 17.65"/><path d="m22 12.65-9.17 4.16a2 2 0 0 1-1.66 0L2 12.65"/></svg>',
-  entry: '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.376 3.622a1 1 0 0 1 3.002 3.002L7.368 18.635a2 2 0 0 1-.855.506l-2.872.838a.5.5 0 0 1-.62-.62l.838-2.872a2 2 0 0 1 .506-.854z"/></svg>',
-  project: '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2z"/></svg>',
-  action: '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="18" height="18" x="3" y="4" rx="2"/><line x1="16" x2="16" y1="2" y2="6"/><line x1="8" x2="8" y1="2" y2="6"/><line x1="3" x2="21" y1="10" y2="10"/></svg>',
-  asset: '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/><path d="M10 9H8"/><path d="M16 13H8"/><path d="M16 17H8"/></svg>',
-  // The search dropdown's jump-to-date rows — a moment, not an entity.
-  date: '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>',
-};
+type IconType = 'instance' | 'entry' | 'project' | 'action' | 'artifact' | 'asset';
+const iconKind = (type: IconType): IconKind => type === 'artifact' || type === 'asset' ? 'content' : type;
 
-export function entityIcon(type: string): string {
-  return ENTITY_ICONS[type === 'artifact' ? 'asset' : type] || '';
+// An entity's icon markup (see entity-icons.ts), in its resting state unless
+// a state is given, drawn for the size its placement renders at — pill size
+// by default.
+export function entityIcon(type: IconType, state?: string, size: number = ICON_SIZE.pill): string {
+  return iconMarkup(iconKind(type), state ?? '', size);
 }
 
-// The waiting mark — one grey glyph, two faces of the calendar slot,
-// trailing an action with no time ahead on the calendar: a dashed empty
-// circle while a time was never set (backlog — the slot never filled), a
-// clock face with hands once a set time lapsed (slipped — a real time that
-// ran out). Smaller than the type icon, the pill's second channel.
-// The other marks read from the pill itself: a deadline is a ring around it
-// (CSS), composing with the slot glyph rather than occupying its place;
-// upcoming work and live projects are the clean pill; and closed work (done,
-// cancelled, ended) mutes — the CSS greys the field and washes the name
-// while the icon keeps the full type color, a cancelled name additionally
-// striking through.
-const WAITING_CLOCK = '<svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>';
-// Six round dashes on the same circle — legible texture at 9px, not a
-// stipple (2π·10 ≈ 62.8 splits into six 4+6.47 periods).
-const EMPTY_SLOT = '<svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10" stroke-dasharray="4 6.47"/></svg>';
-
+// The icon carries an entity's lifecycle state — the ring fills and ticks
+// when done, slashes when cancelled, shows clock hands once its time
+// slipped, dashes while in the backlog — and the pill carries the rest: a
+// deadline is a ring around it (CSS), and closed work (done, cancelled,
+// ended) mutes — the CSS greys the field and washes the name while the icon
+// keeps the full type color, a cancelled name additionally striking through.
 // The classes a set of marks paints on a chip: one per mark, plus the shared
 // closed class — done, cancelled, and ended are one visual family (the
 // mute), so the CSS styles the family, not each member.
@@ -134,10 +136,10 @@ function markClasses(marks: RefStatus[]): string[] {
   return classes;
 }
 
-// Dress an element in its lifecycle marks: the mark classes (driving the due
-// ring and the closed mute) plus the calendar-slot glyph where one applies —
-// the dashed empty slot for backlog, the clock for slipped.
-function applyMarks(host: HTMLElement, marks: RefStatus[], slotVisible = true): void {
+// Dress an element in its lifecycle marks: the mark classes driving the due
+// ring and the closed mute, and — given the type of a chip with an icon —
+// the icon's state, morphing in place when the marks change.
+function applyMarks(host: HTMLElement, marks: RefStatus[], type?: 'project' | 'action' | 'entry'): void {
   // Rewrite the mark classes only when they change: a repaint carrying the
   // same marks must not invalidate the chip's style every minute.
   const present = Array.from(host.classList).filter((name) => name.startsWith('tag-status-'));
@@ -146,21 +148,13 @@ function applyMarks(host: HTMLElement, marks: RefStatus[], slotVisible = true): 
     host.classList.remove(...present);
     host.classList.add(...wanted);
   }
-  const slot = !slotVisible ? null : marks.includes('backlog') ? EMPTY_SLOT : marks.includes('slipped') ? WAITING_CLOCK : null;
-  const current = host.querySelector<HTMLElement>(':scope > .ref-status');
-  if (current?.innerHTML === slot) return;
-  current?.remove();
-  if (slot) {
-    const glyph = el('span', { className: 'ref-status' });
-    glyph.innerHTML = slot; // hardcoded SVG only — never user data
-    host.appendChild(glyph);
-  }
+  if (type) setEntityIcon(host, type, refIconState(type, marks), ICON_SIZE.pill);
 }
 
-// Fill an element with a type icon. The SVG is a hardcoded constant — never
-// user data — so setting innerHTML is safe.
-function setIcon(host: HTMLElement, type: string): void {
-  host.innerHTML = entityIcon(type);
+// Fill an element with an entity icon. The markup is generated from constant
+// geometry — never user data — so setting innerHTML is safe.
+function setIcon(host: HTMLElement, type: IconType, state?: string, size?: number): void {
+  host.innerHTML = entityIcon(type, state, size);
 }
 
 const INLINE_ARTIFACT_RE = /(?<![\p{L}\p{N}_/\\])#artifact\/[^\s<>()[\]{}"'`]+/gu;
@@ -239,7 +233,8 @@ function referenceHref(type: 'project' | 'action' | 'entry', id: string, opts: R
 function wireDateLink(anchor: HTMLAnchorElement, ref: DateReference, opts: RenderOptions): void {
   anchor.classList.add('inline-tag', 'inline-tag-date');
   anchor.dataset.dateHandle = dateHandle(ref);
-  anchor.insertAdjacentHTML('afterbegin', entityIcon(ref.start.length === 10 ? 'action' : 'date'));
+  // A calendar page keyed by the value; constant geometry — never user data.
+  anchor.insertAdjacentHTML('afterbegin', iconMarkup('date', dateIconState(ref), ICON_SIZE.pill));
   const label = el('time', { dateTime: dateTimeAttribute(ref.start) });
   anchor.append(label);
   bindDisplay(anchor, opts, (node, current) => {
@@ -258,13 +253,52 @@ function wireDateLink(anchor: HTMLAnchorElement, ref: DateReference, opts: Rende
   if (opts.onDateClick) wireNavigationLink(anchor, () => opts.onDateClick!(ref));
 }
 
+function locationMapHref(ref: LocationReference): string {
+  const map = new URL('https://maps.apple.com/place');
+  map.searchParams.set('coordinate', `${ref.geo!.latitude},${ref.geo!.longitude}`);
+  if (ref.postal) map.searchParams.set('address', ref.postal.join(', '));
+  return map.href;
+}
+
+function locationChip(ref: LocationReference, handle: string, authored?: HTMLAnchorElement, markdownLabel?: string): HTMLElement {
+  const host = ref.geo ? authored ?? el('a') : el('span');
+  if (authored && host !== authored) {
+    host.title = authored.title;
+    while (authored.firstChild) host.append(authored.firstChild);
+    authored.replaceWith(host);
+  }
+  host.classList.add('inline-tag', 'inline-tag-location');
+  host.dataset.locationHandle = handle;
+  const label = el('span', {className: 'location-label'});
+  const hasAuthoredLabel = !!authored && (!!host.textContent || !!host.querySelector('img'));
+  if (hasAuthoredLabel) {
+    host.dataset.locationLabel = host.textContent ?? '';
+    if (markdownLabel !== undefined) host.dataset.locationMarkdownLabel = markdownLabel;
+    while (host.firstChild) label.append(host.firstChild);
+  } else label.textContent = locationDisplay(ref);
+  // The pin around its point, or pending without coordinates; constant
+  // geometry — never user data.
+  host.insertAdjacentHTML('afterbegin', iconMarkup('location', locationIconState(ref), ICON_SIZE.pill));
+  host.append(label);
+  const description = `${handle} · ${ref.geo ? 'Open in Apple Maps' : 'Coordinates unavailable'}`;
+  host.title ||= description;
+  describeReference(host, description);
+  if (ref.geo) {
+    const anchor = host as HTMLAnchorElement;
+    anchor.href = locationMapHref(ref);
+    anchor.target ||= '_blank';
+    anchor.rel = 'noopener';
+  } else host.classList.add('is-unresolved');
+  return host;
+}
+
 let nextControlId = 1;
 function controlId(prefix: string): string { return `${prefix}-${nextControlId++}`; }
 
 const MARK_DESCRIPTIONS: Record<RefStatus, string> = {
   due: 'deadline due', overdue: 'deadline overdue', scheduled: 'scheduled',
   backlog: 'unscheduled', slipped: 'schedule lapsed', done: 'done',
-  cancelled: 'cancelled', open: 'open', ended: 'ended',
+  cancelled: 'cancelled', recurring: 'recurring', open: 'open', ended: 'ended',
 };
 function referenceDescription(type: 'project' | 'action' | 'entry', marks: RefStatus[]): string {
   return [type[0].toUpperCase() + type.slice(1), ...marks.map(mark => MARK_DESCRIPTIONS[mark])].join('; ');
@@ -297,7 +331,6 @@ function refChip(
   span.dataset.refType = type;
   span.dataset.refId = id;
   span.title = id;
-  setIcon(span, type);
   const label = el('span', { className: 'tag-text', textContent: opts.resolveName(type, id) });
   if (type === 'entry') bindDisplay(label, opts, (node, current) => setDisplayText(node, current.resolveName(type, id)));
   span.appendChild(label);
@@ -314,7 +347,7 @@ export function applyRefStatus(
 ): void {
   bindDisplay(chip, opts, (node, current) => {
     const marks = current.refMarks(type, id);
-    applyMarks(node, marks);
+    applyMarks(node, marks, type);
     describeReference(node, referenceDescription(type, marks));
   });
 }
@@ -336,8 +369,18 @@ function renderContent(markdown: string, opts: RenderOptions, baseFile?: string)
   const renderer = new Renderer();
   const renderText = renderer.text.bind(renderer);
   const renderLink = renderer.link.bind(renderer);
+  const locationLabels = new Map<string, {handle: string; markdown: string; title: string | null}>();
+  const locationMarker = `aside-location-${Math.random().toString(36).slice(2)}-`;
   renderer.link = token => {
-    const html = renderLink(token);
+    let html = renderLink(token);
+    if (token.href.startsWith('#location/')) {
+      // A temporary title survives sanitizing without allowing authored data-*
+      // attributes. Restore the title before wiring the link; the original
+      // Markdown label is only presentation/copy metadata, never location data.
+      const marker = `${locationMarker}${locationLabels.size}`;
+      locationLabels.set(marker, {handle: token.href, markdown: token.text, title: token.title ?? null});
+      html = html.replace(/^<a\b[^>]*>/, opening => `${opening.replace(/\s+title="[^"]*"/, '').slice(0, -1)} title="${marker}">`);
+    }
     return /\]\(\s*<?\\#/.test(token.raw) ? html.replace('href="#', 'href="&#35;') : html;
   };
   renderer.text = (token) => token.type === 'escape' && token.text === '#' ? '&#35;' : renderText(token);
@@ -387,7 +430,20 @@ function renderContent(markdown: string, opts: RenderOptions, baseFile?: string)
   for (const anchor of Array.from(wrapper.querySelectorAll('a[href]'))) {
     if (anchor.closest('pre, code')) continue;
     const href = anchor.getAttribute('href') ?? '';
+    const locationLabel = locationLabels.get(anchor.getAttribute('title') ?? '');
+    if (locationLabel) {
+      if (locationLabel.title !== null) anchor.setAttribute('title', locationLabel.title);
+      else anchor.removeAttribute('title');
+    }
     if (href.includes(literalHash)) continue;
+    // Marked can URI-encode an authored destination. Validate its original
+    // spelling so an invalid raw postal value cannot become a valid handle.
+    const locationHandle = locationLabel?.handle ?? href;
+    const location = parseLocationHandle(locationHandle);
+    if (location) {
+      locationChip(location, locationHandle, anchor as HTMLAnchorElement, locationLabel?.markdown);
+      continue;
+    }
     const entity = parseEntityHandle(href);
     if (entity) {
       anchor.classList.add('inline-tag', `inline-tag-${entity.type}`);
@@ -396,7 +452,6 @@ function renderContent(markdown: string, opts: RenderOptions, baseFile?: string)
       link.dataset.refType = entity.type;
       link.dataset.refId = entity.id;
       link.title ||= href;
-      anchor.insertAdjacentHTML('afterbegin', entityIcon(entity.type));
       anchor.setAttribute('href', referenceHref(entity.type, entity.id, opts));
       applyRefStatus(link, entity.type, entity.id, opts);
       wireNavigationLink(anchor, () => opts.onTagClick(entity, link));
@@ -410,7 +465,7 @@ function renderContent(markdown: string, opts: RenderOptions, baseFile?: string)
     const assetPath = baseFile ? resolveRelativePath(baseFile, href) : null;
     if (assetPath) {
       anchor.classList.add('asset-link');
-      anchor.insertAdjacentHTML('afterbegin', entityIcon('asset')); // hardcoded SVG only — never user data
+      anchor.insertAdjacentHTML('afterbegin', entityIcon('asset', fileIconState(assetPath), ICON_SIZE.row)); // generated from constant geometry — never user data
       // Real href so copy/middle-click deep-link; in-app handling on plain click.
       anchor.setAttribute('href', opts.routeHref(buildRoute({ filter: opts.activeFilter, doc: { kind: 'asset', path: assetPath } })));
       wireNavigationLink(anchor, () => opts.onAssetClick(assetPath));
@@ -453,7 +508,7 @@ function renderContent(markdown: string, opts: RenderOptions, baseFile?: string)
   const artifactNodes: Text[] = [];
   let artifactNode: Text | null;
   while ((artifactNode = artifactWalker.nextNode() as Text | null)) {
-    if (artifactNode.parentElement?.closest('pre, code, a')) continue;
+    if (artifactNode.parentElement?.closest('pre, code, a, .inline-tag-location, .literal-location')) continue;
     INLINE_ARTIFACT_RE.lastIndex = 0;
     if (INLINE_ARTIFACT_RE.test(artifactNode.data)) artifactNodes.push(artifactNode);
   }
@@ -479,7 +534,7 @@ function renderContent(markdown: string, opts: RenderOptions, baseFile?: string)
   const textNodes: Text[] = [];
   let node: Text | null;
   while ((node = walker.nextNode() as Text | null)) {
-    if (node.parentElement?.closest('pre, code, a')) continue;
+    if (node.parentElement?.closest('pre, code, a, .inline-tag-location, .literal-location')) continue;
     if (entityMentions(node.data).length) textNodes.push(node);
   }
 
@@ -500,7 +555,7 @@ function renderContent(markdown: string, opts: RenderOptions, baseFile?: string)
   const dateWalker = document.createTreeWalker(wrapper, NodeFilter.SHOW_TEXT);
   const dateNodes: Text[] = [];
   while ((node = dateWalker.nextNode() as Text | null)) {
-    if (!node.parentElement?.closest('pre, code, a') && dateMentions(node.data).length) dateNodes.push(node);
+    if (!node.parentElement?.closest('pre, code, a, .inline-tag-location, .literal-location') && dateMentions(node.data).length) dateNodes.push(node);
   }
   for (const textNode of dateNodes) {
     const frag = document.createDocumentFragment();
@@ -510,6 +565,22 @@ function renderContent(markdown: string, opts: RenderOptions, baseFile?: string)
       const anchor = el('a');
       wireDateLink(anchor, ref, opts);
       frag.append(anchor);
+      lastIndex = index + length;
+    }
+    frag.append(document.createTextNode(textNode.data.slice(lastIndex)));
+    textNode.parentNode!.replaceChild(frag, textNode);
+  }
+
+  const locationWalker = document.createTreeWalker(wrapper, NodeFilter.SHOW_TEXT);
+  const locationNodes: Text[] = [];
+  while ((node = locationWalker.nextNode() as Text | null)) {
+    if (!node.parentElement?.closest('pre, code, a, .inline-tag-location, .literal-location') && locationMentions(node.data).length) locationNodes.push(node);
+  }
+  for (const textNode of locationNodes) {
+    const frag = document.createDocumentFragment();
+    let lastIndex = 0;
+    for (const {ref, index, length, handle} of locationMentions(textNode.data)) {
+      frag.append(document.createTextNode(textNode.data.slice(lastIndex, index)), locationChip(ref, handle));
       lastIndex = index + length;
     }
     frag.append(document.createTextNode(textNode.data.slice(lastIndex)));
@@ -528,6 +599,7 @@ function renderContent(markdown: string, opts: RenderOptions, baseFile?: string)
     }
   }
   prepareDiagrams(wrapper);
+  prepareWideBlocks(wrapper);
   return wrapper;
 }
 
@@ -595,9 +667,9 @@ export function renderDateMarker(date: string, prev: string | null, prefs: DateT
 
 // The separation at which the incoming value contacts the latched one and
 // starts pushing it — roughly the glyph height plus a hair of daylight
-// (glyphs span ~5..16px of the 20px line box), so the pair reads as one
+// for the 12px mono date in its 20px line box, so the pair reads as one
 // connected reel rather than two boxes a full line apart.
-const LATCH_CONTACT_PX = 12;
+const LATCH_CONTACT_PX = 13;
 
 // Render the latched readout with the next day riding in: `from` is the
 // latched date, `to` the approaching day, and `ghostY` that day's marker
@@ -656,6 +728,18 @@ function renderTimeHandle(entryId: string, timeStr: string, opts: RenderOptions)
   return link;
 }
 
+function firstEntryContent(content: HTMLElement): Node | undefined {
+  for (const first of content.childNodes) {
+    if (first.nodeType === Node.TEXT_NODE) {
+      if (first.textContent?.trim()) return first;
+      continue;
+    }
+    if (!(first instanceof Element) || first.tagName === 'HR') continue;
+    return first;
+  }
+  return undefined;
+}
+
 export function renderEntry(
   entry: Entry,
   opts: RenderOptions,
@@ -692,6 +776,10 @@ export function renderEntry(
 
   const content = renderContent(entry.content, opts, weekFilePath(entry.weekFile));
   content.classList.add('entry-content');
+  if (!projectIds.length && !actionIds.length) {
+    const first = firstEntryContent(content);
+    if (first instanceof Element && first.classList.contains('wide-block')) card.classList.add('entry-wide-start');
+  }
   body.appendChild(content);
 
   card.appendChild(body);
@@ -743,7 +831,11 @@ function setTagGroupState(
 
   const count = expanded ? ids.length : 1;
   for (let i = 0; i < count; i++) {
-    group.appendChild(filterTag(type, ids[i], opts));
+    const tag = filterTag(type, ids[i], opts);
+    const name = opts.resolveName(type, ids[i]);
+    // Ellipsized timeline pills retain the complete name on hover.
+    tag.title = name === ids[i] ? ids[i] : `${name}\n${ids[i]}`;
+    group.appendChild(tag);
   }
 
   if (ids.length <= 1) return;
@@ -765,14 +857,14 @@ function setTagGroupState(
     // The bubble stands in for the hidden active tag, so it also carries that
     // tag's mark classes — the fill it takes stays the fill the tag would
     // have (a closed entity's grey, a due one's ring); classes only, the
-    // bubble's +N leaves no room for a glyph.
+    // bubble's +N leaves no room for an icon.
     const hidden = ids.slice(count);
     const activeHidden = hidden.find((id) => isActiveRef(opts, type, id));
     if (activeHidden !== undefined) {
       pill.classList.add('is-active');
       bindDisplay(pill, opts, (node, current) => {
         const marks = current.refMarks(type, activeHidden);
-        applyMarks(node, marks, false);
+        applyMarks(node, marks);
         describeReference(node, `Hidden active ${type}: ${current.resolveName(type, activeHidden)}. ${referenceDescription(type, marks)}`);
       });
     }
@@ -789,11 +881,11 @@ function setTagGroupState(
 
 // The status pill row — each pill a lifecycle state or an exception, worn in
 // the entity-pill style: the type accent field carrying the same marks the
-// entity's own chips wear (the due ring, the calendar-slot glyph, the closed mute
-// and strike); an exception pill styles as an absence instead. No type icon —
-// the title directly above already carries it. A stamped pill spells its
-// absolute stamp on hover — the label carries the distance, the hover the
-// calendar fact. Which pills, and why time rides some labels: see
+// entity's own chips wear (the due ring, the closed mute and strike); an
+// exception pill styles as an absence instead. No type icon — the title
+// directly above already carries it, in the entity's state. A stamped pill
+// spells its absolute stamp on hover — the label carries the distance, the
+// hover the calendar fact. Which pills, and why time rides some labels: see
 // actionPills in instance.ts.
 function statusPills(type: 'project' | 'action', read: (opts: RenderOptions) => SummaryPill[], opts: RenderOptions): HTMLElement {
   const row = el('div', { className: 'status-pills' });
@@ -1023,7 +1115,7 @@ export function renderFactsLine(stats: ScopeStats, updated: string | undefined, 
   const pair = (type: 'project' | 'action' | 'entry', text: string, label: string) => {
     const item = el('span', { className: 'summary-stat', title: label });
     const icon = el('span', { className: `stat-icon icon-${type}` });
-    setIcon(icon, type);
+    setIcon(icon, type, undefined, ICON_SIZE.stat);
     item.append(icon, el('span', { className: 'stat-count', textContent: text }));
     row.appendChild(item);
   };
@@ -1043,6 +1135,7 @@ export function renderFactsLine(stats: ScopeStats, updated: string | undefined, 
 function renderSummary(
   type: 'project' | 'action',
   name: string,
+  state: TitleIconState,
   pills: HTMLElement,
   description: string | undefined,
   opts: RenderOptions,
@@ -1052,7 +1145,7 @@ function renderSummary(
   onOpenDetail: () => void,
 ): HTMLElement {
   const container = el('div', { className: `entity-view ${type}-summary` });
-  container.appendChild(renderEntityTitle(type, name, onOpenDetail, opts.routeHref(buildRoute({ filter: opts.activeFilter, doc: { kind: 'detail' } }))));
+  container.appendChild(renderEntityTitle(type, name, { state, opts, onOpenDetail, href: opts.routeHref(buildRoute({ filter: opts.activeFilter, doc: { kind: 'detail' } })) }));
   container.appendChild(pills);
   if (description) container.appendChild(el('p', { className: 'summary-description', textContent: description }));
   container.appendChild(renderFactsLine(stats, updated, opts));
@@ -1094,7 +1187,7 @@ export function renderProjectSummary(
   appendOpenActionSections(sections, data.actions, opts);
   appendSection(sections, 'Related projects', data.related.map((id) => filterTag('project', id, opts)), undefined, true);
   appendAssetSection(sections, data.assets, opts);
-  return renderSummary('project', fm.name, statusPills('project', () => projectPills(fm), opts), description,
+  return renderSummary('project', fm.name, projectIconState(projectMarks(fm)), statusPills('project', () => projectPills(fm), opts), description,
     opts, data.updated, data.stats, sections, onOpenDetail);
 }
 
@@ -1119,7 +1212,7 @@ export function renderActionSummary(
   const sections = el('div', { className: 'entity-related' });
   appendSection(sections, 'Projects', data.projects.map((id) => filterTag('project', id, opts)), undefined, true);
   appendAssetSection(sections, data.assets, opts);
-  return renderSummary('action', fm.name, statusPills('action', current => [...(data.projected ? [{ label: 'Projected', marks: [] }] : []), ...actionPills(fm, current.nowDate)], opts), description,
+  return renderSummary('action', fm.name, current => actionIconState(actionMarks(fm, current.nowDate)), statusPills('action', current => [...(data.projected ? [{ label: 'Projected', marks: [] }] : []), ...actionPills(fm, current.nowDate)], opts), description,
     opts, data.updated, data.stats, sections, onOpenDetail);
 }
 
@@ -1152,7 +1245,7 @@ export function renderInstanceSummary(
   onOpenDetail: () => void,
 ): HTMLElement {
   const container = el('div', { className: 'entity-view instance-summary' });
-  container.appendChild(renderEntityTitle('instance', manifest.name ?? manifest.id, onOpenDetail, opts.routeHref(buildRoute({ filter: null, doc: { kind: 'detail' } }))));
+  container.appendChild(renderEntityTitle('instance', manifest.name ?? manifest.id, { state: 'active', onOpenDetail, href: opts.routeHref(buildRoute({ filter: null, doc: { kind: 'detail' } })) }));
   if (manifest.description) container.appendChild(el('p', { className: 'summary-description', textContent: manifest.description }));
   container.appendChild(renderFactsLine(data.stats, data.latest, opts));
 
@@ -1172,21 +1265,26 @@ export function renderInstanceSummary(
 const OPEN_DETAIL_ICON = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M7 7h10v10"/><path d="M7 17 17 7"/></svg>';
 
 // Title with a type icon in front — colored by type so the entity kind reads
-// at a glance without a labeled header. With `onOpenDetail` the whole title —
-// icon and name — is one control opening the scope's record in the reader, a
-// muted open-arrow (↗) trailing the name as the affordance, superscript like
-// an external-link marker: the control is the identity it opens, keeping
-// content rows free of controls. The arrow rides the last word inline, so it
-// follows a wrapped title naturally.
+// at a glance without a labeled header, and drawn in the entity's state: a
+// done action's ring ticked, an ended project's ribbon filled, the open
+// instance's notebook half open. A state read from the display options
+// repaints with them, so a clock-driven state (a slipped action) stays
+// current. With `onOpenDetail` the whole title — icon and name — is one
+// control opening the scope's record in the reader, a muted open-arrow (↗)
+// trailing the name as the affordance, superscript like an external-link
+// marker: the control is the identity it opens, keeping content rows free of
+// controls. The arrow rides the last word inline, so it follows a wrapped
+// title naturally.
+type TitleIconState = string | ((current: RenderOptions) => string);
 function renderEntityTitle(
-  type: 'project' | 'action' | 'entry' | 'asset' | 'instance',
+  type: IconType,
   name: string,
-  onOpenDetail?: () => void,
-  href?: string,
+  { state, opts, onOpenDetail, href }: { state?: TitleIconState; opts?: RenderOptions; onOpenDetail?: () => void; href?: string } = {},
 ): HTMLElement {
   const title = el('h2', { className: 'entity-title' });
   const icon = el('span', { className: `entity-title-icon icon-${type}`, title: type });
-  setIcon(icon, type);
+  if (typeof state === 'function') bindDisplay(icon, opts!, (node, current) => setEntityIcon(node, iconKind(type), state(current), ICON_SIZE.title));
+  else setIcon(icon, type, state, ICON_SIZE.title);
   const label = el('span', { className: 'entity-title-label', textContent: name });
   if (onOpenDetail) {
     const btn = el('a', { className: 'title-open', href: href!, title: 'Open details', 'aria-label': `Open details for ${name}` });
@@ -1205,12 +1303,14 @@ function renderEntityTitle(
 // a config entry) — rendered in the mono face; prose and dates stay in the
 // text face.
 export type FieldValue = string | ((opts: RenderOptions) => string);
-function renderFields(pairs: [string, FieldValue, boolean?][], opts?: RenderOptions): HTMLElement {
+function renderFields(pairs: [string, FieldValue | HTMLElement, boolean?][], opts?: RenderOptions): HTMLElement {
   const fields = el('dl', { className: 'detail-fields' });
   for (const [dt, dd, mono] of pairs) {
     fields.appendChild(el('dt', { textContent: dt }));
-    const value = el('dd', { className: mono ? 'field-mono' : '', textContent: typeof dd === 'string' ? dd : dd(opts!) });
-    if (typeof dd === 'function') bindDisplay(value, opts!, (node, current) => setDisplayText(node, dd(current)));
+    const value = el('dd', { className: mono ? 'field-mono' : '' });
+    if (typeof dd === 'string') value.textContent = dd;
+    else if (typeof dd === 'function') bindDisplay(value, opts!, (node, current) => setDisplayText(node, dd(current)));
+    else value.appendChild(dd);
     fields.appendChild(value);
   }
   return fields;
@@ -1251,7 +1351,7 @@ export interface ProjectDetailData {
 export function renderProjectDetail(id: string, project: Project, description: string | undefined, opts: RenderOptions, hierarchy: HierarchyNode[], data: ProjectDetailData): HTMLElement {
   const container = el('div', { className: 'entity-view entity-detail' });
   const fm = project.frontMatter;
-  container.appendChild(renderEntityTitle('project', fm.name));
+  container.appendChild(renderEntityTitle('project', fm.name, { state: projectIconState(projectMarks(fm)) }));
   container.appendChild(statusPills('project', () => projectPills(fm), opts));
   if (description) container.appendChild(el('p', { className: 'summary-description', textContent: description }));
 
@@ -1279,11 +1379,11 @@ export function renderProjectDetail(id: string, project: Project, description: s
 export function renderActionDetail(id: string, action: Action, description: string | undefined, opts: RenderOptions, stats: [string, FieldValue][]): HTMLElement {
   const container = el('div', { className: 'entity-view entity-detail' });
   const fm = action.frontMatter;
-  container.appendChild(renderEntityTitle('action', fm.name));
+  container.appendChild(renderEntityTitle('action', fm.name, { state: current => actionIconState(actionMarks(fm, current.nowDate)), opts }));
   container.appendChild(statusPills('action', current => [...(id.startsWith('~') ? [{ label: 'Projected', marks: [] }] : []), ...actionPills(fm, current.nowDate)], opts));
   if (description) container.appendChild(el('p', { className: 'summary-description', textContent: description }));
 
-  const fields: [string, FieldValue, boolean?][] = id.startsWith('~') ? [] : [['ID', id, true], ['Created', current => formatStamp(fm.created, current)]];
+  const fields: [string, FieldValue | HTMLElement, boolean?][] = id.startsWith('~') ? [] : [['ID', id, true], ['Created', current => formatStamp(fm.created!, current)]];
   if (fm.occurrence) { fields.push(['Template', fm.occurrence.template], ['Original occurrence', current => formatScheduledStamp(fm.occurrence!.original, fm.occurrence!.timezone, current)]); }
   for (const schedule of Array.isArray(fm.recurrence) ? fm.recurrence : []) {
     if (schedule && typeof schedule.dtstart === 'string' && typeof schedule.rrule === 'string') fields.push(['Recurrence', current => `${formatScheduledStamp(schedule.dtstart, schedule.timezone, current)} · ${schedule.rrule}`]);
@@ -1293,6 +1393,17 @@ export function renderActionDetail(id: string, action: Action, description: stri
   }
   if (fm.duration) fields.push(['Duration', fm.duration]);
   if (fm.calendar) fields.push(['Calendar', fm.calendar_account ? `${fm.calendar} (${fm.calendar_account})` : fm.calendar]);
+  const savedLocation: unknown = fm.location;
+  if (savedLocation !== undefined) {
+    if (typeof savedLocation === 'string') {
+      const location = parseLocationHandle(savedLocation);
+      fields.push(['Location', location ? locationChip(location, savedLocation) : savedLocation]);
+    } else {
+      let text = '[Invalid location value]';
+      try { text = JSON.stringify(savedLocation) ?? text; } catch { /* Keep malformed source readable without mounting it. */ }
+      fields.push(['Location', text]);
+    }
+  }
   if (fm.deadline) fields.push(['Deadline', current => formatStamp(fm.deadline!, current)]);
   container.appendChild(renderFields(fields, opts));
 
@@ -1351,7 +1462,7 @@ export function renderInstanceDetail(
   data: InstanceDetailData,
 ): HTMLElement {
   const container = el('div', { className: 'entity-view entity-detail' });
-  container.appendChild(renderEntityTitle('instance', manifest.name ?? manifest.id));
+  container.appendChild(renderEntityTitle('instance', manifest.name ?? manifest.id, { state: 'active' }));
   if (manifest.description) container.appendChild(el('p', { className: 'summary-description', textContent: manifest.description }));
 
   const fields: [string, FieldValue, boolean?][] = [['ID', manifest.id, true]];
@@ -1475,7 +1586,7 @@ function appendSection(container: HTMLElement, title: string, items: HTMLElement
 // related lists and the instance summary's Assets timeline.
 function renderAssetRow(asset: AssetLink, opts: RenderOptions): HTMLElement {
   const row = el('a', { className: 'related-row asset-row', title: asset.path, href: opts.routeHref(buildRoute({ filter: opts.activeFilter, doc: { kind: 'asset', path: asset.path } })) });
-  setIcon(row, 'asset');
+  setIcon(row, 'asset', fileIconState(asset.path), ICON_SIZE.row);
   row.appendChild(el('span', { className: 'asset-row-title', textContent: asset.title }));
   wireNavigationLink(row, () => opts.onAssetClick(asset.path));
   return row;
@@ -1520,13 +1631,30 @@ export interface ArtifactRelations {
   backlinks: string[];
 }
 
+// Full-page HTML keeps the renderer-owned preview frame mounted on its own.
+// Its native identity and context can be mounted in the control interface's
+// inspector without copying the iframe or its query capability.
+const readerMetadata = new WeakMap<HTMLElement, HTMLElement>();
+
+export function readerDetails(page: HTMLElement): HTMLElement | undefined {
+  return readerMetadata.get(page);
+}
+
+function fullPageHtml(preview: HTMLElement, details: HTMLElement): HTMLElement {
+  const page = el('div', { className: 'html-page' });
+  page.dataset.readerPresentation = 'html';
+  page.appendChild(preview);
+  readerMetadata.set(page, details);
+  return page;
+}
+
 function artifactBacklink(handle: string, opts: RenderOptions): HTMLElement {
   const artifact = validArtifactReference(handle);
   if (artifact) {
     const anchor = artifactLink(artifact.id, artifact.filename, opts);
     const label = el('span', { className: 'tag-text', textContent: anchor.textContent ?? '' });
     anchor.classList.add('tag', 'tag-artifact');
-    setIcon(anchor, 'artifact');
+    setIcon(anchor, 'artifact', artifactIconState(opts.resolveArtifact?.(artifact.id), artifact.filename));
     anchor.appendChild(label);
     return anchor;
   }
@@ -1564,8 +1692,10 @@ export function renderArtifactDetail(
   }
 
   const target = filename ?? artifactContentFilename(artifact);
+  let preview: HTMLElement | undefined;
   if (target && content) {
-    container.appendChild(renderAssetBody(artifactAttachmentRelativePath(id, target), content, opts, true));
+    preview = renderAssetBody(artifactAttachmentRelativePath(id, target), content, opts, true);
+    container.appendChild(preview);
   } else {
     const body = renderContent(artifact.body, opts, artifactRecordPath(id));
     body.classList.add('detail-body');
@@ -1581,6 +1711,7 @@ export function renderArtifactDetail(
   appendSection(related, 'Actions', relations.actions.map((action) => filterTag('action', action, opts)));
   appendSection(related, 'Linked from', relations.backlinks.map((handle) => artifactBacklink(handle, opts)));
   container.appendChild(related);
+  if (preview && content?.kind === 'webpage') return fullPageHtml(preview, container);
   return container;
 }
 
@@ -1595,14 +1726,15 @@ export function renderAssetDetail(
   const container = el('div', { className: 'entity-view asset-detail' });
   container.appendChild(el('h2', { className: 'entity-title', textContent: assetDisplayName(path) }));
   container.appendChild(el('div', { className: 'asset-path', textContent: path }));
-  container.appendChild(renderAssetBody(path, content, opts));
+  const preview = renderAssetBody(path, content, opts);
+  container.appendChild(preview);
 
   if (linkedFrom.length > 0) {
     container.appendChild(renderRelatedList('Linked from',
       linkedFrom.map((entry) => renderTagRow('entry', entry.id, entry.description, opts))));
   }
 
-  return container;
+  return content.kind === 'webpage' ? fullPageHtml(preview, container) : container;
 }
 
 function renderAssetBody(path: string, content: AssetContent, opts: RenderOptions, stripFrontMatter = false): HTMLElement {

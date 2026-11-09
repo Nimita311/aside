@@ -64,12 +64,16 @@ function assertNoHelper(calls: ReturnType<typeof fakeClient>['calls']) { for (co
 describe('known identity read failures', () => {
   it.skipIf(!permissionTests).each([false, true])('preserves a duplicate peer through EACCES (loaded: %s) until its successful identity change', async loadedPeer => {
     const f = fixture(), h = hostFor(() => [f.a, f.b]);
-    if (loadedPeer) h.host.load(f.b);
+    const peer = loadedPeer ? h.host.load(f.b) : undefined;
+    const observePeer = () => {
+      if (peer) (h.host as any).sources.refresh(peer.store);
+      h.host.refreshIdentities();
+    };
     const { loaded, action } = await queueAction(h.host, f.a);
     expect(loaded.sync.status(actionId)?.status).toBe('disabled'); assertNoHelper(h.calls);
     chmodSync(join(f.b, 'aside.md'), 0);
     try {
-      h.host.refreshIdentities(); await h.host.flush();
+      observePeer(); await h.host.flush();
       await loaded.sync.syncActions([], [action]); await loaded.sync.reconcile([action]);
       const issue = h.host.issues(f.a).find(issue => issue.code === 'instance_id_conflict');
       expect(issue?.message).toContain('EACCES'); expect(issue?.message).toContain(f.a); expect(issue?.message).toContain(f.b);
@@ -77,9 +81,9 @@ describe('known identity read failures', () => {
       expect(loaded.sync.status(actionId)).toMatchObject({ status: 'disabled', reason: issue?.message });
       expect(h.host.loadedPaths().sort()).toEqual(loadedPeer ? [f.a, f.b] : [f.a]); assertNoHelper(h.calls);
     } finally { chmodSync(join(f.b, 'aside.md'), 0o600); }
-    h.host.refreshIdentities(); await h.host.flush();
+    observePeer(); await h.host.flush();
     expect(h.host.issues(f.a)).toContainEqual(expect.objectContaining({ code: 'instance_id_conflict' })); assertNoHelper(h.calls);
-    writeFileSync(join(f.b, 'aside.md'), '---\nid: personal\n---\n'); h.host.refreshIdentities(); await h.host.flush();
+    writeFileSync(join(f.b, 'aside.md'), '---\nid: personal\n---\n'); observePeer(); await h.host.flush();
     await loaded.sync.syncActions([], [action]);
     expect(h.host.issues(f.a).some(issue => issue.code === 'instance_id_conflict')).toBe(false);
     expect(loaded.sync.status(actionId)).toMatchObject({ status: 'synced', eventId: 'fake-event' });
@@ -164,6 +168,9 @@ describe('catalogue read failure retention', () => {
     const first = await startDaemon(f.paths), { loaded, action } = await queueAction(first.host, f.a);
     chmodSync(join(f.b, 'aside.md'), 0);
     try {
+      // Source observation belongs to the owner; status only reports its state.
+      (first.host as any).sources.refresh(first.host.load(f.b).store);
+      first.host.refreshIdentities(); await first.host.flush();
       expect((await first.client.request<Status>('status')).known).toEqual([f.a]);
       assertNoHelper(first.calls);
       await first.client.request('known.add', { paths: [f.c] }); await first.client.request('known.forget', { paths: [f.c] });
@@ -183,6 +190,7 @@ describe('catalogue read failure retention', () => {
       writeFileSync(join(f.b, 'aside.md'), '---\nid: personal\n---\n'); second.host.refreshIdentities(); await second.host.flush();
       await next.loaded.sync.syncActions([], [next.action]); expect(next.loaded.sync.status(actionId)?.status).toBe('synced');
       rmSync(join(f.b, 'aside.md'));
+      (second.daemon as any).reconcileKnown(); await second.host.flush();
       expect((await second.client.request<Status>('status')).known).toEqual([f.a]);
       expect(JSON.parse(readFileSync(f.paths.known, 'utf8'))).toEqual([f.a]);
     } finally { if (shouldRetainKnownInstance(f.b)) chmodSync(join(f.b, 'aside.md'), 0o600); }

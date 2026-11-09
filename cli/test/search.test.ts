@@ -6,17 +6,19 @@ import { pathToFileURL } from 'node:url';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { RegexWorkerPool } from '../src/mcp/search.js';
-import { Store } from '../src/mcp/store.js';
-import { handleQueryEntries, handleQueryActions, handleQueryProjects, handleQueryArtifacts } from '../src/mcp/tools/query.js';
+import { Store } from '../src/source/store.js';
+import { handleQueryArtifacts } from '../src/mcp/tools/query.js';
+import { executeGraphQL, type GraphQLResult } from '../src/graphql/schema.js';
 import { handleCapture } from '../src/mcp/tools/capture.js';
 import { handleUpdateAction, handleUpdateProject, handleUpdateEntry } from '../src/mcp/tools/update.js';
 import { handleCreateArtifact, handleUpdateArtifact } from '../src/mcp/tools/artifact.js';
-import { init } from '../src/commands/init.js';
+import { init } from '../src/source/bootstrap.js';
 import { Daemon } from '../src/daemon/daemon.js';
 import { DaemonClient } from '../src/daemon/client.js';
 import { InstanceHost, type ToolResult } from '../src/daemon/host.js';
 import { daemonPaths } from '../src/daemon/paths.js';
 import { CalClient } from '../src/mcp/calendar/client.js';
+import { daemonSession } from './support/graphql-host.js';
 
 const badText = 'a'.repeat(50_000) + '!';
 const catastrophic = '^(a+)+$';
@@ -26,6 +28,13 @@ const roots: string[] = [];
 const pool = (options = {}) => { const value = new RegexWorkerPool(options); pools.push(value); return value; };
 const temporary = () => { const dir = mkdtempSync('/tmp/aside-search-'); roots.push(dir); return dir; };
 afterEach(() => { for (const p of pools.splice(0)) p.close(); for (const dir of roots.splice(0)) rmSync(dir, { recursive: true, force: true }); });
+// Hold one search open, so a test can change the store during matching.
+function heldMatcher(inspect?: (fields: string[][]) => void) {
+  let started!: () => void, finish!: (indices: number[]) => void;
+  const searching = new Promise<void>(resolve => { started = resolve; });
+  const match = (_pattern: string, fields: string[][]) => { inspect?.(fields); started(); return new Promise<number[]>(resolve => { finish = resolve; }); };
+  return { matcher: { match }, searching, release: (indices: number[]) => finish(indices) };
+}
 
 describe('bounded native regex workers', () => {
   it('keeps JavaScript syntax, case-insensitive matching, field boundaries, and ordered indices', async () => {
@@ -91,31 +100,49 @@ describe('query snapshot coherence', () => {
     const dir = temporary(); init(dir, { name: 'Warnings', description: 'Warnings' }); const store = new Store(dir);
     try {
       handleCapture(store, { content: 'Before entry', description: 'Before summary' }, new Date(2026, 9, 4, 10));
+      handleCreateArtifact(store, { name: 'Before artifact', description: 'Before artifact summary', body: 'Before artifact body' }, new Date(2026, 9, 4, 10));
       const manifest = readFileSync(join(dir, 'aside.md'), 'utf8');
       writeFileSync(join(dir, 'aside.md'), manifest.replace(/^id: .+$/m, 'id: INVALID')); store.rebuild();
       const issue = store.getIssues()[0]; expect(issue).toBeDefined();
-      let release!: (indices: number[]) => void;
-      const pending = handleQueryEntries(store, { search: 'Before' }, { matcher: { match: () => new Promise(resolve => { release = resolve; }) } });
+      const handler = heldMatcher(), graphql = heldMatcher();
+      const artifacts = handleQueryArtifacts(store, { search: 'Before' }, handler);
+      const entries = executeGraphQL(store, 'query', { document: '{ entries(where: {regex: "Before"}) { totalCount } }' }, graphql);
+      await Promise.all([handler.searching, graphql.searching]);
       writeFileSync(join(dir, 'aside.md'), manifest); store.rebuild(); expect(store.getIssues()).toEqual([]);
-      release([0]); expect(await pending).toContain(issue.message);
+      handler.release([0]); graphql.release([0]);
+      expect(await artifacts).toContain(issue.message);
+      const result = await entries;
+      expect(result.data).toEqual({ entries: { totalCount: 1 } });
+      expect(result.extensions?.diagnostics).toContainEqual(expect.objectContaining({ code: issue.code, message: issue.message }));
+      expect(result.extensions?.complete).toBe(false);
     } finally { store.close(); }
   });
-  it.each(['entries', 'actions', 'projects', 'artifacts'] as const)('keeps %s matches, fields and counts from before concurrent mutation', async kind => {
+  it.each(['entries', 'actions', 'projects', 'artifacts', 'query_artifacts'] as const)('keeps %s matches, fields and counts from before concurrent mutation', async kind => {
     const dir = temporary(); init(dir, { name: 'Snapshot', description: 'Snapshot' }); const store = new Store(dir);
     try {
       const captured = handleCapture(store, { content: 'Before entry', description: 'Before entry summary', projects: [{ name: 'Before project', description: 'Before project summary' }], actions: [{ name: 'Before action', description: 'Before action summary' }] }, new Date(2026, 9, 4, 10));
       handleCreateArtifact(store, { name: 'Before artifact', description: 'Before artifact summary', body: 'Before artifact body' }, new Date(2026, 9, 4, 10));
       const entry = store.getEntries()[0].meta.created, action = captured.createdActionIds[0], project = captured.createdProjectIds[0], artifact = store.getArtifactIds()[0];
-      let release!: (indices: number[]) => void;
-      const matcher = { match: (_pattern: string, fields: string[][]) => { expect(fields.flat().join(' ')).toContain('Before'); return new Promise<number[]>(resolve => { release = resolve; }); } };
-      const handler = { entries: handleQueryEntries, actions: handleQueryActions, projects: handleQueryProjects, artifacts: handleQueryArtifacts }[kind];
-      const ids = { entries: entry, actions: action, projects: project, artifacts: artifact };
-      const result = handler(store, { ids: [ids[kind]], search: 'Before', detail: 'full' }, { matcher });
+      const held = heldMatcher(fields => expect(fields.flat().join(' ')).toContain('Before'));
+      const graphql = async (root: 'entries' | 'actions' | 'projects' | 'artifacts', id: string, fields: string) => {
+        const { data, errors } = await executeGraphQL(store, 'query', { document: `query($id: ID!) { ${root}(where: {ids: [$id], regex: "Before"}) { count totalCount nodes { ${fields} } } }`, variables: { id } }, held);
+        expect(errors).toBeUndefined();
+        const page = data![root] as { count: number; totalCount: number; nodes: unknown[] };
+        return `${page.count} of ${page.totalCount}\n${JSON.stringify(page.nodes)}`;
+      };
+      const result = {
+        entries: () => graphql('entries', entry, 'content description'),
+        actions: () => graphql('actions', action, 'name description body projects { nodes { id } }'),
+        projects: () => graphql('projects', project, 'name description body'),
+        artifacts: () => graphql('artifacts', artifact, 'name description content { ... on MarkdownContent { text } }'),
+        query_artifacts: () => handleQueryArtifacts(store, { ids: [artifact], search: 'Before', detail: 'full' }, held),
+      }[kind]();
+      await held.searching;
       handleUpdateAction(store, { id: action, name: 'After action', description: 'After action summary', body: 'After action body' });
       handleUpdateProject(store, { id: project, name: 'After project', description: 'After project summary', body: 'After project body' });
       handleUpdateEntry(store, { id: entry, content: 'After entry', description: 'After entry summary', projects: [], actions: [] });
       handleUpdateArtifact(store, { id: artifact, name: 'After artifact', description: 'After artifact summary', body: 'After artifact body' });
-      release([0]); const text = await result;
+      held.release([0]); const text = await result;
       expect(text).toMatch(/^1 of 1/); expect(text).toContain('Before'); expect(text).not.toContain('After');
       if (kind === 'actions') expect(text).toContain(project);
     } finally { store.close(); }
@@ -123,25 +150,32 @@ describe('query snapshot coherence', () => {
 });
 
 describe('search lifecycle and shipping artifacts', () => {
-  it('serves other socket clients and browser requests during expensive matching, cancels on disconnect', async () => {
+  it.each(['tool', 'graphql'] as const)('serves other socket clients and browser requests during expensive %s matching, cancels on disconnect', async rpc => {
     const home = temporary(), dir = join(temporary(), 'instance'); init(dir, { name: 'Concurrent', description: 'Concurrent' });
     const searches = pool(); const host = new InstanceHost(new CalClient(null), searches);
     const paths = daemonPaths({ ASIDE_DAEMON_HOME: home }); const daemon = new Daemon({ paths, host, webPort: 0 });
     const first = new DaemonClient({ paths }), second = new DaemonClient({ paths });
+    const query = async (client: DaemonClient, search?: string, options?: { read?: boolean }) => {
+      if (rpc === 'tool') return (await client.request<ToolResult>('tool', { instance: dir, name: 'query_artifacts', args: search ? { search } : { limit: 1 } }, options)).text;
+      const { result } = await client.request<{ result: GraphQLResult }>('graphql', { session: daemonSession(dir), mode: 'query', args: {
+        document: 'query($regex: String) { artifacts(where: {regex: $regex}, limit: 1) { count totalCount } }', variables: { regex: search },
+      } }, options);
+      if (result.errors) throw new Error(JSON.stringify(result.errors));
+      const page = result.data!.artifacts as { count: number; totalCount: number };
+      return `${page.count} of ${page.totalCount}`;
+    };
     expect(await daemon.listen()).toBe(true);
     try {
-      await first.request('tool', { instance: dir, name: 'capture', args: { content: badText, description: 'Slow target' } });
-      const slow = first.request('tool', { instance: dir, name: 'query_entries', args: { search: catastrophic } }).catch(error => error);
+      await first.request('tool', { instance: dir, name: 'create_artifact', args: { name: 'Slow target', description: 'Slow target', body: badText } });
+      const slow = query(first, catastrophic).catch(error => error);
       const started = Date.now();
-      const result = await second.request<ToolResult>('tool', { instance: dir, name: 'query_entries', args: { limit: 1 } }, { read: true });
-      expect(result.text).toMatch(/^1 of 1/);
+      expect(await query(second, undefined, { read: true })).toMatch(/^1 of 1/);
       const { port } = await second.request<{ port: number }>('serve', { navigate: false });
       expect((await fetch(`http://127.0.0.1:${port}/-/api/instances`, { headers: { Authorization: `Bearer ${new WebAuth(paths.state).issue().token}` } })).ok).toBe(true);
       expect(Date.now() - started).toBeLessThan(1500);
       first.close(); expect(await slow).toBeInstanceOf(Error);
-      const recovered = await second.request<ToolResult>('tool', { instance: dir, name: 'query_entries', args: { search: 'Slow target' } }, { read: true });
-      expect(recovered.text).toMatch(/^1 of 1/);
-      const interrupted = second.request('tool', { instance: dir, name: 'query_entries', args: { search: catastrophic } }).catch(error => error);
+      expect(await query(second, 'Slow target', { read: true })).toMatch(/^1 of 1/);
+      const interrupted = query(second, catastrophic).catch(error => error);
       await new Promise(resolve => setTimeout(resolve, 30));
       const stopping = Date.now(); await daemon.shutdown();
       expect(Date.now() - stopping).toBeLessThan(1000); expect(await interrupted).toBeInstanceOf(Error);

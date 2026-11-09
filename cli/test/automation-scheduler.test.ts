@@ -49,6 +49,17 @@ describe('event-driven automation scheduler', () => {
     expect(run).toHaveBeenCalledTimes(1);
     expect(run.mock.calls[0][0].instance).toBe('after');
   });
+  it('adopts published execution settings without moving an unchanged deadline', async () => {
+    const {scheduler, run} = setup(), original = {...source(), executionContext: {config: {}, cwd: '/instance', revision: 'first'}};
+    scheduler.replace([original]);
+    await vi.advanceTimersByTimeAsync(50000);
+    const executionContext = {config: {cwd: 'next'}, cwd: '/instance/next', revision: 'next'};
+    scheduler.replace([{...original, executionContext}]);
+    expect(scheduler.status()[0].next).toBe('2026-10-08T12:01:00.000Z');
+    await vi.advanceTimersByTimeAsync(10000);
+    expect(run).toHaveBeenCalledOnce();
+    expect(run.mock.calls[0][0].executionContext).toEqual(executionContext);
+  });
   it('skips past one-time executions and all slots missed during sleep', async () => {
     const { scheduler, run } = setup();
     scheduler.replace([source(), source('past', { schedule: { at: '2026-10-08T11:59Z' }, run: { script: 'echo' } })]);

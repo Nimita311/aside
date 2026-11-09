@@ -1,21 +1,22 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join, relative, resolve } from 'node:path';
-import { init } from '../src/commands/init.js';
-import { Store } from '../src/mcp/store.js';
+import { init } from '../src/source/bootstrap.js';
+import { Store } from '../src/source/store.js';
 import { handleCapture } from '../src/mcp/tools/capture.js';
 import { createArtifact } from '../src/mcp/tools/artifact.js';
 import { handleUpdateAction, handleUpdateProject } from '../src/mcp/tools/update.js';
 import { executeGraphQL } from '../src/graphql/schema.js';
 import * as models from '../src/automation/models.js';
-import * as indexFile from '../src/mcp/tools/index-file.js';
+import * as indexFile from '../src/storage/atomic-file.js';
 import { QueryView } from '../src/graphql/query.js';
 import { getIntrospectionQuery } from 'graphql';
-import { InstanceHost, READ_TOOLS } from '../src/daemon/host.js';
+import { InstanceHost } from '../src/daemon/host.js';
 import { CalClient } from '../src/mcp/calendar/client.js';
 import { CalSync } from '../src/mcp/calendar/sync.js';
 import { artifactAttachmentPath } from '../src/core/artifact.js';
 import { formatUtcTimestamp } from '../src/core/date.js';
+import {hostGraphQL} from './support/graphql-host.js';
 
 describe('GraphQL over existing Aside records', () => {
   let dir: string;
@@ -27,7 +28,7 @@ describe('GraphQL over existing Aside records', () => {
   const ids = (connection: any) => connection.nodes.map((node: any) => node.id);
   const tool = async (document: string, variables?: Record<string, unknown>, name = 'mutate', operationName?: string) => {
     host ??= new InstanceHost(new CalClient(null));
-    return JSON.parse((await host.tool(dir, name, { document, variables, operationName })).text);
+    return JSON.parse((await hostGraphQL(host, dir, name, { document, variables, operationName })).text);
   };
 
   beforeEach(() => {
@@ -332,13 +333,16 @@ describe('GraphQL over existing Aside records', () => {
 
   it('keeps a read view stable after a store update', async () => {
     const view = new QueryView(store);
-    expect(new QueryView(store).records).toBe(view.records);
+    expect(new QueryView(store).records.action.get(overdue)).toBe(view.records.action.get(overdue));
     handleUpdateAction(store, { id: overdue, resolution: 'done' });
     expect(new QueryView(store).records).not.toBe(view.records);
     expect((await view.list('action', { where: { status: ['backlog'] } })).nodes.map(node => node.id)).toContain(overdue);
     expect(ids(data(await query('{ actions(where: {status: [DONE]}) { nodes { id } } }')).actions)).toContain(overdue);
     const savedMetadata = view.records.artifact.get(artifact)!.record.frontMatter;
-    store.getArtifact(artifact)!.frontMatter.attachments = ['external.txt'];
+    const attachment = artifactAttachmentPath(dir, artifact, 'external.txt');
+    mkdirSync(dirname(attachment), {recursive: true});
+    writeFileSync(attachment, 'External file');
+    store.refreshArtifactAttachments(artifact);
     expect(savedMetadata.attachments).toBeUndefined();
   });
 
@@ -476,8 +480,6 @@ describe('GraphQL over existing Aside records', () => {
     expect(JSON.stringify((await tool(update, undefined, 'query')).errors)).toMatch(/only query/);
     expect(store.getAction(overdue)!.frontMatter.resolution).toBeUndefined();
     expect(JSON.stringify((await tool('{ actions { totalCount } }')).errors)).toMatch(/only mutation/);
-    expect(READ_TOOLS.has('query')).toBe(true);
-    expect(READ_TOOLS.has('mutate')).toBe(false);
   });
 
   it('runs existing writes, distinguishes omission from null, and refreshes relationship results', async () => {
@@ -498,7 +500,7 @@ describe('GraphQL over existing Aside records', () => {
     expect(update.clear.action.scheduled).toBeNull();
     const reloaded = new Store(dir);
     expect(reloaded.getAction(actionId)!.frontMatter.name).toBe('Renamed');
-    expect(reloaded.getProjectsForAction(actionId)).toEqual([open]);
+    expect([...(reloaded.getRelations().projectsByAction.get(actionId) ?? [])]).toEqual([open]);
     reloaded.close();
   });
 
@@ -506,6 +508,7 @@ describe('GraphQL over existing Aside records', () => {
     const sync = vi.spyOn(CalSync.prototype, 'syncActions').mockResolvedValue([]);
     const result = await tool(`mutation { updateAction(id: "${overdue}", input: {scheduled: "2026-06-12T10:00", calendar: "Work"}) { action { id } } }`);
     data(result);
+    await host!.flush();
     expect(sync).toHaveBeenCalled();
     expect(result.extensions.mutations[0].error).toContain('Calendar sync');
   });
@@ -644,10 +647,14 @@ describe('GraphQL over existing Aside records', () => {
     expect(result.markdown).toEqual({content: {__typename: 'MarkdownContent', text: '# Notes\n\nSupporting file.'}, attachments: [{filename: 'first.txt'}]});
   });
 
-  it('reports unavailable primary attachment retrieval without exposing a path', async () => {
+  it('reports owner-observed unavailable primary attachment retrieval without exposing a path', async () => {
     const source = join(dir, 'missing.txt'); writeFileSync(source, 'File content');
     const id = createArtifact(store, {name: 'Missing file', description: 'Missing', files: [{source}]}).id;
     rmSync(artifactAttachmentPath(dir, id, 'missing.txt'));
+    const published = store.getAttachmentFiles.bind(store);
+    vi.spyOn(store, 'getAttachmentFiles').mockImplementation(artifactId => artifactId === id
+      ? [{filename: 'missing.txt', handle: `#artifact/${id}/missing.txt`, error: 'indexed attachment is missing'}]
+      : published(artifactId));
     const result = data(await query(`{ artifact(id: "${id}") {
       content { __typename ... on Attachment { filename filePath error } }
       attachments { filename filePath error }

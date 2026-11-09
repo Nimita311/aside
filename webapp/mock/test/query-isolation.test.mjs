@@ -18,8 +18,8 @@ const forbidden = vi.hoisted(() => {
 
 // The real schema may import Store, but read-only preview queries must never
 // instantiate it: construction reconciles attachment YAML and daemon history.
-vi.mock('../../../cli/src/mcp/store.ts', () => ({ Store: forbidden.writableStore }));
-vi.mock('../../../cli/src/mcp/recurrence-history.ts', () => ({
+vi.mock('../../../cli/src/source/store.ts', () => ({ Store: forbidden.writableStore }));
+vi.mock('../../../cli/src/source/recurrence-history.ts', () => ({
   recurrenceHistoryPath: forbidden.recurrencePath,
   readRecurrenceHistory: forbidden.readHistory,
   writeRecurrenceHistory: forbidden.writeHistory,
@@ -28,8 +28,9 @@ vi.mock('../../../cli/src/daemon/paths.ts', async importOriginal => ({
   ...await importOriginal(), daemonPaths: forbidden.daemonPaths,
 }));
 
-import { loadFixture, MOCK_NOW, queryFixture, SHOWCASE_IDS } from '../runtime.mjs';
-import { Store } from '../../../cli/src/mcp/store.js';
+import { loadFixture, MOCK_NOW, queryFixture, SHOWCASE_IDS, updateFixtureSidebar } from '../runtime.mjs';
+import { Store } from '../../../cli/src/source/store.js';
+import { parseEntrySource, parseSourcePage, sourceRequest } from '../../src/entry-source.ts';
 
 let temporary;
 afterEach(async () => {
@@ -106,5 +107,55 @@ it('queries real fixture records, relationships and content without writable sto
   }]);
   expect(await readFile(mediaRecord, 'utf8')).toBe(stale);
   expect(await snapshotFiles(root)).toEqual(before);
+  for (const guard of Object.values(forbidden)) expect(guard).not.toHaveBeenCalled();
+});
+
+it('replaces a preview sidebar only in memory without writable stores or fixture file changes', async () => {
+  const fixture = await loadFixture('showcase');
+  const before = await snapshotFiles(fixture.root);
+  const sidebar = [{ title: 'Focus', items: [{ timeline: '#artifact/2026-10-12-recent-decisions/decisions.json' }] }];
+  const expectedSidebar = structuredClone(fixture.snapshot.instance.manifest.config.webapp.sidebar);
+  expect(updateFixtureSidebar(fixture, sidebar, expectedSidebar)).toEqual(sidebar);
+  expect(fixture.snapshot.instance.manifest.config.webapp.sidebar).toEqual(sidebar);
+  expect(() => updateFixtureSidebar(fixture, [{ items: [{ timeline: 'one', entity: 'two' }] }], sidebar)).toThrow();
+  expect(() => updateFixtureSidebar(fixture, [], expectedSidebar)).toThrow('changed elsewhere');
+  expect(fixture.snapshot.instance.manifest.config.webapp.sidebar).toEqual(sidebar);
+  expect(await snapshotFiles(fixture.root)).toEqual(before);
+  for (const guard of Object.values(forbidden)) expect(guard).not.toHaveBeenCalled();
+});
+
+it('retains a malformed preview declaration and parser diagnostics instead of overwriting them with a pin', async () => {
+  const fixture = await loadFixture('showcase');
+  const malformed = [{ items: [{ timeline: 'one', entity: 'two' }] }];
+  fixture.snapshot.instance.manifest.config.webapp.sidebar = malformed;
+  const before = structuredClone(fixture.snapshot);
+  expect(() => updateFixtureSidebar(fixture, [], [])).toThrow('current sidebar declaration is invalid');
+  expect(fixture.snapshot).toEqual(before);
+  fixture.snapshot.instance.manifest.config.webapp.sidebar = [];
+  fixture.snapshot.diagnostics.push({ path: 'aside.md', issues: [{ severity: 'error', code: 'invalid_webapp_sidebar', message: 'Malformed declaration' }] });
+  const diagnosed = structuredClone(fixture.snapshot);
+  expect(() => updateFixtureSidebar(fixture, [], [])).toThrow('cannot be verified');
+  expect(fixture.snapshot).toEqual(diagnosed);
+  for (const guard of Object.values(forbidden)) expect(guard).not.toHaveBeenCalled();
+});
+
+it('runs the entry-view fixture through GraphQL with native browsing before pagination', async () => {
+  const fixture = await loadFixture('showcase');
+  const text = await readFile(join(fixture.root, 'artifacts/2026', SHOWCASE_IDS.entrySource, 'decisions.json'), 'utf8');
+  const definition = parseEntrySource(text);
+  const request = sourceRequest(definition, {
+    filter: { type: 'project', id: SHOWCASE_IDS.project }, search: 'calmer', offset: 0, limit: 1,
+  });
+  const response = await queryFixture(fixture, request, MOCK_NOW);
+  expect(response.errors).toBeUndefined();
+  const first = parseSourcePage(definition, response, { offset: 0, limit: 1 });
+  expect(first.ids).toEqual(['2026-10-18T08:15']);
+  expect(first.totalCount).toBeGreaterThanOrEqual(1);
+  const all = await queryFixture(fixture, sourceRequest(definition, {
+    filter: { type: 'project', id: SHOWCASE_IDS.project }, search: 'calmer', offset: 0, limit: 50,
+  }), MOCK_NOW);
+  const complete = parseSourcePage(definition, all, { offset: 0, limit: 50 });
+  expect(complete.ids[0]).toBe(first.ids[0]);
+  expect(complete.totalCount).toBe(first.totalCount);
   for (const guard of Object.values(forbidden)) expect(guard).not.toHaveBeenCalled();
 });

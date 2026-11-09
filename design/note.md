@@ -59,7 +59,7 @@ The index does not duplicate associations or references — those live in each e
 
 MCP maintains the index on capture and update, using the agent's authored description. The agent keeps the description in step with the content. As with the other entity indexes, the description lives only here.
 
-The agent uses `query_entries` to locate relevant entries, requesting full detail when it needs their content.
+The agent queries `entries` to locate relevant entries, selecting `content` when it needs it.
 
 ## Entry
 

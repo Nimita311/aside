@@ -76,3 +76,55 @@ export function readManagedText(root: string, path: string): string {
     return readFileSync(fd, 'utf8');
   } finally { closeSync(fd); }
 }
+
+/** A synchronous directory scan can share validated ancestors. Each leaf is
+ * still checked and opened without following symlinks, and its actual bytes
+ * are read on every visit. The selected root is pinned for this scan. */
+export function createManagedReader(root: string): {
+  directory(path: string, allowMissing?: boolean): string;
+  text(path: string): string;
+} {
+  const selectedRoot = resolve(root);
+  let canonicalRoot: string | undefined;
+  const directories = new Set<string>();
+  const checked = (path: string, kind: ManagedKind, allowMissing = false): string => {
+    if (!canonicalRoot) {
+      const resolvedRoot = realpathSync(selectedRoot);
+      if (!lstatSync(resolvedRoot).isDirectory()) throw pathError('ENOTDIR', 'Instance root is not a directory', root);
+      canonicalRoot = resolvedRoot;
+      directories.add(canonicalRoot);
+    }
+    const absolute = isAbsolute(path) ? resolve(path) : resolve(selectedRoot, path);
+    const rel = containedRelative(selectedRoot, absolute) ?? containedRelative(canonicalRoot, absolute);
+    if (rel === undefined) throw pathError('EINVAL', 'Managed path is outside the instance', path);
+    const parts = rel ? rel.split(sep) : [];
+    const canonicalPath = join(canonicalRoot, ...parts);
+    if (!parts.length && kind === 'file') throw pathError('EISDIR', 'Managed file is a directory', path);
+    let current = canonicalRoot;
+    for (let i = 0; i < parts.length; i++) {
+      current = join(current, parts[i]);
+      const expected = i === parts.length - 1 ? kind : 'directory';
+      if (expected === 'directory' && directories.has(current)) continue;
+      let stat;
+      try { stat = lstatSync(current); }
+      catch (error) { if (allowMissing && (error as NodeJS.ErrnoException).code === 'ENOENT') return canonicalPath; throw error; }
+      if (stat.isSymbolicLink()) throw pathError('ELOOP', 'Symlinks are not allowed in Aside-managed paths', current);
+      if (expected === 'directory') {
+        if (!stat.isDirectory()) throw pathError('ENOTDIR', 'Managed directory is not a directory', current);
+        directories.add(current);
+      } else if (!stat.isFile()) throw pathError(stat.isDirectory() ? 'EISDIR' : 'EINVAL', 'Managed file is not a regular file', current);
+    }
+    return canonicalPath;
+  };
+  return {
+    directory: (path, allowMissing = false) => checked(path, 'directory', allowMissing),
+    text(path) {
+      const file = checked(path, 'file');
+      const fd = openSync(file, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+      try {
+        if (!fstatSync(fd).isFile()) throw pathError('EINVAL', 'Managed file is not a regular file', file);
+        return readFileSync(fd, 'utf8');
+      } finally { closeSync(fd); }
+    },
+  };
+}
