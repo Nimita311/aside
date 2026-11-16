@@ -20,7 +20,7 @@ export interface EntityRef {
 // Shared so the filtered flow and the relation map bound inline mentions the
 // same way.
 export const ID_CHAR = '[\\p{L}\\p{N}\\p{M}_-]';
-const NAMED_HANDLE = new RegExp(`^#(project|action)/(${ID_CHAR}+)$`, 'u');
+export const NAMED_HANDLE = new RegExp(`^#(project|action)/(${ID_CHAR}+)$`, 'u');
 const BARE_MENTION = /(?<![\p{L}\p{N}_/\\])#(?:project|action)\/[^\s<>()[\]{}"'`]+/gu;
 
 export function entryEntityIds(entry: Pick<Entry, 'meta' | 'content'>, type: 'project' | 'action'): string[] {
@@ -39,7 +39,7 @@ export function entryEntityIds(entry: Pick<Entry, 'meta' | 'content'>, type: 'pr
 // flow and the relation map's entry lists, so the two always agree. A project or
 // action matches a front-matter tag or an inline `#project/<id>` / `#action/<id>`
 // mention (bounded by a non-id char, since ids can prefix one another); an entry
-// ref matches only its own id. See spec.md.
+// ref matches only its own id.
 export function entryReferences(
   entry: { meta: { created: string; projects?: string[]; actions?: string[] }; content: string },
   ref: EntityRef,
@@ -50,6 +50,11 @@ export function entryReferences(
 
 export function getMondayOfWeek(date: Date): string {
   return toDateStr(getMonday(date));
+}
+
+// The weekly file an entry id (a creation timestamp) falls in.
+export function entryWeek(entryId: string): string {
+  return getMondayOfWeek(new Date(entryId.slice(0, 10) + 'T00:00:00'));
 }
 
 export function deriveWeeklyFiles(entries: { id: string }[]): string[] {
@@ -79,6 +84,17 @@ export function weekFilePath(weekFile: string): string {
 export function entityFilePath(kind: 'project' | 'action' | 'artifact', id: string): string {
   if (kind === 'artifact') return artifactRecordPath(id);
   return `${kind}s/${getYearFromDate(id)}/${id}.md`;
+}
+
+// A route segment: encoded, but with ':' kept raw — legal in a path segment
+// and in a fragment (RFC 3986 pchar), so entry-id timestamps stay readable.
+export function encodeRouteSegment(segment: string): string {
+  return encodeURIComponent(segment).replace(/%3A/gi, ':');
+}
+
+// A path as route segments: each segment encoded, slashes kept real.
+export function encodeRoutePath(path: string): string {
+  return path.split('/').map(encodeRouteSegment).join('/');
 }
 
 // Tolerant percent-decoding: a hand-edited URL may not be valid

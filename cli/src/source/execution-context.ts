@@ -4,6 +4,7 @@ import {join, resolve} from 'node:path';
 import {parseConfig} from '../core/parser.js';
 import type {ExecutionContextSnapshot} from '../core/execution-context.js';
 import {assertExecutionCwd} from '../runtime/execution-cwd.js';
+import {errorMessage} from '../core/error.js';
 
 /** Lifecycle source loading owns reads of the instance's execution settings. */
 export function readExecutionContextSnapshot(root: string): ExecutionContextSnapshot {
@@ -11,7 +12,7 @@ export function readExecutionContextSnapshot(root: string): ExecutionContextSnap
   let source = '', error: string | undefined;
   try {source = readFileSync(file, 'utf8');}
   catch (cause) {
-    if ((cause as NodeJS.ErrnoException).code !== 'ENOENT') error = `Cannot read execution config: ${cause instanceof Error ? cause.message : String(cause)}`;
+    if ((cause as NodeJS.ErrnoException).code !== 'ENOENT') error = `Cannot read execution config: ${errorMessage(cause)}`;
   }
   const parsed = parseConfig(source);
   if (!error && parsed.issues.some(issue => issue.severity === 'error')) error = `Invalid execution config: ${parsed.issues.map(issue => issue.message).join('; ')}`;
@@ -19,7 +20,7 @@ export function readExecutionContextSnapshot(root: string): ExecutionContextSnap
   const cwd = resolve(root, config.cwd ?? '.');
   if (!error) {
     try {assertExecutionCwd(cwd);}
-    catch (cause) {error = `Invalid execution cwd: ${cause instanceof Error ? cause.message : String(cause)}`;}
+    catch (cause) {error = `Invalid execution cwd: ${errorMessage(cause)}`;}
   }
   return {config, cwd,
     revision: createHash('sha256').update(source).update('\0').update(error ?? '').digest('hex'), ...(error ? {error} : {})};

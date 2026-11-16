@@ -1,5 +1,5 @@
-import { readFile } from 'node:fs/promises';
-import { resolve } from 'node:path';
+import { readdir, readFile } from 'node:fs/promises';
+import { relative, resolve, sep } from 'node:path';
 import { marked, type Token, type Tokens } from 'marked';
 import { describe, expect, it } from 'vitest';
 import { FIXTURE_NAMES, loadFixture, SHOWCASE_IDS } from '../fixture-store';
@@ -70,7 +70,9 @@ describe('gallery fixture data', () => {
   });
 
   it('ships attachment bytes locally, including a dashboard that calls the SDK', async () => {
-    const { root, files, snapshot } = await loadFixture('showcase');
+    const { root, snapshot } = await loadFixture('showcase');
+    const files = (await readdir(root, { recursive: true, withFileTypes: true })).filter(entry => entry.isFile())
+      .map(entry => relative(root, resolve(entry.parentPath, entry.name)).split(sep).join('/'));
     const attachments = snapshot.artifacts.flatMap(([id, artifact]) => (artifact.frontMatter.attachments ?? [])
       .map(filename => `artifacts/${id.slice(0, 4)}/${id}/${filename}`));
     expect(attachments.length).toBeGreaterThanOrEqual(6);

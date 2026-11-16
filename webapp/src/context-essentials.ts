@@ -1,7 +1,7 @@
 import { bindDisplay, setDisplayText } from './display';
 import { ago, type RefStatus, type SummaryPill } from './instance';
-import { entityIcon, formatScheduledStamp, type RenderOptions } from './render';
-import { ICON_SIZE, actionIconState, iconMarkup, projectIconState, refIconState, setEntityIcon } from './entity-icons';
+import { entityIcon, formatScheduledStamp, markClasses, pillHoverTitle, type RenderOptions } from './render';
+import { ICON_SIZE, actionIconState, iconMarkup, projectIconState, refIconState, setEntityIcon, setReferenceIcon } from './entity-icons';
 
 export type EssentialsKind = 'instance' | 'project' | 'action' | 'entry' | 'artifact' | 'attachment' | 'file' | 'date' | 'date-range';
 export interface EssentialsCounts {
@@ -40,12 +40,10 @@ const allowedCounts: Record<EssentialsKind, CountKind[]> = {
   entry: ['projects', 'actions'], artifact: ['attachments'], attachment: [], file: [],
   date: ['entries'], 'date-range': ['entries'],
 };
-const countIcons = {
+// Each count's unit: its icon, and its noun when there is exactly one.
+const countUnit = {
   entries: 'entry', projects: 'project', actions: 'action', artifacts: 'artifact', attachments: 'attachment',
 } as const;
-const countSingular: Record<CountKind, string> = {
-  entries: 'entry', projects: 'project', actions: 'action', artifacts: 'artifact', attachments: 'attachment',
-};
 // The no-calendar exception: an anomaly rather than a lifecycle state, so
 // the one tile glyph outside the entity icons.
 const EXCEPTION_ICON = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m3 3 18 18M8 2v4m8-4v4M3 10h7m4 0h7M3 7V6a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v11M3 11v9a2 2 0 0 0 2 2h14"/></svg>';
@@ -77,14 +75,13 @@ function identityIcon(data: ContextEssentials): string {
   }
 }
 
-function identityMarks(pill: HTMLElement, kind: EssentialsKind, marks: RefStatus[]): void {
-  const wanted = marks.map(mark => `tag-status-${mark}`);
-  if (marks.some(mark => ['done', 'cancelled', 'ended'].includes(mark))) wanted.push('tag-status-closed');
-  for (const name of Array.from(pill.classList)) if (name.startsWith('tag-status-') && !wanted.includes(name)) pill.classList.remove(name);
-  pill.classList.add(...wanted);
+function identityMarks(identity: HTMLElement, kind: EssentialsKind, marks: RefStatus[]): void {
+  const wanted = markClasses(marks);
+  for (const name of Array.from(identity.classList)) if (name.startsWith('tag-status-') && !wanted.includes(name)) identity.classList.remove(name);
+  identity.classList.add(...wanted);
   // The icon carries the lifecycle, morphing in place when the marks change.
-  const glyph = pill.querySelector<HTMLElement>(':scope > .context-identity-icon');
-  if (glyph && (kind === 'project' || kind === 'action' || kind === 'entry')) setEntityIcon(glyph, kind, refIconState(kind, marks), ICON_SIZE.identity);
+  const glyph = identity.querySelector<HTMLElement>(':scope > .context-identity-icon');
+  if (glyph && (kind === 'project' || kind === 'action' || kind === 'entry')) setReferenceIcon(glyph, kind, refIconState(kind, marks), ICON_SIZE.identity);
 }
 
 function renderCounts(data: ContextEssentials, opts: RenderOptions): HTMLElement | undefined {
@@ -95,14 +92,14 @@ function renderCounts(data: ContextEssentials, opts: RenderOptions): HTMLElement
     if (count === undefined) continue; // A known zero is still worth showing.
     const text = typeof count === 'number' ? String(count) : count.open === undefined ? String(count.total) : `${count.open}/${count.total}`;
     const total = typeof count === 'number' ? count : count.total;
-    const name = total === 1 ? countSingular[kind] : kind;
+    const name = total === 1 ? countUnit[kind] : kind;
     const label = typeof count !== 'number' && count.open !== undefined ? `${count.open} of ${count.total} ${name} open` : `${total} ${name}`;
     const pair = element('span', 'summary-stat');
     pair.dataset.countKind = kind;
     pair.title = label;
     pair.setAttribute('aria-label', label);
-    const markup = kind === 'attachments' ? entityIcon('asset', 'file', ICON_SIZE.stat) : entityIcon(countIcons[kind], undefined, ICON_SIZE.stat);
-    pair.append(icon(markup, `stat-icon icon-${countIcons[kind]}`), element('span', 'stat-count', text));
+    const markup = kind === 'attachments' ? entityIcon('asset', 'file', ICON_SIZE.stat) : entityIcon(countUnit[kind], undefined, ICON_SIZE.stat);
+    pair.append(icon(markup, `stat-icon icon-${countUnit[kind]}`), element('span', 'stat-count', text));
     row.append(pair);
   }
   if (data.updated) {
@@ -121,8 +118,8 @@ function factLabel(state: SummaryPill): 'Scheduled' | 'Deadline' | undefined {
 
 // A tile's glyph is its entity's icon in the tile's state: an action's ring
 // plain, dashed, with clock hands, ticked, slashed or looping; a project's
-// ribbon hollow or ticked. A deadline tile wears the plain ring, its urgency
-// the tile's tint. As the state changes the glyph morphs in place.
+// ribbon hollow or ticked. A deadline fact uses the plain action ring.
+// As the state changes the glyph morphs in place.
 function factGlyph(glyph: HTMLElement, kind: EssentialsKind, state: SummaryPill): void {
   // Compare by a flag, not by markup: the parsed SVG never serializes back
   // to the source string, so a markup check would rewrite it every repaint.
@@ -158,8 +155,7 @@ function renderStatus(kind: EssentialsKind, read: NonNullable<ContextEssentials[
       slot.root.hidden = !state;
       if (!state) continue;
       const label = factLabel(state);
-      const title = state.hover ? `${state.hover.prefix} ${formatScheduledStamp(state.hover.stamp, state.hover.timezone, current)}${state.hover.suffix ?? ''}` : '';
-      slot.root.title = title;
+      slot.root.title = pillHoverTitle(state, current);
       slot.root.classList.toggle('is-overdue', state.marks.includes('overdue'));
       slot.root.classList.toggle('is-due', state.marks.includes('due'));
       slot.root.classList.toggle('is-standalone', !label);
@@ -189,13 +185,13 @@ export function renderContextEssentials(data: ContextEssentials, opts: RenderOpt
   const row = element('div', 'context-essentials-row');
   const heading = element('h2', 'entity-title');
   const type = data.kind === 'file' || data.kind === 'attachment' ? 'asset' : data.kind === 'date-range' ? 'date' : data.kind;
-  const pill = element('span', `context-identity tag tag-${type}`);
+  const identity = element('span', `context-identity ref-identity icon-${type}`);
   const label = element('span', 'entity-title-label tag-text');
-  pill.append(icon(identityIcon(data), 'context-identity-icon'), label);
-  heading.append(pill);
+  identity.append(icon(identityIcon(data), 'context-identity-icon'), label);
+  heading.append(identity);
   row.append(heading, element('span', 'context-essentials-type', labels[data.kind]));
   header.append(row);
-  bindDisplay(pill, opts, (node, current) => {
+  bindDisplay(identity, opts, (node, current) => {
     const name = typeof data.name === 'string' ? data.name : data.name(current);
     setDisplayText(label, name);
     node.title = name;

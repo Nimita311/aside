@@ -41,7 +41,6 @@ body.elements-page { display: block; overflow: auto; overscroll-behavior-y: cont
 .element-calendar-state { display: grid; justify-items: center; gap: 2px; }
 .element-calendar-state .cal-day { width: 32px; height: 32px; }
 .element-calendar-state .element-label { font-size: var(--font-size-xs); line-height: var(--line-height-xs); }
-.element-demo .date-jump-units { width: fit-content; }
 .element-feedback-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
 .element-in-place { position: static; inset: auto; transform: none; width: fit-content; max-width: 100%; margin: 0; }
 .element-swatches { display: flex; flex-wrap: wrap; gap: 4px; list-style: none; }

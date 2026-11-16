@@ -2,7 +2,7 @@ import { isAlias, isMap, isNode, isSeq } from 'yaml';
 import { formatDate } from './date.js';
 import { toKebabCase } from './slug.js';
 import type { RelatedProject } from './types.js';
-import { cloneMetadataNode, mergeMetadata, parseMetadata } from './metadata.js';
+import { cloneMetadataNode, mergeMetadata, metadataValue, parseMetadata } from './metadata.js';
 
 interface NamedLinkTarget {name: string}
 
@@ -53,7 +53,7 @@ export function applyRelatedProjectEditsToMetadata(source: string, edits: Relate
   if (!hasRelatedProjectEdits(edits)) return source;
   const document = parseMetadata(source, context);
   const pairs = isMap(document.contents) ? document.contents.items.filter(pair =>
-    (isNode(pair.key) ? pair.key.toJS(document, {mapAsMap: true}) : pair.key) === 'related_projects') : [];
+    metadataValue(pair.key, document) === 'related_projects') : [];
   if (pairs.length > 1) throw new Error(`Cannot update ${context}: repeated related_projects field. Repair it before retrying.`);
   let list = pairs[0]?.value;
   if (isAlias(list)) list = cloneMetadataNode(list, document, context);

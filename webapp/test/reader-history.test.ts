@@ -3,12 +3,14 @@ import { readFileSync } from 'node:fs';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { EntityRef } from '../lib/types';
 import type { DocRef, ViewState } from '../src/route';
+import type { createContextPanel } from '../src/context-panel';
 import { loadApp } from './app-harness';
 import { snapshotFixture } from './snapshot-fixture';
-import { stubBrowserFetch } from './auth-fixture';
+import { stubBrowserFetch } from './connection-fixture';
 
 interface App {
   state: { filter: EntityRef | null; search: string; doc: DocRef | null };
+  setupContextPanel(): void;
   setupNavigationSidebar(): void;
   setupModals(): void;
   applyAnimSpeed(): void;
@@ -18,6 +20,7 @@ interface App {
   closeDoc(): void;
   panelSnapshot(): { scrollTop: number; expanded: string[] } | null;
   clearInstanceView(): void;
+  contextPanel?: ReturnType<typeof createContextPanel>;
   navigationSidebar?: { dispose(): void };
   stopControl?: () => void;
 }
@@ -25,10 +28,11 @@ interface App {
 const project = '2026-10-04-program', action = '2026-10-04-task';
 const newest = '2026-10-04T11:00', middle = '2026-10-04T10:00', older = '2026-10-04T09:00';
 const filteredUrl = `/work/project/${project}?search=calmer`;
+const slowDocument = 'assets/slow.md';
 let app: App | undefined;
 
 afterEach(() => {
-  app?.stopControl?.(); app?.clearInstanceView(); app?.navigationSidebar?.dispose(); app = undefined;
+  app?.stopControl?.(); app?.clearInstanceView(); app?.navigationSidebar?.dispose(); app?.contextPanel?.destroy(); app = undefined;
   vi.restoreAllMocks(); vi.unstubAllGlobals();
   document.body.replaceChildren(); localStorage.clear(); history.replaceState(null, '', '/');
 });
@@ -67,95 +71,67 @@ async function setup() {
   data.indexes.notes = [newest, middle, older].map(id => ({ id, description: 'A calmer note' }));
   data.weeksByEntity.push([`#project/${project}`, ['2026-09-28']], [`#action/${action}`, ['2026-09-28']]);
   data.relations.entriesByEntity = [[`#project/${project}`, [middle, older]], [`#action/${action}`, [newest, middle, older]]];
+  // The slow document's read stays pending until the test finishes it.
+  const slowRead: { finish?: () => void } = {};
   stubBrowserFetch(url => {
     if (url === '/-/api/instances/work') return Response.json({ id: 'work', name: 'Work', path: '/fixture/work' });
     if (url === '/-/api/instances/work/data') return Response.json(data);
+    if (url === `/-/api/instances/work/files/${slowDocument}`) return new Promise<Response>(resolve => { slowRead.finish = () => resolve(new Response('A slow document.')); });
     return new Response('', { status: 404 });
   });
-  app = await loadApp<App>('state, setupNavigationSidebar, setupModals, applyAnimSpeed, connectToInstance, applyView, handleLocationChange, closeDoc, panelSnapshot, clearInstanceView, navigationSidebar, stopControl');
-  app.applyAnimSpeed(); app.setupModals(); app.setupNavigationSidebar();
+  app = await loadApp<App>('state, setupContextPanel, setupNavigationSidebar, setupModals, applyAnimSpeed, connectToInstance, applyView, handleLocationChange, closeDoc, panelSnapshot, clearInstanceView, contextPanel, navigationSidebar, stopControl');
+  app.applyAnimSpeed(); app.setupContextPanel(); app.setupModals(); app.setupNavigationSidebar();
   await app.connectToInstance('work');
   const ids = () => Array.from(flow.querySelectorAll<HTMLElement>('[data-entry-id]')).map(card => card.dataset.entryId);
-  return { api: app, flow, scroller, ids };
+  return { api: app, flow, scroller, ids, slowRead };
 }
 
-describe('Reader return context', () => {
-  async function openSummary() {
-    document.getElementById('btn-pill-more')!.click();
-    document.getElementById('btn-workspace-summary')!.click();
+describe('summary and Overview across history', () => {
+  async function summaryBody() {
     const body = document.getElementById('side-panel-body')!;
     await vi.waitFor(() => expect(body.querySelector('.related-more')).not.toBeNull());
     await new Promise<void>(resolve => requestAnimationFrame(() => resolve()));
     return body;
   }
 
-  it('restores the originating flow summary after interacting with the same summary in Overview', async () => {
+  it('opens the summary from More → Summary', async () => {
     const { api } = await setup();
     await api.applyView({ filter: null, search: '', doc: null });
-    let summary = await openSummary();
-    summary.scrollTop = 100;
-    const origin = api.panelSnapshot();
-    expect(origin).toEqual({ scrollTop: 100, expanded: [] });
+    document.getElementById('btn-pill-more')!.click();
+    document.getElementById('btn-workspace-summary')!.click();
+    await summaryBody();
+    expect(api.contextPanel!.getState().open).toBe(true);
+  });
 
-    await api.applyView({ filter: null, search: '', doc: { kind: 'detail' } });
-    expect(history.state.returnFlow.panel).toEqual(origin);
-    summary = await openSummary();
-    summary.querySelector<HTMLButtonElement>('.related-more')!.click();
-    summary.scrollTop = 200;
-    expect(api.panelSnapshot()).toEqual({ scrollTop: 200, expanded: ['Open projects'] });
-
-    api.closeDoc();
-    await vi.waitFor(() => expect(api.state.doc).toBeNull());
-    await vi.waitFor(() => expect(api.panelSnapshot()).toEqual(origin));
+  it('keeps the summary open when its last fold is revealed', async () => {
+    const { api } = await setup();
+    await api.applyView({ filter: null, search: '', doc: null });
+    api.contextPanel!.open();
+    const more = (await summaryBody()).querySelector<HTMLButtonElement>('.related-more')!;
+    more.click();
+    expect(more.isConnected).toBe(false);
+    expect(api.contextPanel!.getState().open).toBe(true);
   });
 
   it('restores the destination summary when popstate selects another visit to the same view', async () => {
     const { api } = await setup();
     await api.applyView({ filter: null, search: '', doc: null });
-    const summary = await openSummary();
+    api.contextPanel!.open();
+    const summary = await summaryBody();
     summary.scrollTop = 100;
     const panel = api.panelSnapshot();
     const destination = { ...history.state, panel };
     const url = location.pathname + location.search;
     summary.querySelector<HTMLButtonElement>('.related-more')!.click();
     summary.scrollTop = 200;
-    expect(api.panelSnapshot()).toEqual({ scrollTop: 200, expanded: ['Open projects'] });
+    expect(api.panelSnapshot()).toEqual({ scrollTop: 200, expanded: ['Open projects'], contextView: 'overview' });
 
     history.replaceState(destination, '', url);
     await api.handleLocationChange(new PopStateEvent('popstate', { state: destination }));
     expect(api.panelSnapshot()).toEqual(panel);
   });
 
-  it('restores the departing document position when another document opens before the scroll debounce', async () => {
-    const { api } = await setup();
-    await api.applyView({ filter: null, search: 'calmer', doc: { kind: 'detail' } });
-    const body = document.getElementById('doc-body')!;
-    const firstUrl = location.pathname + location.search;
-    body.scrollTop = 600;
-
-    // Capture the browser's previous entry at the instant the next visit is
-    // pushed. A pending scroll listener cannot supply this position in time.
-    const pushState = history.pushState.bind(history);
-    let firstVisit: typeof history.state;
-    vi.spyOn(history, 'pushState').mockImplementation((data, unused, url) => {
-      firstVisit = structuredClone(history.state);
-      pushState(data, unused, url);
-    });
-    await api.applyView({ filter: { type: 'action', id: action }, search: '', doc: { kind: 'detail' } });
-    expect(firstVisit.readerScroll).toBe(600);
-    expect(body.textContent).toContain('Good task');
-    body.scrollTop = 120;
-
-    // Popstate runs after the browser has selected the destination entry. It
-    // must not stamp the departing document's position over that stored state.
-    history.replaceState(firstVisit, '', firstUrl);
-    await api.handleLocationChange(new PopStateEvent('popstate', { state: firstVisit }));
-    expect(body.textContent).toContain('Instance context');
-    expect(history.state.readerScroll).toBe(600);
-    expect(body.scrollTop).toBe(600);
-  });
-
-  it.each([false, true])('returns from instance Overview to the originating filtered flow (another body=%s)', async anotherBody => {
+  it('inspects Overview without leaving the originating filtered flow', async () => {
     const { api, flow, scroller, ids } = await setup();
     expect(ids()).toEqual([middle, older]);
     scroller.scrollTop = 260;
@@ -163,36 +139,56 @@ describe('Reader return context', () => {
       - scroller.getBoundingClientRect().top;
     expect(cardOffset()).toBe(-40);
 
-    // Use the actual Overview control: it opens the instance body and drops
-    // the project focus while retaining the flow's search in the visit.
+    // Use the actual Overview control: it opens the instance record in the
+    // context panel while the flow keeps its project focus and search.
     document.getElementById('btn-workspace-views')!.click();
     document.getElementById('nav-overview')!.click();
-    await vi.waitFor(() => expect(document.getElementById('doc-body')?.textContent).toContain('Instance context'));
-    await vi.waitFor(() => expect(ids()).toEqual([newest, middle, older]));
-    expect(api.state.filter).toBeNull(); expect(api.state.search).toBe('calmer');
-    expect(api.state.doc).toEqual({ kind: 'detail' });
-    expect(location.pathname + location.search).toBe('/work/detail?search=calmer');
-    const origin = structuredClone(history.state.returnFlow);
-    expect(origin.view).toEqual({ filter: { type: 'project', id: project }, search: 'calmer', doc: null });
-    expect(origin.anchor).toEqual({ entryId: older, offset: -40 });
-
-    if (anotherBody) {
-      // A document-to-document visit changes the underlying scope/search yet
-      // must retain the original flow, rather than treating Overview as it.
-      await api.applyView({ filter: { type: 'action', id: action }, search: '', doc: { kind: 'detail' } });
-      expect(api.state.search).toBe('');
-      expect(document.getElementById('doc-body')?.textContent).toContain('Good task');
-      expect(history.state.returnFlow).toEqual(origin);
-    }
+    await vi.waitFor(() => expect(document.getElementById('side-panel-body')?.textContent).toContain('Instance context'));
+    expect(api.contextPanel!.getState().open).toBe(true);
+    expect(ids()).toEqual([middle, older]);
+    expect(api.state.filter).toEqual({ type: 'project', id: project });
+    expect(api.state.search).toBe('calmer'); expect(api.state.doc).toBeNull();
+    expect(location.pathname + location.search).toBe(filteredUrl);
 
     api.closeDoc();
+    expect(api.contextPanel!.getState().open).toBe(false);
+    expect(ids()).toEqual([middle, older]);
+    expect(scroller.scrollTop).toBe(260);
+    expect(location.pathname + location.search).toBe(filteredUrl);
+    expect(cardOffset()).toBe(-40);
+    expect(scroller.hidden).toBe(false);
+  });
+
+  it('returns to the originating filtered flow when a routed document is closed while it loads', async () => {
+    const { api, flow, scroller, ids, slowRead } = await setup();
+    expect(ids()).toEqual([middle, older]);
+    scroller.scrollTop = 260;
+    const cardOffset = () => flow.querySelector<HTMLElement>(`[data-entry-id="${older}"]`)!.getBoundingClientRect().top
+      - scroller.getBoundingClientRect().top;
+    expect(cardOffset()).toBe(-40);
+
+    // The document's route carries no project or search, so the flow beneath
+    // it changes while the read is pending.
+    const opening = api.applyView({ filter: null, search: '', doc: { kind: 'asset', path: slowDocument } });
+    await vi.waitFor(() => expect(slowRead.finish).toBeDefined());
+    await vi.waitFor(() => expect(ids()).toEqual([newest, middle, older]));
+    expect(api.state.doc).toEqual({ kind: 'asset', path: slowDocument });
+    expect(location.pathname + location.search).toBe(`/work/asset/${slowDocument}`);
+    // Scrolling that flow does not move the place Escape returns to.
+    scroller.scrollTop = 0;
+
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
     await vi.waitFor(() => expect(ids()).toEqual([middle, older]));
     await vi.waitFor(() => expect(scroller.scrollTop).toBe(260));
     expect(api.state.filter).toEqual({ type: 'project', id: project });
     expect(api.state.search).toBe('calmer'); expect(api.state.doc).toBeNull();
     expect(location.pathname + location.search).toBe(filteredUrl);
     expect(cardOffset()).toBe(-40);
-    expect(document.getElementById('doc-backdrop')!.hidden).toBe(true);
-    expect(scroller.hidden).toBe(false);
+
+    // The abandoned read cannot bring its document back.
+    slowRead.finish!(); await opening;
+    expect(location.pathname + location.search).toBe(filteredUrl);
+    expect(document.getElementById('side-panel-body')!.textContent).not.toContain('A slow document.');
+    expect(ids()).toEqual([middle, older]);
   });
 });

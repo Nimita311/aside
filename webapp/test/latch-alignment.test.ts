@@ -7,7 +7,7 @@ afterEach(() => { suppressLatch(false); resetLatchMarkers(); document.body.repla
 function flowAtBaseline(offset: number) {
   document.body.innerHTML = '<div id="flow-scroll"><div id="flow"></div></div>';
   const flow = document.getElementById('flow')!;
-  mountLatch(flow, () => {}, () => ({ timeFormat: '24h' }));
+  mountLatch(flow, () => ({ timeFormat: '24h' }));
   // The stylesheet supplies this durable, font-derived metadata position.
   flow.querySelector<HTMLElement>('.latch-date-row')!.style.paddingTop = '12.5px';
   const marker = document.createElement('div'); marker.dataset.date = '2026-10-18';

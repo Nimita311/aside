@@ -41,6 +41,8 @@ export function setDisplayText(node: HTMLElement, text: string): void {
   if (node.childNodes.length === 1 && node.firstChild?.nodeType === Node.TEXT_NODE) node.firstChild.nodeValue = text;
   else node.textContent = text;
 }
+// A selection offset kept within its node's current text or children.
+const clampOffset = (node: Node, offset: number) => Math.min(offset, node.nodeType === Node.TEXT_NODE ? node.textContent?.length ?? 0 : node.childNodes.length);
 // Only renderer-produced escaped markup belongs here. Retain matching text
 // and mark nodes; changed highlighting maps selections by label text offset.
 export function setDisplayHtml(node: HTMLElement, html: string): void {
@@ -69,8 +71,7 @@ export function setDisplayHtml(node: HTMLElement, html: string): void {
   if (retained) Array.from(node.childNodes).forEach((child, index) => patchText(child, template.content.childNodes[index]));
   else node.replaceChildren(...Array.from(template.content.childNodes));
   const locate = (saved: NonNullable<typeof anchor>) => {
-    if (retained || saved.textOffset === undefined) return { target: saved.target, offset: Math.min(saved.offset,
-      saved.target.nodeType === Node.TEXT_NODE ? saved.target.textContent?.length ?? 0 : saved.target.childNodes.length) };
+    if (retained || saved.textOffset === undefined) return { target: saved.target, offset: clampOffset(saved.target, saved.offset) };
     let remaining = saved.textOffset, last: Text | undefined;
     const walker = document.createTreeWalker(node, NodeFilter.SHOW_TEXT);
     for (let current = walker.nextNode() as Text | null; current; current = walker.nextNode() as Text | null) {
@@ -108,7 +109,8 @@ function crossfade(node: HTMLElement, copy: HTMLElement, rect: DOMRect, duration
 export function refreshDisplay(root: ParentNode, opts: RenderOptions, duration = 0): void {
   for (const motion of activeMotions) if (!motion.node.isConnected || (!duration && (root as Node).contains(motion.node))) clearMotion(motion, true);
   const selection = window.getSelection();
-  let saved = selection?.rangeCount ? { anchor: selection.anchorNode, anchorOffset: selection.anchorOffset, focus: selection.focusNode, focusOffset: selection.focusOffset } : undefined;
+  const capture = () => selection?.rangeCount ? { anchor: selection.anchorNode, anchorOffset: selection.anchorOffset, focus: selection.focusNode, focusOffset: selection.focusOffset } : undefined;
+  let saved = capture();
   const nodes = Array.from(root.querySelectorAll<HTMLElement>('[data-live-display]'));
   if (root instanceof HTMLElement && root.hasAttribute('data-live-display')) nodes.unshift(root);
   // Read every node's outgoing presentation before painting any of them: a
@@ -132,7 +134,7 @@ export function refreshDisplay(root: ParentNode, opts: RenderOptions, duration =
     paint(node, opts);
     // A markup paint may remap an element boundary to a text offset. Preserve
     // that deliberate selection through later paints and the outer restoration.
-    if (revision !== selectionRevision && selection?.rangeCount) saved = { anchor: selection.anchorNode, anchorOffset: selection.anchorOffset, focus: selection.focusNode, focusOffset: selection.focusOffset };
+    if (revision !== selectionRevision && selection?.rangeCount) saved = capture();
     const changed = before !== visualValue(node);
     if (changed) cancelNodeMotion(node);
     if (old && changed && old.rect.width && old.rect.height && !node.hidden && style?.visibility !== 'hidden' && style?.visibility !== 'collapse') {
@@ -147,8 +149,7 @@ export function refreshDisplay(root: ParentNode, opts: RenderOptions, duration =
   }
   if (saved?.anchor?.isConnected && saved.focus?.isConnected && selection &&
       (selection.anchorNode !== saved.anchor || selection.anchorOffset !== saved.anchorOffset || selection.focusNode !== saved.focus || selection.focusOffset !== saved.focusOffset)) {
-    const limit = (node: Node, offset: number) => Math.min(offset, node.nodeType === Node.TEXT_NODE ? node.textContent?.length ?? 0 : node.childNodes.length);
-    selection.setBaseAndExtent(saved.anchor, limit(saved.anchor, saved.anchorOffset), saved.focus, limit(saved.focus, saved.focusOffset));
+    selection.setBaseAndExtent(saved.anchor, clampOffset(saved.anchor, saved.anchorOffset), saved.focus, clampOffset(saved.focus, saved.focusOffset));
   }
 }
 export function refreshRevealed(root: ParentNode, fallback?: RenderOptions): void {

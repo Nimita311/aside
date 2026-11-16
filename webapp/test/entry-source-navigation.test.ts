@@ -6,6 +6,7 @@ import { entryReferences, getMondayOfWeek, type Entry, type EntityRef } from '..
 import { matchesFlowSearch } from '../src/flow-search';
 import type { DocRef, ViewState } from '../src/route';
 import type { SourceDefinition } from '../src/entry-source';
+import type { createContextPanel } from '../src/context-panel';
 import type { WebQueryRequest } from '../../cli/src/core/web-query';
 import type { PendingUpdate } from '../../cli/src/core/data-snapshot';
 import { buildRoute } from '../src/route';
@@ -14,10 +15,11 @@ import { rangeBoundary, type TimestampRange } from '../../cli/src/core/timestamp
 import { preserveSessionNavigation } from '../mock/session-navigation';
 import { loadApp } from './app-harness';
 import { snapshotFixture } from './snapshot-fixture';
-import { stubBrowserFetch } from './auth-fixture';
+import { stubBrowserFetch } from './connection-fixture';
 
 interface App {
   state: { store: RemoteStore | null; filter: EntityRef | null; search: string; source?: string; range?: TimestampRange; order?: 'CREATED_ASC' | 'CREATED_DESC'; doc: DocRef | null };
+  setupContextPanel(): void;
   setupNavigationSidebar(): void;
   setupModals(): void;
   setupSearch(): void;
@@ -34,6 +36,7 @@ interface App {
   openDetail(): void;
   closeDoc(): void;
   clearInstanceView(): void;
+  contextPanel?: ReturnType<typeof createContextPanel>;
   navigationSidebar?: { dispose(): void; closePopover(): void };
   stopControl?: () => void;
 }
@@ -48,7 +51,7 @@ let app: App | undefined;
 let restoreSession: (() => void) | undefined;
 
 afterEach(() => {
-  app?.stopControl?.(); app?.clearInstanceView(); app?.navigationSidebar?.dispose(); app = undefined;
+  app?.stopControl?.(); app?.clearInstanceView(); app?.navigationSidebar?.dispose(); app?.contextPanel?.destroy(); app = undefined;
   restoreSession?.(); restoreSession = undefined;
   vi.restoreAllMocks(); vi.unstubAllGlobals();
   document.body.replaceChildren(); localStorage.clear(); history.replaceState(null, '', '/');
@@ -186,8 +189,8 @@ async function setup(route = scopedUrl, preview = false, large = false, authored
     }
     return new Response('', { status: 404 });
   });
-  app = await loadApp<App>('state, setupNavigationSidebar, setupModals, setupSearch, handleSearch, applyAnimSpeed, connectToInstance, applyView, applyDataUpdate, loadMoreWeeks, jumpToEntry, jumpToDate, handleLocationChange, openDetail, closeDoc, clearInstanceView, navigationSidebar, stopControl');
-  app.applyAnimSpeed(); app.setupModals(); app.setupNavigationSidebar(); app.setupSearch();
+  app = await loadApp<App>('state, setupContextPanel, setupNavigationSidebar, setupModals, setupSearch, handleSearch, applyAnimSpeed, connectToInstance, applyView, applyDataUpdate, loadMoreWeeks, jumpToEntry, jumpToDate, handleLocationChange, openDetail, closeDoc, clearInstanceView, contextPanel, navigationSidebar, stopControl');
+  app.applyAnimSpeed(); app.setupContextPanel(); app.setupModals(); app.setupNavigationSidebar(); app.setupSearch();
   await app.connectToInstance('work');
   return {
     api: app, requests, records: entries, data, sidebarWrites, sidebarAttempts, fileRequests,
@@ -209,6 +212,35 @@ async function setup(route = scopedUrl, preview = false, large = false, authored
       return { finish: (request: WebQueryRequest) => resolve(response(request)) };
     },
   };
+}
+
+// Pin is a command of the More popover.
+function pinFromMore(): void {
+  document.getElementById('btn-pill-more')!.click();
+  document.getElementById('btn-workspace-pin')!.click();
+}
+
+// Inspect the Overview from the sidebar, expanded to its body, and return the
+// date link written there.
+async function inspectOverviewDate(api: App): Promise<HTMLAnchorElement> {
+  document.getElementById('nav-overview')!.click(); api.openDetail();
+  const link = await vi.waitFor(() => {
+    const candidate = document.querySelector<HTMLAnchorElement>('#side-panel-body .detail-body a[data-date-handle]');
+    expect(candidate).not.toBeNull(); return candidate!;
+  });
+  document.getElementById('btn-context-content')!.click();
+  expect(api.contextPanel!.getState()).toMatchObject({ open: true, mode: 'expanded', view: 'content' });
+  return link;
+}
+
+// A date link inspects its date in the panel without moving the flow; Go to
+// date then lands it there.
+async function goToDate(link: HTMLAnchorElement): Promise<void> {
+  const route = location.pathname;
+  link.click();
+  await vi.waitFor(() => expect(document.querySelector('#side-panel-body .context-essentials')?.getAttribute('data-kind')).toBe('date'));
+  expect(location.pathname).toBe(route);
+  document.getElementById('btn-context-timeline')!.click();
 }
 
 describe('agent entry views in the native application', () => {
@@ -338,17 +370,25 @@ describe('agent entry views in the native application', () => {
       expect(url.searchParams.get('range'), selector).toBe('#date/2026-10-04/2026-10-04');
       expect(url.searchParams.get('search'), selector).toBe('release');
     }
-    await api.applyView({ source, filter: null, search: 'release', range, order: 'CREATED_ASC', doc: { kind: 'detail' } });
-    const date = document.querySelector<HTMLAnchorElement>('#doc-body a[data-date-handle]')!;
-    expect(date).not.toBeNull();
+    // The Overview is inspected beside the flow it was opened from, so its
+    // date link addresses that flow, and Go to date lands at that address.
+    const date = await inspectOverviewDate(api);
     const url = new URL(date.href);
     expect(url.pathname).toBe(`/work/project/${project}/date/2026-10-04T09:30`);
     expect(url.searchParams.get('source')).toBe(source); expect(url.searchParams.get('order')).toBe('CREATED_ASC');
     expect(url.searchParams.get('range')).toBe('#date/2026-10-04/2026-10-04');
-    date.click();
-    await vi.waitFor(() => expect(api.state.doc).toBeNull());
-    await vi.waitFor(() => expect(api.state.filter).toEqual({ type: 'project', id: project }));
+    await goToDate(date);
+    await vi.waitFor(() => expect(document.querySelector('#flow .is-target')?.getAttribute('data-entry-id')).toBe(oldest));
+    expect(location.pathname + location.search).toBe(url.pathname + url.search);
+    expect(api.state.filter).toEqual({ type: 'project', id: project });
     expect(api.state.range).toEqual(range); expect(api.state.order).toBe('CREATED_ASC');
+  });
+
+  it('closes the context panel once Go to date has landed', async () => {
+    const { api } = await setup();
+    await goToDate(await inspectOverviewDate(api));
+    await vi.waitFor(() => expect(document.querySelector('#flow .is-target')).not.toBeNull());
+    await vi.waitFor(() => expect(api.contextPanel!.getState().open).toBe(false));
   });
 
   it('preserves a matching search when global lookup leaves an excluding date range', async () => {
@@ -526,22 +566,37 @@ describe('agent entry views in the native application', () => {
     expect(store.getInstance()!.manifest.config!.webapp!.sidebar).toEqual(pinned);
   });
 
-  it('repaints concurrent record edits during pin refresh while preserving the Reader position', async () => {
+  it('repaints concurrent record edits during pin refresh', async () => {
     const { api, data, requests, sidebarWrites } = await setup();
-    api.openDetail();
-    await vi.waitFor(() => expect(document.getElementById('doc-body')!.textContent).toContain('The full project body.'));
-    const reader = document.getElementById('doc-body')!;
-    reader.scrollTop = 180;
+    const record = document.getElementById('side-panel-body')!;
+    api.contextPanel!.open(); api.openDetail();
+    await vi.waitFor(() => expect(record.textContent).toContain('The full project body.'));
     data.projects[0][1].body = 'The agent revised the project body.';
     data.weeks[0][1][0].content = 'A calmer release decision revised by the agent.';
     const before = requests.length;
-    document.getElementById('btn-workspace-pin')!.click();
+    pinFromMore();
     await vi.waitFor(() => expect(sidebarWrites).toHaveLength(1));
-    await vi.waitFor(() => expect(reader.textContent).toContain('The agent revised the project body.'));
+    // The expanded record, not the flow beneath it, is the pinned view.
+    expect(sidebarWrites[0]).toContainEqual({ items: [expect.objectContaining({ entity: `#project/${project}` })] });
+    await vi.waitFor(() => expect(record.textContent).toContain('The agent revised the project body.'));
     await vi.waitFor(() => expect(document.getElementById('flow')!.textContent).toContain('revised by the agent'));
-    expect(reader.scrollTop).toBe(180);
-    expect(api.state.doc).toEqual({ kind: 'detail' });
     expect(requests).toHaveLength(before + 1);
+  });
+
+  it.each(['record', 'Overview'] as const)('keeps an expanded %s open at its reading position through a pin refresh', async kind => {
+    const { api, data, sidebarWrites } = await setup(kind === 'record' ? scopedUrl : '/work/');
+    const body = document.getElementById('side-panel-body')!;
+    if (kind === 'record') api.contextPanel!.open(); else document.getElementById('nav-overview')!.click();
+    api.openDetail();
+    await vi.waitFor(() => expect(body.textContent).toContain(kind === 'record' ? 'The full project body.' : 'An instance overview'));
+    body.scrollTop = 180;
+    const revised = 'The agent revised this record.';
+    if (kind === 'record') data.projects[0][1].body = revised; else data.instance!.body = revised;
+    pinFromMore();
+    await vi.waitFor(() => expect(sidebarWrites).toHaveLength(1));
+    await vi.waitFor(() => expect(body.textContent).toContain(revised));
+    expect(api.contextPanel!.getState()).toMatchObject({ open: true, mode: 'expanded' });
+    expect(body.scrollTop).toBe(180);
   });
 
   it('persists a pin without restarting an otherwise unchanged query', async () => {
@@ -553,19 +608,19 @@ describe('agent entry views in the native application', () => {
     expect(requests).toHaveLength(before);
   });
 
-  it('refreshes a concurrently edited instance Overview during Pin without resetting its reading position', async () => {
+  it('refreshes a concurrently edited instance Overview during Pin', async () => {
     const { api, data, sidebarWrites } = await setup('/work/');
-    await api.applyView({ filter: null, doc: { kind: 'detail' } });
-    const reader = document.getElementById('doc-body')!;
-    expect(reader.textContent).toContain('An instance overview'); reader.scrollTop = 220;
+    const overview = document.getElementById('side-panel-body')!;
+    document.getElementById('nav-overview')!.click(); api.openDetail();
+    await vi.waitFor(() => expect(overview.textContent).toContain('An instance overview'));
     data.instance!.body = 'The agent updated the instance understanding.';
-    document.getElementById('btn-workspace-pin')!.click();
+    pinFromMore();
     await vi.waitFor(() => expect(sidebarWrites).toHaveLength(1));
-    await vi.waitFor(() => expect(reader.textContent).toContain('updated the instance understanding'));
-    expect(api.state.doc).toEqual({ kind: 'detail' }); expect(reader.scrollTop).toBe(220);
+    expect(sidebarWrites[0]).toContainEqual({ items: [expect.objectContaining({ entity: 'aside://work/detail' })] });
+    await vi.waitFor(() => expect(overview.textContent).toContain('updated the instance understanding'));
   });
 
-  it('restores a source visit through history and retains it as a record’s return flow', async () => {
+  it('restores a source visit through history and keeps it beneath its expanded record', async () => {
     const { api, ids } = await setup();
     const visit = structuredClone(history.state), url = location.pathname + location.search;
     await api.applyView({ filter: null, source: otherSource, doc: null });
@@ -574,26 +629,41 @@ describe('agent entry views in the native application', () => {
     await api.handleLocationChange(new PopStateEvent('popstate', { state: visit }));
     expect(ids()).toEqual([newest]);
     expect(api.state).toMatchObject({ source, filter: { type: 'project', id: project }, search: 'calmer' });
-    api.openDetail();
-    await vi.waitFor(() => expect(document.getElementById('doc-body')!.textContent).toContain('The full project body.'));
-    expect(history.state.returnFlow.view).toMatchObject({ source, filter: { type: 'project', id: project }, search: 'calmer' });
+    // The record expands beside the restored flow instead of replacing it.
+    api.contextPanel!.open(); api.openDetail();
+    await vi.waitFor(() => expect(document.getElementById('side-panel-body')!.textContent).toContain('The full project body.'));
+    expect(api.contextPanel!.getState()).toMatchObject({ open: true, mode: 'expanded' });
+    expect(location.pathname + location.search).toBe(url);
+    expect(api.state).toMatchObject({ source, filter: { type: 'project', id: project }, search: 'calmer' });
+    expect(ids()).toEqual([newest]);
     expect(document.getElementById('source-filter')!.hidden).toBe(false);
     api.closeDoc();
-    await vi.waitFor(() => expect(api.state.doc).toBeNull());
+    expect(api.contextPanel!.getState().open).toBe(false);
+    expect(location.pathname + location.search).toBe(url);
     expect(api.state.source).toBe(source); expect(ids()).toEqual([newest]);
     expect(document.getElementById('source-filter')!.hidden).toBe(false);
   });
 
-  it('keeps the retained source chip visible while a Reader entry link returns to its flow', async () => {
+  it('keeps the retained source chip visible while an expanded record’s entry link returns to its flow', async () => {
     const { api, ids } = await setup();
-    api.openDetail();
+    api.contextPanel!.open(); api.openDetail();
     const link = await vi.waitFor(() => {
-      const candidate = document.querySelector<HTMLAnchorElement>(`#doc-body [data-ref-type="entry"][data-ref-id="${newest}"]`);
+      const candidate = document.querySelector<HTMLAnchorElement>(`#side-panel-body .detail-body [data-ref-type="entry"][data-ref-id="${newest}"]`);
       expect(candidate).not.toBeNull(); return candidate!;
     });
+    document.getElementById('btn-context-content')!.click();
+    expect(api.contextPanel!.getState()).toMatchObject({ open: true, mode: 'expanded', view: 'content' });
     expect(document.getElementById('source-filter')!.hidden).toBe(false);
+    // The link inspects its entry in the panel; Go to entry then lands it in the flow.
     link.click();
-    await vi.waitFor(() => expect(document.querySelector(`[data-entry-id="${newest}"]`)?.classList.contains('is-target')).toBe(true));
+    await vi.waitFor(() => expect(document.querySelector('#side-panel-body .context-essentials')?.getAttribute('data-kind')).toBe('entry'));
+    expect(document.querySelector('#flow .is-target')).toBeNull();
+    expect(document.getElementById('source-filter')!.hidden).toBe(false);
+    const command = document.getElementById('btn-context-timeline')!;
+    expect(command.getAttribute('aria-label')).toBe('Go to entry');
+    command.click();
+    await vi.waitFor(() => expect(document.querySelector(`#flow [data-entry-id="${newest}"]`)?.classList.contains('is-target')).toBe(true));
+    expect(api.contextPanel!.getState().open).toBe(false);
     expect(api.state).toMatchObject({ source, filter: { type: 'project', id: project }, search: 'calmer', doc: null });
     expect(ids()).toEqual([newest]);
     expect(document.getElementById('source-filter')!.hidden).toBe(false);
@@ -603,19 +673,26 @@ describe('agent entry views in the native application', () => {
 
   it('waits for the originating source to load before landing a date lookup from Overview', async () => {
     const { api, ids, records, requests, holdNextQuery } = await setup(scopedUrl, false, true);
-    await api.applyView({ source, filter: null, search: 'calmer', doc: { kind: 'detail' } });
-    expect(document.getElementById('doc-body')!.textContent).toContain('An instance overview');
+    document.getElementById('nav-overview')!.click();
+    await vi.waitFor(() => expect(document.getElementById('side-panel-body')!.textContent).toContain('An instance overview'));
+    expect(api.contextPanel!.getState().open).toBe(true);
     const target = records[55].meta.created, held = holdNextQuery(), before = requests.length;
+    document.getElementById('btn-pill-search')!.click();
     const input = document.querySelector<HTMLInputElement>('.search-input')!;
     input.value = target.slice(0, 10); api.handleSearch(input.value);
     const dateResult = document.querySelector<HTMLElement>(`[data-key="date:${input.value}"]`);
     expect(dateResult).not.toBeNull(); dateResult!.click();
     await vi.waitFor(() => expect(requests.length).toBeGreaterThan(before));
-    expect(ids()).toEqual([]);
+    // The Overview was inspected beside the flow, which keeps its loaded page
+    // while the page holding the date is pending; nothing lands early.
+    expect(entryArguments(requests[before].request).offset).toBe(50);
+    expect(ids()).toEqual(records.slice(0, 50).map(entry => entry.meta.created));
+    expect(document.querySelector('#flow .is-target')).toBeNull();
     expect(api.state).toMatchObject({ source, filter: { type: 'project', id: project }, search: 'calmer', doc: null });
 
     held.finish(requests[before].request);
-    await vi.waitFor(() => expect(document.querySelector(`[data-entry-id="${target}"]`)?.classList.contains('is-target')).toBe(true));
+    await vi.waitFor(() => expect(document.querySelector(`#flow [data-entry-id="${target}"]`)?.classList.contains('is-target')).toBe(true));
+    expect(api.contextPanel!.getState().open).toBe(false);
     expect(ids()).toEqual(records.map(entry => entry.meta.created));
     expect(document.getElementById('source-filter')!.hidden).toBe(false);
     expect(new URLSearchParams(location.search).get('source')).toBe(source);

@@ -6,6 +6,8 @@ import type {InstanceRecord, ParseIssue, ParseResult} from '../core/types.js';
 import {formatInstanceEntry} from '../core/text.js';
 import type {MutationChange} from '../source/mutation-result.js';
 import {InstanceOperationError} from '../core/instance-operation-error.js';
+import {errorMessage} from '../core/error.js';
+import {canonicalPath} from '../core/worktree.js';
 
 export interface InstanceAdmissionResult {
   path: string;
@@ -33,12 +35,12 @@ export function bootstrapInstanceSource(input: InitOptions & {path: string}, pub
   try {result = init(path, input, () => {changed = true;});}
   catch (error) {failed = true; failure = error;}
   if (changed) {
-    let writtenRoot = path;
-    try {writtenRoot = realpathSync(path);} catch { /* Preserve owner notification if the saved root disappeared. */ }
+    // Preserve owner notification even if the saved root has disappeared.
+    const writtenRoot = canonicalPath(path);
     try {publish(writtenRoot);}
     catch (error) {
-      if (!failed) throw new Error(`Instance files created; loaded source repair is pending: ${error instanceof Error ? error.message : String(error)}`, {cause: error});
-      throw new Error(`${failure instanceof Error ? failure.message : String(failure)}\nLoaded source repair is pending: ${error instanceof Error ? error.message : String(error)}`, {cause: failure});
+      if (!failed) throw new Error(`Instance files created; loaded source repair is pending: ${errorMessage(error)}`, {cause: error});
+      throw new Error(`${errorMessage(failure)}\nLoaded source repair is pending: ${errorMessage(error)}`, {cause: failure});
     }
   }
   if (failed) throw failure;
@@ -68,21 +70,21 @@ export async function createInstanceSource(input: InitOptions & {path: string}, 
   let result: ReturnType<typeof init>;
   try {result = init(path, input, createdFile);}
   catch (error) {
-    if (!isAsideDir(path)) throw new Error(`Cannot create instance: ${error instanceof Error ? error.message : String(error)}`);
+    if (!isAsideDir(path)) throw new Error(`Cannot create instance: ${errorMessage(error)}`);
     let repair = '';
     try {issues.push(...await owner.created(path, {partial: true}));}
-    catch (failure) {repair = `\nLoaded source repair is pending: ${failure instanceof Error ? failure.message : String(failure)}`;}
-    return incomplete(`Instance files created: ${label()}\nInitialization incomplete: ${error instanceof Error ? error.message : String(error)}${repair}\nDaemon registration: not attempted.`);
+    catch (failure) {repair = `\nLoaded source repair is pending: ${errorMessage(failure)}`;}
+    return incomplete(`Instance files created: ${label()}\nInitialization incomplete: ${errorMessage(error)}${repair}\nDaemon registration: not attempted.`);
   }
   try {issues.push(...await owner.created(path));}
   catch (error) {
-    return incomplete(`Created: ${label()}\nDaemon registration and initial load: unconfirmed — ${error instanceof Error ? error.message : String(error)}\nActivation: not completed.`);
+    return incomplete(`Created: ${label()}\nDaemon registration and initial load: unconfirmed — ${errorMessage(error)}\nActivation: not completed.`);
   }
   try {
     const published = await owner.instanceRecord(path);
     if (!published) throw new Error(`Lifecycle-provided instance metadata is unavailable for ${path}. Query through the Aside daemon.`);
     return {path: realpathSync(path), record: published, issues, changes, admitted: true, tutorialProjectId: result.tutorial?.projectId};
   } catch (error) {
-    return incomplete(`Created: ${label()}\nLifecycle metadata and activation: unconfirmed — ${error instanceof Error ? error.message : String(error)}`);
+    return incomplete(`Created: ${label()}\nLifecycle metadata and activation: unconfirmed — ${errorMessage(error)}`);
   }
 }

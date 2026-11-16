@@ -93,6 +93,11 @@ export interface InstanceConfig {
   doneEventTitlePrefix?: string;
 }
 
+// The prefixes in effect. A scheduled action's event carries the `active` one.
+export function eventTitlePrefixes(config: InstanceConfig | undefined): { active: string; done: string } {
+  return { active: config?.scheduledEventTitlePrefix ?? '▢ ', done: config?.doneEventTitlePrefix ?? '✓ ' };
+}
+
 export interface WebappConfig {
   sidebar?: WebappSidebarSection[];
 }

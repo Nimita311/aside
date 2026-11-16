@@ -14,6 +14,12 @@ export function starterPrompt(instance: AvailableInstance): string {
   return `I am viewing the Aside instance ${JSON.stringify(instance.name || instance.id)} (id: ${JSON.stringify(instance.id)}) at ${JSON.stringify(instance.path)}. Use Aside's selectInstance mutation with path ${JSON.stringify(instance.path)} to explicitly select this destination in our agent session; the browser selection is independent. Then help me capture a note, organize a project, or plan an action. Ask what I want to work on before saving a record.`;
 }
 
+function button(label: string, activate?: () => void): HTMLButtonElement {
+  const node = document.createElement('button'); node.type = 'button'; node.className = 'btn'; node.textContent = label;
+  if (activate) node.addEventListener('click', activate);
+  return node;
+}
+
 export function renderEmptyFlow(kind: EmptyFlowKind, instance: AvailableInstance, options: {
   clearFilter(): void;
   clearSearch?: () => void;
@@ -29,18 +35,9 @@ export function renderEmptyFlow(kind: EmptyFlowKind, instance: AvailableInstance
   title.textContent = kind === 'instance' ? 'The stage is yours.' : kind === 'filter' ? 'No entries match this filter.' : options.hasNotes ? 'No entries to display.' : 'No notes yet.';
   host.append(title);
   if (kind === 'filter') {
-    if (options.clearSource) {
-      const clear = document.createElement('button'); clear.type = 'button'; clear.className = 'btn'; clear.textContent = 'Clear entry source';
-      clear.addEventListener('click', options.clearSource); host.append(clear);
-    }
-    if (options.hasFilter !== false) {
-      const clear = document.createElement('button'); clear.type = 'button'; clear.className = 'btn'; clear.textContent = 'Clear filter';
-      clear.addEventListener('click', options.clearFilter); host.append(clear);
-    }
-    if (options.clearSearch) {
-      const clear = document.createElement('button'); clear.type = 'button'; clear.className = 'btn'; clear.textContent = 'Clear search';
-      clear.addEventListener('click', options.clearSearch); host.append(clear);
-    }
+    if (options.clearSource) host.append(button('Clear entry source', options.clearSource));
+    if (options.hasFilter !== false) host.append(button('Clear filter', options.clearFilter));
+    if (options.clearSearch) host.append(button('Clear search', options.clearSearch));
     return host;
   }
   if (kind !== 'instance') return host;
@@ -50,7 +47,7 @@ export function renderEmptyFlow(kind: EmptyFlowKind, instance: AvailableInstance
   identity.textContent = `${instance.name || instance.id} · ${instance.id}`;
   const path = document.createElement('code'); path.textContent = instance.path; identity.append(document.createElement('br'), path);
   const actions = document.createElement('div'); actions.className = 'empty-actions';
-  const copy = document.createElement('button'); copy.type = 'button'; copy.className = 'btn'; copy.textContent = 'Copy a starter prompt';
+  const copy = button('Copy a starter prompt');
   const status = document.createElement('p'); status.className = 'empty-copy-status'; status.setAttribute('role', 'status');
   const manual = document.createElement('textarea'); manual.className = 'empty-prompt'; manual.readOnly = true; manual.hidden = true;
   manual.setAttribute('aria-label', 'Starter prompt to copy'); manual.value = starterPrompt(instance);

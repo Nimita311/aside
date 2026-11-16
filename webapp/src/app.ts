@@ -1,6 +1,7 @@
 import type { StoreView as Store, HotSet, PendingUpdate } from '../../cli/src/core/data-snapshot';
 import { daemonRequest, DaemonRequestError, loadDaemonInstance, queryDaemonInstance, type AvailableInstance } from './backend';
-import { createIframeQueryBridge } from './iframe-bridge';
+import { createIframeQueryBridge, artifactBlob } from './iframe-bridge';
+import { artifactResourcePath } from './iframe-resource';
 import { InstanceChooser } from './instance-chooser';
 import { InstanceSwitcher } from './instance-switcher';
 import { setupInstanceTooltips, WARNING_ICON } from './instance-catalogue';
@@ -12,11 +13,11 @@ import { refreshDisplay, preserveDisplayPosition, preserveReadingPosition, setDi
 import { renderDiagrams } from './diagrams';
 import { webpageSource, webpageSources } from './webpage';
 import { MINUTE_MS } from '../../cli/src/core/system-config';
-import { getMondayOfWeek, weekFilePath, toStampStr, entryReferences, entityKey, assetDisplayName, assetMediaKind, looksBinary, type EntityRef, type Entry } from '../lib/types';
-import { renderEntry, renderDateMarker, formatStamp, renderProjectSummary, renderActionSummary, renderInstanceSummary, renderProjectDetail, renderActionDetail, renderInstanceDetail, renderEntryDetail, renderAssetDetail, renderArtifactDetail, readerDetails, applyRefStatus, RenderOptions, TimeFormat, type AssetContent } from './render';
-import { artifactAttachmentRelativePath, artifactContentFilename, artifactHandle, parseArtifactHandle, type ArtifactReference } from '../../cli/src/core/artifact-reference';
+import { entryWeek, weekFilePath, toStampStr, entryReferences, entityKey, assetDisplayName, assetMediaKind, looksBinary, type EntityRef, type Entry } from '../lib/types';
+import { isModifiedClick, renderEntry, renderDateMarker, formatStamp, renderProjectSummary, renderActionSummary, renderInstanceSummary, renderProjectDetail, renderActionDetail, renderInstanceDetail, renderEntryDetail, renderAssetDetail, renderArtifactDetail, readerDetails, applyRefStatus, RenderOptions, TimeFormat, type AssetContent } from './render';
+import { artifactAttachmentRelativePath, artifactContentFilename, parseArtifactHandle, type ArtifactReference } from '../../cli/src/core/artifact-reference';
 import { buildProjectHierarchy } from './hierarchy';
-import { actionMarks, projectMarks, actionPills, projectPills, type OpenActionGroups } from './instance';
+import { actionMarks, projectMarks, actionStatusPills, projectPills, type OpenActionGroups } from './instance';
 import { buildRoute, parseRoute, instanceUrl, readInstanceLocation, ViewState, DocRef } from './route';
 import { dateTimeAttribute, localDateStamp, type DateReference } from './date-reference';
 import { snapshotFlow, animateFlow, animateEntryArrival, setSlideMs } from './flip';
@@ -27,17 +28,16 @@ import { emptyFlowKind, renderEmptyFlow } from './onboarding';
 import { documentFilePath, documentIsHtml, actionSourceId } from './document-path';
 import { fileDiagnosticNotice } from './diagnostics';
 import { createWeekView, type WeekView } from './week-view';
-import { dateJumpCard, anchorFromSource, timeCursorAnchor, anchorForEntry, restoreAnchor, anchorShortfall, viewportGapBelow, quickJumpCard, entryWeek, flashJump, visibleTimelineDates, type VisibleTimelineDates, type FlowAnchor } from './flow-navigation';
+import { dateJumpCard, anchorFromSource, timeCursorAnchor, anchorForEntry, restoreAnchor, anchorShortfall, viewportGapBelow, flashJump, visibleTimelineDates, type VisibleTimelineDates, type FlowAnchor } from './flow-navigation';
 import { projectSummaryData, actionSummaryData, projectDetailData, entryRelations, instanceSummaryData, instanceDetailData, indexDescription, planningSignature } from './panel-data';
 import { setupRefCoHover } from './ref-hover';
 import { createSidePanel, type PanelView } from './side-panel';
 import { createSearchUi } from './search-ui';
 import { createWorkspaceFrame } from './workspace-frame';
-import { createReaderPage } from './reader-page';
 import { createContextPanel, type ContextTimelineAction } from './context-panel';
 import { renderContextContent } from './context-render';
 import { renderContextEssentials, type ContextEssentials } from './context-essentials';
-import { artifactIconState, dateIconState, fileIconState } from './entity-icons';
+import { artifactIconState, dateIconState, fileIconState, setupEntityIconSizing } from './entity-icons';
 import { sidebarView, pinMatches, setViewPinned } from './view-pins';
 import type { WebappSidebarSection, WebappSidebarItem } from '../../cli/src/core/types';
 import { entrySourceReference } from './entry-source-reference';
@@ -51,8 +51,8 @@ import { refreshDateTimeSettings, refreshTimelineGutter } from './date-time-sett
 import { clockSelection } from './date-display';
 import { entityStats } from './entity-relations';
 import { connectControl } from './control';
-import { initializeAuth, RECONNECT_GUIDANCE, type AuthState } from './auth';
-import { locationCopyText } from './location-copy';
+import { setupRefCopy } from './ref-copy';
+import { errorMessage } from '../../cli/src/core/error';
 
 interface AppState {
   store: Store | null;
@@ -138,6 +138,12 @@ function sameFilter(a: EntityRef | null, b: EntityRef | null): boolean {
   return a === b || (!!a && !!b && a.type === b.type && a.id === b.id);
 }
 
+// Whether the flow already shows a view's conditions; its document is separate.
+function sameFlow(view: ViewState): boolean {
+  return sameFilter(state.filter, view.filter) && state.search === (view.search ?? '') && state.source === view.source
+    && JSON.stringify(state.range) === JSON.stringify(view.range) && state.order === view.order;
+}
+
 function sameDoc(a: DocRef | null, b: DocRef | null): boolean {
   if (a === b) return true;
   if (!a || !b || a.kind !== b.kind) return false;
@@ -191,7 +197,7 @@ function webpageFiles(root: ParentNode | null): string[] {
 let stopDisplayClock: (() => void) | undefined;
 function refreshTimeDisplay(): void {
   refreshDateTimeSettings(state);
-  const containers = [$('#flow-scroll'), $('#side-panel-body'), $('#doc-body'), $('#instance-chooser'), $('#workspace-popover-body')].filter((node): node is HTMLElement => node !== null);
+  const containers = [$('#flow-scroll'), $('#side-panel-body'), $('#instance-chooser'), $('#workspace-popover-body')].filter((node): node is HTMLElement => node !== null);
   preserveDisplayPosition(containers, () => {
     refreshTimelineGutter(state);
     if (!$('#instance-chooser')?.hidden) instanceChooser?.redraw();
@@ -233,10 +239,15 @@ function getRenderOpts(): RenderOptions {
       const address = instance.alias ?? instanceId;
       if (!address) return;
       iframeQueries.register(frame, {
-        instance: address,
         fileUrl: path => store.assetUrl(path),
         isCurrent: () => state.store === store && state.instance?.path === instance.path,
         query: (request, signal) => queryDaemonInstance(address, request, signal),
+        resource: (reference, signal) => {
+          const path = artifactResourcePath(source!.artifactId!, reference, id => store.getCachedArtifact(id));
+          const url = store.assetUrl(path);
+          if (!url) throw new Error('Artifact attachment is unavailable.');
+          return artifactBlob(url, signal);
+        },
       });
     },
     onArtifactClick: openArtifact,
@@ -248,14 +259,11 @@ function getRenderOpts(): RenderOptions {
       return path ? store?.assetUrl(path) ?? null : null;
     },
     onEntryTimeClick: (id) => { void jumpToEntry(id, true, null, 'start'); },
-    onDateClick: date => {
-      if (contextPanel) void inspectContext({ ref: null, doc: null, date });
-      else void navigateDate(date);
-    },
+    onDateClick: date => { void inspectContext({ ref: null, doc: null, date }); },
     routeHref: route => {
       const target = parseRoute(route);
       const pill = !!target.filter && !target.doc && !target.jump && !target.date;
-      const context = state.doc && target.date ? returnFlow?.view ?? flowContext() : flowContext();
+      const context = target.date ? timelineContext() : flowContext();
       return hrefFor(buildRoute({ ...context, ...target,
         ...(state.doc && target.date ? { filter: context.filter } : {}),
         ...(state.doc && pill ? { source: undefined, order: undefined } : {}) }));
@@ -279,6 +287,10 @@ function getRenderOpts(): RenderOptions {
     },
     onTagClick: handleTagClick,
   };
+}
+
+function refName(ref: EntityRef): string {
+  return getRenderOpts().resolveName(ref.type, ref.id);
 }
 
 function $<T extends HTMLElement = HTMLElement>(selector: string): T | null {
@@ -431,7 +443,7 @@ function sourceInspection(): HTMLElement {
   let request: ReturnType<typeof sourceRequest> | undefined, constructionError: string | undefined;
   try {
     if (queryDefinition) request = sourceRequest(queryDefinition, { ...flowContext(), range: localRange(), offset: 0, limit: 50 });
-  } catch (error) { constructionError = error instanceof Error ? error.message : String(error); }
+  } catch (error) { constructionError = errorMessage(error); }
   const error = (queryProblem ?? queryFlow?.error)?.message ?? constructionError;
   const key = JSON.stringify({ source: state.source, name: sourceName(), request, error });
   if (sourceInspectionBody && key === sourceInspectionKey) return sourceInspectionBody;
@@ -467,20 +479,18 @@ function flowContext(): Pick<ViewState, 'filter' | 'search' | 'source' | 'range'
   return { filter: state.filter, search: state.search, source: state.source, range: state.range, order: state.order };
 }
 
-// Calendar and filter controls stay attached to the last timeline while the
-// reader displays an entity or a full-page HTML artifact.
+// Calendar and filter controls stay attached to the last timeline while a
+// routed document is open over it.
 function timelineContext(): ReturnType<typeof flowContext> {
   return state.doc ? returnFlow?.view ?? flowContext() : flowContext();
 }
 
 async function navigateDate(date: DateReference): Promise<void> {
-  const context = state.doc ? returnFlow?.view ?? flowContext() : flowContext();
+  const context = timelineContext();
   const store = state.store, interaction = contextInteraction;
-  const navigating = applyView({ ...context, filter: context.filter?.type === 'entry' ? null : context.filter, doc: null,
+  const settled = await applyView({ ...context, filter: context.filter?.type === 'entry' ? null : context.filter, doc: null,
     ...(date.end ? { range: { start: date.start, end: date.end } } : { date }) });
-  const request = navigationGeneration;
-  await navigating;
-  if (contextPanel && store === state.store && request === navigationGeneration && interaction === contextInteraction) {
+  if (contextPanel && settled && store === state.store && interaction === contextInteraction) {
     contextDismissed = true; contextInteraction++; contextPanel.close({ restoreFocus: false });
   }
 }
@@ -505,7 +515,7 @@ function sidebarItemLabel(item: WebappSidebarItem): string {
     const view = sidebarView(item, state.instanceId!);
     if (view.source) return state.store?.getArtifactDisplayName(entrySourceReference(view.source).id) ?? view.source;
     if (view.doc?.kind === 'artifact') return state.store?.getArtifactDisplayName(view.doc.id) ?? view.doc.id;
-    if (view.filter) return getRenderOpts().resolveName(view.filter.type, view.filter.id);
+    if (view.filter) return refName(view.filter);
     if (view.search) return `“${view.search}”`;
     if (view.range) return `${view.range.start} – ${view.range.end}`;
     if (view.date) return view.date.start;
@@ -525,7 +535,7 @@ async function setCurrentPin(pinned: boolean): Promise<void> {
   const instance = state.instanceId, store = state.store;
   const view = workspaceView();
   const label = view.doc || view.filter?.type === 'entry' ? currentPageLabel() : [state.source ? sourceName() : '',
-    state.filter ? getRenderOpts().resolveName(state.filter.type, state.filter.id) : state.source ? '' : 'Entries',
+    state.filter ? refName(state.filter) : state.source ? '' : 'Entries',
     state.search ? `“${state.search}”` : '', state.range ? `${state.range.start} – ${state.range.end}` : ''].filter(Boolean).join(' · ');
   pinSaving = true;
   try {
@@ -613,7 +623,7 @@ const searchUi = createSearchUi({
   store: () => state.store,
   renderOpts: getRenderOpts,
   flowSearch: () => state.store && state.instance && !state.doc && state.filter?.type !== 'entry'
-    ? { label: [state.source ? sourceName() : 'Entries', state.filter ? getRenderOpts().resolveName(state.filter.type, state.filter.id) : ''].filter(Boolean).join(' · '), term: state.search }
+    ? { label: [state.source ? sourceName() : 'Entries', state.filter ? refName(state.filter) : ''].filter(Boolean).join(' · '), term: state.search }
     : null,
   onFlowSearch: term => { void applyFlowSearch(term); },
   onRefresh: () => { if (state.store) refreshCalendarActivity(state.store); },
@@ -637,23 +647,25 @@ const searchUi = createSearchUi({
 });
 const { setupSearch, handleSearch, setSearchVisible, resetSearch } = searchUi;
 
+// An artifact attachment leads with its filename, so two attachments of one
+// artifact read apart.
+function documentLabel(doc: DocRef | null): string | null {
+  if (doc?.kind === 'artifact') {
+    const name = state.store?.getArtifactDisplayName(doc.id) ?? doc.id;
+    return doc.filename ? `${doc.filename} · ${name}` : name;
+  }
+  return doc?.kind === 'asset' ? doc.path.split('/').at(-1) ?? doc.path : null;
+}
+
 function currentPageLabel(): string {
   if (contextPanel?.getState().open && contextPanel.getState().mode === 'expanded') {
     const target = currentContext();
     if (target.date) return target.date.end ? `${target.date.start} – ${target.date.end}` : formatStamp(target.date.start, state);
-    if (target.doc?.kind === 'artifact') return state.store?.getArtifactDisplayName(target.doc.id) ?? target.doc.id;
-    if (target.doc?.kind === 'asset') return target.doc.path.split('/').at(-1) ?? target.doc.path;
-    if (target.ref) return getRenderOpts().resolveName(target.ref.type, target.ref.id);
-    return state.store?.getInstance()?.manifest.name ?? 'Overview';
+    return documentLabel(target.doc) ?? (target.ref ? refName(target.ref) : state.store?.getInstance()?.manifest.name ?? 'Overview');
   }
   const doc = state.doc;
   if (!doc) return state.instance ? sourceName() : 'Aside';
-  if (doc.kind === 'artifact') {
-    const name = state.store?.getArtifactDisplayName(doc.id) ?? doc.id;
-    return doc.filename ? `${doc.filename} · ${name}` : name;
-  }
-  if (doc.kind === 'asset') return doc.path.split('/').at(-1) ?? doc.path;
-  return state.filter ? getRenderOpts().resolveName(state.filter.type, state.filter.id) : 'Overview';
+  return documentLabel(doc) ?? (state.filter ? refName(state.filter) : 'Overview');
 }
 
 function syncNavigationSidebar(): void {
@@ -663,7 +675,7 @@ function syncNavigationSidebar(): void {
   renderedSidebar = { instance: state.instanceId, sections: structuredClone(sections) };
   const panelState = contextPanel?.getState();
   const fullscreen = panelState?.open && panelState.fullscreen;
-  const selectedDoc = contextPanel ? currentContext().doc : state.doc;
+  const selectedDoc = currentContext().doc;
   const artifact = selectedDoc?.kind === 'artifact' ? state.store?.getCachedArtifact(selectedDoc.id) : undefined;
   const html = documentIsHtml(selectedDoc, artifact);
   const currentLabel = currentPageLabel();
@@ -674,7 +686,7 @@ function syncNavigationSidebar(): void {
     overviewHref: state.instanceId ? instanceUrl(state.instanceId, 'detail') : '/',
     currentLabel,
     overviewActive: selectedView.doc?.kind === 'detail' && !selectedView.filter,
-    reader: (contextPanel ? fullscreen : state.doc) ? html ? 'html' : 'record' : available ? 'flow' : 'chooser',
+    reader: fullscreen ? html ? 'html' : 'record' : available ? 'flow' : 'chooser',
     summaryAvailable,
     contextFullscreen: !!fullscreen,
     order: state.source && queryDefinition ? effectiveSourceOrder(queryDefinition, state.order) : undefined,
@@ -698,10 +710,10 @@ function visibleInstanceControl(): HTMLElement | null {
 function setupNavigationSidebar(): void {
   if (!$('#navigation-sidebar')) return;
   navigationSidebar ??= createWorkspaceFrame({
-    beforeOpen: () => { datePicker.close(); setSearchVisible(false); instanceSwitcher?.close(); },
+    beforeOpen: () => { setSearchVisible(false); instanceSwitcher?.close(); },
     preserveLayout: paint => {
-      const containers = [$('#flow-scroll'), $('#doc-body')].filter((node): node is HTMLElement => !!node);
-      preserveReadingPosition(containers, paint);
+      const scroller = $('#flow-scroll');
+      preserveReadingPosition(scroller ? [scroller] : [], paint);
       updateLatch();
     },
     openSearch: () => { $<HTMLInputElement>('.search-input')?.focus({ preventScroll: true }); },
@@ -718,9 +730,8 @@ function setupNavigationSidebar(): void {
       updateLatch(); refreshCalendarPosition();
     },
     onEntries: () => { void applyView({ filter: null, search: '', doc: null }, { dismissContext: true }); },
-    onOverview: () => { if (contextPanel) void inspectContext({ ref: null, doc: null }, { focus: true });
-      else void applyView({ ...flowContext(), filter: null, doc: { kind: 'detail' } }); },
-    onSummary: contextPanel ? () => { contextDismissed = false; contextInteraction++; contextPanel?.open({ focus: true }); } : undefined,
+    onOverview: () => { void inspectContext({ ref: null, doc: null }, { focus: true }); },
+    onSummary: () => { contextDismissed = false; contextInteraction++; contextPanel?.open({ focus: true }); },
     onSort: order => { void applyView({ ...flowContext(), order, doc: null }, { resetPosition: true }); },
     onPin: pinned => { void setCurrentPin(pinned); },
     onNavigateItem: (sectionIndex, itemIndex) => {
@@ -728,8 +739,8 @@ function setupNavigationSidebar(): void {
       if (!item || !state.instanceId || renderedSidebar.instance !== state.instanceId) return;
       try {
         const target = sidebarView(item, state.instanceId);
-        if (contextPanel && item.entity) void inspectContext({ ref: target.filter, doc: target.doc }, { focus: true });
-        else void applyView(target, { dismissContext: !!contextPanel });
+        if (item.entity) void inspectContext({ ref: target.filter, doc: target.doc }, { focus: true });
+        else void applyView(target, { dismissContext: true });
       }
       catch (error) { showActionFailure(error instanceof Error ? error.message : 'Could not open this view.'); }
     },
@@ -756,6 +767,12 @@ function bindCheckbox(selector: string, value: boolean, apply: (v: boolean) => v
   el.addEventListener('change', () => apply(el.checked));
 }
 
+// Set a preference and keep it across reloads, stored under its state key.
+function persist<K extends keyof AppState>(key: K, value: AppState[K]): void {
+  state[key] = value;
+  localStorage.setItem(key, String(value));
+}
+
 let diagramThemeRevision = 0;
 async function refreshDiagramTheme(): Promise<void> {
   const revision = ++diagramThemeRevision;
@@ -769,11 +786,9 @@ async function refreshDiagramTheme(): Promise<void> {
     if (!current()) return;
   }
   const flowVersion = flowGeneration;
-  const docVersion = docLoadGeneration;
-  const roots = [$('#flow'), $('#side-panel-body'), $('#doc-body')].filter((root): root is HTMLElement => root !== null);
+  const roots = [$('#flow'), $('#side-panel-body')].filter((root): root is HTMLElement => root !== null);
   await Promise.all(roots.map(root => renderDiagrams(root, {
-    current: () => current() && (root.id !== 'flow' || flowVersion === flowGeneration)
-      && (root.id !== 'doc-body' || docVersion === docLoadGeneration),
+    current: () => current() && (root.id !== 'flow' || flowVersion === flowGeneration),
     commit: paint => {
       const container = root.id === 'flow' ? $('#flow-scroll') ?? root : root;
       preserveReadingPosition([container], paint);
@@ -790,24 +805,20 @@ function applyTheme() {
 
 function setupDateTimeSettings(): void {
   bindSelect('#setting-time-format', clockSelection(state.timeFormat), (v) => {
-    state.timeFormat = timeFormat(v);
-    localStorage.setItem('timeFormat', state.timeFormat);
+    persist('timeFormat', timeFormat(v));
     refreshTimeDisplay();
   });
 
   bindSelect('#setting-date-format', state.dateFormat, v => {
-    state.dateFormat = dateFormat(v);
-    localStorage.setItem('dateFormat', state.dateFormat);
+    persist('dateFormat', dateFormat(v));
     refreshTimeDisplay();
   });
   bindSelect('#setting-time-style', state.timeStyle, v => {
-    state.timeStyle = timeStyle(v);
-    localStorage.setItem('timeStyle', state.timeStyle);
+    persist('timeStyle', timeStyle(v));
     refreshTimeDisplay();
   });
   bindSelect('#setting-week-start', String(state.weekStartsOn), v => {
-    state.weekStartsOn = weekStartsOn(v);
-    localStorage.setItem('weekStartsOn', String(state.weekStartsOn));
+    persist('weekStartsOn', weekStartsOn(v));
     refreshDateTimeSettings(state);
     datePicker.refresh();
   });
@@ -817,6 +828,7 @@ function setupDateTimeSettings(): void {
 
 function init() {
   setDisplayContext(getRenderOpts);
+  setupEntityIconSizing();
   applyTheme();
   applyAnimSpeed();
   // Re-sync when the OS reduced-motion preference flips mid-session, so the
@@ -827,25 +839,22 @@ function init() {
   setupInstanceTooltips();
   $('.app-title a')?.addEventListener('click', event => {
     const click = event as MouseEvent;
-    if (click.button || click.metaKey || click.ctrlKey || click.shiftKey || click.altKey) return;
-    event.preventDefault(); stampReaderScroll(); history.pushState(null, '', '/'); void showInstanceChooser();
+    if (isModifiedClick(click)) return;
+    event.preventDefault(); openChooser();
   });
   const switcher = $('#instance-switcher');
-  if (switcher) instanceSwitcher = new InstanceSwitcher(switcher,
-    instance => { void connectToInstance(instance.address ?? instance.id, instance); },
-    () => { stampReaderScroll(); history.pushState(null, '', '/'); void showInstanceChooser(); }, undefined,
+  if (switcher) instanceSwitcher = new InstanceSwitcher(switcher, openInstance, openChooser, undefined,
     instances => ensureInstanceChooser()?.setCatalogue(instances));
 
   $('#btn-theme-toggle')?.addEventListener('click', () => {
-    state.darkMode = !state.darkMode;
-    localStorage.setItem('darkMode', String(state.darkMode));
+    persist('darkMode', !state.darkMode);
     applyTheme();
   });
 
   $('#btn-settings')?.addEventListener('click', () => showConfigModal());
   $('#btn-modal-close')?.addEventListener('click', () => hideConfigModal());
   setupContextPanel();
-  if (!contextPanel) $('#btn-side-panel-close')?.addEventListener('click', () => clearFilter());
+  // The workspace frame's "Return to flow" command activates this control.
   $('#btn-doc-close')?.addEventListener('click', () => closeDoc());
   setupModals();
   setupNavigationSidebar();
@@ -857,29 +866,25 @@ function init() {
   setupDateTimeSettings();
 
   bindCheckbox('#setting-expand-projects', state.expandProjects, (v) => {
-    state.expandProjects = v;
-    localStorage.setItem('expandProjects', String(v));
+    persist('expandProjects', v);
     void renderFlow(timeCursorAnchor(), false, true);
   });
 
   bindCheckbox('#setting-expand-actions', state.expandActions, (v) => {
-    state.expandActions = v;
-    localStorage.setItem('expandActions', String(v));
+    persist('expandActions', v);
     void renderFlow(timeCursorAnchor(), false, true);
   });
 
   bindSelect('#setting-anim-speed', String(state.animSpeed), (v) => {
-    state.animSpeed = animationSpeed(v);
-    localStorage.setItem('animSpeed', String(state.animSpeed));
+    persist('animSpeed', animationSpeed(v));
     applyAnimSpeed();
   });
 
   bindCheckbox('#setting-search-shortcut', state.searchShortcutEnabled, (enabled) => {
-    state.searchShortcutEnabled = enabled;
-    localStorage.setItem('searchShortcutEnabled', String(enabled));
+    persist('searchShortcutEnabled', enabled);
   });
 
-  initializeAuth(authenticationChanged);
+  void openCurrentLocation();
 
   // popstate covers back/forward over pushState entries, hashchange covers
   // hand-edited fragments; the shared handler dedupes the overlap.
@@ -929,38 +934,24 @@ function init() {
   panelBody?.addEventListener('scroll', () => {
     // The scroll a restore sets fires here too — skip it so it can't arm a
     // stamp that would overwrite the state being restored.
-    if (isPanelRestoring() || navigationSidebar?.isMovingSummary()) return;
+    if (isPanelRestoring()) return;
     if (!panelBody.closest('[hidden], [inert]')) panelBody.dataset.panelScroll = String(panelBody.scrollTop);
     clearTimeout(panelStampTimer);
     panelStampTimer = setTimeout(stampPanel, 400);
   }, { passive: true });
   panelBody?.addEventListener('click', (e) => {
-    if (!navigationSidebar?.isMovingSummary() && (e.target as HTMLElement).closest('.related-more')) stampPanel();
+    if ((e.target as HTMLElement).closest('.related-more')) stampPanel();
   });
-  let readerStamp: ReturnType<typeof setTimeout>;
-  $('#doc-body')?.addEventListener('scroll', () => {
-    const source = state.doc, instance = state.store, request = navigationGeneration;
-    clearTimeout(readerStamp);
-    readerStamp = setTimeout(() => {
-      if (!source || !sameDoc(state.doc, source) || instance !== state.store || request !== navigationGeneration) return;
-      stampReaderScroll();
-    }, 200);
-  }, { passive: true });
 }
 
-let readerModal: ModalController | undefined;
 let settingsModal: ModalController | undefined;
 
 function setupModals(): void {
-  const prepareModal = () => { navigationSidebar?.closePopover(); datePicker.close(); setSearchVisible(false); };
-  const fallback = visibleInstanceControl;
-  const reader = $('#doc-backdrop'), body = $('#doc-body');
-  if (reader && body) readerModal = createReaderPage(reader, body, {
-    beforeOpen: prepareModal, fallback, changed: syncNavigationSidebar,
-  });
   const settings = $<HTMLDialogElement>('#modal-backdrop');
   if (settings) settingsModal = createModal(settings, {
-    dismiss: hideConfigModal, beforeOpen: prepareModal, fallback, duration: () => transitionMs,
+    dismiss: hideConfigModal,
+    beforeOpen: () => { navigationSidebar?.closePopover(); setSearchVisible(false); },
+    fallback: visibleInstanceControl, duration: () => transitionMs,
   });
 }
 
@@ -1026,39 +1017,8 @@ let stopSearchCorpus: (() => void) | undefined;
 let stopDiagnostics: (() => void) | undefined;
 
 let stopControl: (() => void) | undefined;
-let authentication: AuthState | undefined;
-
-function authenticationChanged(next: AuthState): void {
-  authentication = next;
-  const switchButton = $<HTMLButtonElement>('#btn-instance-switch');
-  if (switchButton) switchButton.disabled = next !== 'authorized';
-  if (next === 'authorized') { void openCurrentLocation(); return; }
-  ++connectGeneration;
-  stopControl?.(); stopControl = undefined;
-  settingsModal?.close(0); statusSelection = undefined;
-  clearInstanceView();
-  instanceChooser?.dispose(); instanceChooser = undefined;
-  instanceSwitcher?.close(); instanceSwitcher?.setCatalogue([]);
-  state.instanceId = readInstanceLocation(window.location.pathname).instanceId;
-  for (const selector of ['#flow', '#side-panel-body', '#doc-body', '#instance-list', '#instance-switch-list', '#search-listbox', '#data-diagnostics-files', '#setting-instance-status']) {
-    $(selector)?.replaceChildren();
-  }
-  weekViews.clear(); currentViewWeeks = [];
-  const instancePath = $<HTMLInputElement>('#instance-add-path'); if (instancePath) instancePath.value = '';
-  const chooser = $('#instance-chooser'); if (chooser) chooser.hidden = true;
-  const scroller = $('#flow-scroll'); if (scroller) scroller.hidden = false;
-  const indicator = $<HTMLButtonElement>('#connection-status');
-  if (indicator) { indicator.hidden = true; indicator.onclick = null; }
-  const flow = $('#flow');
-  if (flow) showNotice(flow, next === 'checking'
-    ? { kind: 'loading', message: 'Connecting to Aside…' }
-    : next === 'offline' ? { kind: 'error', message: 'Could not connect to Aside. Reopen this tab after the daemon is available.', description: RECONNECT_GUIDANCE }
-      : { kind: 'warning', message: RECONNECT_GUIDANCE });
-}
-
 function controlFor(instanceId: string | null, userInitiated = false): void {
   stopControl?.();
-  if (authentication !== undefined && authentication !== 'authorized') return;
   let lastState: string | undefined;
   let reportFailure = userInitiated;
   const indicator = $<HTMLButtonElement>('#connection-status');
@@ -1108,8 +1068,6 @@ function clearInstanceView(): void {
   // A different instance owns independent reads; its startup must not drain
   // a slow read from the instance the user just left.
   weeksLoad = null;
-  docLoadGeneration++;
-  datePicker.close();
   datePicker.refresh({ invalidateCounts: true });
   resetLatchMarkers();
   state.filter = null;
@@ -1127,23 +1085,30 @@ function clearInstanceView(): void {
   resetFilterUi();
   resetSearch(true);
   closeSidePanel();
-  readerModal?.close(0);
   searchUi.setSearchEnabled(false);
 }
 
 let instanceChooser: InstanceChooser | undefined;
 let instanceSwitcher: InstanceSwitcher | undefined;
 
+function openInstance(instance: AvailableInstance): void {
+  void connectToInstance(instance.address ?? instance.id, instance);
+}
+
+// Leave for the chooser at the origin root, as its own history visit.
+function openChooser(): void {
+  history.pushState(null, '', '/'); void showInstanceChooser();
+}
+
 function ensureInstanceChooser(): InstanceChooser | undefined {
   const chooser = $('#instance-chooser');
   if (!chooser) return undefined;
-  return instanceChooser ??= new InstanceChooser(chooser, undefined, instance => { void connectToInstance(instance.address ?? instance.id, instance); }, {
+  return instanceChooser ??= new InstanceChooser(chooser, undefined, openInstance, {
     renderOptions: getRenderOpts, onCatalogue: instances => instanceSwitcher?.setCatalogue(instances), onStatus: showConfigModal,
   });
 }
 
 async function showInstanceChooser(): Promise<void> {
-  if (authentication !== undefined && authentication !== 'authorized') return;
   instanceSwitcher?.close();
   ++connectGeneration;
   clearInstanceView();
@@ -1161,15 +1126,12 @@ async function showInstanceChooser(): Promise<void> {
 }
 
 async function openCurrentLocation(): Promise<void> {
-  if (authentication !== undefined && authentication !== 'authorized') return;
   const { instanceId } = readInstanceLocation(window.location.pathname);
   if (instanceId === null) return showInstanceChooser();
   return connectToInstance(instanceId);
 }
 
 async function connectToInstance(instanceId: string, selection?: AvailableInstance, userInitiated = !!selection): Promise<void> {
-  if (authentication !== undefined && authentication !== 'authorized') return;
-  if (selection) stampReaderScroll();
   const generation = ++connectGeneration;
   clearInstanceView();
   state.instanceId = instanceId;
@@ -1308,7 +1270,10 @@ function updateDiagnostics(): void {
   if (!host || !summary || !files) return;
   const diagnostics = store?.getDiagnostics() ?? [];
   const opened = new Set(Array.from(files.querySelectorAll<HTMLElement>('.data-file-notice')).filter(notice => notice.querySelector<HTMLDetailsElement>('details')?.open).map(notice => notice.dataset.path));
-  const focused = (document.activeElement as HTMLElement | null)?.closest<HTMLElement>('.data-file-notice')?.dataset.path;
+  // Only this list's own notices are replaced; the same file's notice in the
+  // panel keeps its focus.
+  const active = document.activeElement as HTMLElement | null;
+  const focused = active && files.contains(active) ? active.closest<HTMLElement>('.data-file-notice')?.dataset.path : undefined;
   const scroll = files.scrollTop;
   host.hidden = diagnostics.length === 0;
   summary.textContent = `${diagnostics.length} file${diagnostics.length === 1 ? ' needs' : 's need'} attention · some records may be missing`;
@@ -1358,7 +1323,6 @@ interface NavState {
   engaged?: string | null;
   panel?: PanelView | null;
   returnFlow?: ReturnFlow | null;
-  readerScroll?: number;
 }
 
 interface ReturnFlow {
@@ -1415,10 +1379,23 @@ function refreshCalendarActivity(store: Store): void {
   datePicker.refresh({ invalidateCounts: true });
 }
 
-async function calendarDayCounts(from: string, to: string): Promise<ReadonlyMap<string, number>> {
+// The retained timeline's selection, frozen for one asynchronous count.
+function timelineSelection() {
   const store = state.store, key = calendarKey(), context = structuredClone(timelineContext());
   const address = state.instance?.alias ?? state.instanceId;
   if (!store || !key || !address) throw new Error('The timeline is not available.');
+  return { store, key, context, address };
+}
+
+// A count over that selection, optionally narrowed to one inspected period.
+function timelineCounts({ store, context, address }: ReturnType<typeof timelineSelection>, definition: SourceDefinition | undefined, additionalRange?: TimestampRange): CalendarCounts {
+  const range = context.range && { start: localDateStamp(context.range.start), end: localDateStamp(context.range.end) };
+  return createCalendarCounts({ store, definition, filter: context.filter, search: context.search, range, additionalRange, order: context.order,
+    query: (request, signal) => queryDaemonInstance(address, request, signal) });
+}
+
+async function calendarDayCounts(from: string, to: string): Promise<ReadonlyMap<string, number>> {
+  const selection = timelineSelection(), { store, key, context } = selection;
   if (calendarActivity?.key !== key) {
     invalidateCalendarActivity();
     calendarActivity = { key };
@@ -1433,9 +1410,7 @@ async function calendarDayCounts(from: string, to: string): Promise<ReadonlyMap<
         definition = parseEntrySource(await store.getAsset(artifactAttachmentRelativePath(ref.id, ref.filename)));
       }
       if (calendarActivity !== activity || state.store !== store) throw new Error('The calendar timeline changed.');
-      const range = context.range && { start: localDateStamp(context.range.start), end: localDateStamp(context.range.end) };
-      return activity.collector = createCalendarCounts({ store, definition, filter: context.filter, search: context.search, range, order: context.order,
-        query: (request, signal) => queryDaemonInstance(address, request, signal) });
+      return activity.collector = timelineCounts(selection, definition);
     })().finally(() => { activity.pending = undefined; });
   }
   const collector = activity.collector ?? await activity.pending!;
@@ -1456,9 +1431,7 @@ function cancelTimelineDateCount(): void {
 
 async function timelineDateEntryCount(date: DateReference): Promise<number | undefined> {
   const revision = dateCountRevision;
-  const store = state.store, key = calendarKey(), context = structuredClone(timelineContext());
-  const address = state.instance?.alias ?? state.instanceId;
-  if (!store || !key || !address) throw new Error('The timeline is not available.');
+  const selection = timelineSelection(), { store, key, context } = selection;
   const current = () => revision === dateCountRevision && state.store === store && calendarKey() === key;
   const start = localDateStamp(date.start), end = date.end && localDateStamp(date.end);
   const additionalRange = end ? { start, end } : { start: start.slice(0, 10), end: start.slice(0, 10) };
@@ -1472,9 +1445,7 @@ async function timelineDateEntryCount(date: DateReference): Promise<number | und
     definition = parseEntrySource(text);
   }
   if (!current()) return;
-  const range = context.range && { start: localDateStamp(context.range.start), end: localDateStamp(context.range.end) };
-  const collector = createCalendarCounts({ store, definition, filter: context.filter, search: context.search, range,
-    additionalRange, order: context.order, query: (request, signal) => queryDaemonInstance(address, request, signal) });
+  const collector = timelineCounts(selection, definition, additionalRange);
   const dispose = () => collector.dispose();
   disposeDateCount = dispose;
   try {
@@ -1495,12 +1466,6 @@ function withTimelineControl(action: () => void): void {
   const restoring = applyView({ ...timelineContext(), doc: null }, { anchor: origin?.anchor, panel: origin?.panel });
   const request = navigationGeneration;
   void restoring.then(() => { if (request === navigationGeneration && !state.doc) action(); });
-}
-
-function stampReaderScroll(): void {
-  const host = $('#doc-backdrop'), body = $('#doc-body');
-  if (!state.doc || !body || host?.hidden) return;
-  history.replaceState({ ...(history.state ?? {}), readerScroll: body.scrollTop }, '');
 }
 
 // Incremented whenever the flow is reset; in-flight week loads check it after
@@ -1532,19 +1497,20 @@ function flowComplete(): boolean {
 async function prepareQueryFlow(generation: number, store: Store): Promise<void> {
   const source = state.source;
   if (!source) return;
+  const stale = () => generation !== flowGeneration || state.store !== store || state.source !== source;
   try {
     const ref = entrySourceReference(source);
     const artifact = await store.getArtifact(ref.id);
     if (!artifact.frontMatter.attachments?.includes(ref.filename)) throw new Error('The query attachment is no longer listed by this artifact.');
     const text = await store.getAsset(artifactAttachmentRelativePath(ref.id, ref.filename));
-    if (generation !== flowGeneration || state.store !== store || state.source !== source) return;
+    if (stale()) return;
     queryDefinition = parseEntrySource(text);
     const address = state.instance?.alias ?? state.instanceId;
     if (!address) throw new Error('The source instance is unavailable.');
     queryFlow = createQueryFlow({ definition: queryDefinition, store, filter: state.filter, search: state.search, range: localRange(), order: state.order,
       query: (request, signal) => queryDaemonInstance(address, request, signal) });
   } catch (error) {
-    if (generation !== flowGeneration || state.store !== store || state.source !== source) return;
+    if (stale()) return;
     queryProblem = error instanceof Error ? error : new Error(String(error));
   }
   if (generation === flowGeneration) { syncNavigationSidebar(); renderQueryNotice(); }
@@ -1571,23 +1537,23 @@ function renderQueryNotice(): void {
   retry.addEventListener('click', () => {
     const store = state.store, source = state.source, navigation = navigationGeneration, anchor = timeCursorAnchor();
     if (!store || !source) return;
+    const current = () => state.store === store && navigationGeneration === navigation && state.source === source;
     const retainedFocus = notice.contains(document.activeElement);
     if (retainedFocus) title.focus({ preventScroll: true });
     retry.disabled = true;
     void (async () => {
       try {
         const pending = await store.check('full', currentHotSet(), [sourcePath(source)]);
-        if (state.store !== store || navigationGeneration !== navigation || state.source !== source) return;
+        if (!current()) return;
         pending?.apply();
         refreshCalendarActivity(store);
         await renderFlow(anchor, false, true);
-        if (state.store === store && navigationGeneration === navigation && state.source === source) await showSidePanel(panelSnapshot());
+        if (current()) await showSidePanel(panelSnapshot());
       } catch (reason) {
-        if (state.store !== store || navigationGeneration !== navigation || state.source !== source) return;
+        if (!current()) return;
         queryProblem = reason instanceof Error ? reason : new Error(String(reason)); renderQueryNotice(); syncNavigationSidebar();
       } finally {
-        if (retainedFocus && state.store === store && navigationGeneration === navigation && state.source === source
-          && !usable(document.activeElement as HTMLElement | null)) {
+        if (retainedFocus && current() && !usable(document.activeElement as HTMLElement | null)) {
           (document.querySelector<HTMLElement>('#query-flow-notice .history-retry') ?? visibleInstanceControl())?.focus({ preventScroll: true });
         }
       }
@@ -1595,6 +1561,21 @@ function renderQueryNotice(): void {
   });
   notice.append(details, retry); flow.insertBefore(notice, $('#scroll-sentinel'));
   if (focused) retry.focus({ preventScroll: true });
+}
+
+// Append entry cards to a flow page. Each day's first card carries its date
+// marker and each week's first a seam, judged against the cards above. A
+// retried week renders unmarked: refreshFlowMarkers re-marks the flow after it.
+function appendFlowEntries(entries: Entry[], host: HTMLElement, opts: RenderOptions, mark = true): void {
+  for (const entry of entries) {
+    const date = entry.meta.created.slice(0, 10);
+    const marker = mark && date !== lastMarkerDate
+      ? { date, prev: lastMarkerDate, weekStart: lastWeekFile !== null && entry.weekFile !== lastWeekFile } : undefined;
+    const card = renderEntry(entry, opts, host, marker);
+    if (mark) { lastMarkerDate = date; lastWeekFile = entry.weekFile; }
+    const markerNode = card.querySelector<HTMLElement>('.date-marker');
+    if (markerNode) addLatchMarker(markerNode);
+  }
 }
 
 async function loadQueryEntries(userInitiated: boolean): Promise<void> {
@@ -1611,14 +1592,7 @@ async function loadQueryEntries(userInitiated: boolean): Promise<void> {
       const host = document.createElement('div'); host.className = 'query-page';
       flow.insertBefore(host, sentinel);
       const opts = getRenderOpts();
-      for (const entry of session.entries.slice(queryRendered)) {
-        const date = entry.meta.created.slice(0, 10);
-        const marker = date !== lastMarkerDate
-          ? { date, prev: lastMarkerDate, weekStart: lastWeekFile !== null && entry.weekFile !== lastWeekFile } : undefined;
-        const card = renderEntry(entry, opts, host, marker);
-        lastMarkerDate = date; lastWeekFile = entry.weekFile;
-        const dateMarker = card.querySelector<HTMLElement>('.date-marker'); if (dateMarker) addLatchMarker(dateMarker);
-      }
+      appendFlowEntries(session.entries.slice(queryRendered), host, opts);
       queryRendered = session.entries.length;
       await renderDiagrams(host, { current, commit: paint => preserveReadingPosition([$('#flow-scroll') ?? flow], paint) });
     }
@@ -1671,9 +1645,6 @@ async function renderFlow(anchor: FlowAnchor | null = null, initial = false, use
   // timeline's top.
   const snapshot = initial ? null : snapshotFlow(scroller);
   cancelEntryArrival?.(); cancelEntryArrival = undefined;
-  // The chip the picker anchors to is recreated below — dismiss it first so it
-  // can't linger over a stale position.
-  datePicker.close();
   // Hold the readout for the whole rebuild+transition — progressive week
   // loads and stepped scroll restores would otherwise flicker it through
   // wrong dates. Cleared once the geometry settles, below.
@@ -1707,7 +1678,7 @@ async function renderFlow(anchor: FlowAnchor | null = null, initial = false, use
   lastMarkerDate = null;
   lastWeekFile = null;
   resetLatchMarkers();
-  mountLatch(flow, undefined, () => state);
+  mountLatch(flow, () => state);
   if (state.source) {
     await prepareQueryFlow(generation, store);
     if (generation !== flowGeneration) return;
@@ -1780,7 +1751,6 @@ async function renderFlow(anchor: FlowAnchor | null = null, initial = false, use
     if (generation !== flowGeneration) return;
     flowRestoring = false;
     refreshCalendarPosition();
-    readerModal?.ensureFocus();
   });
 }
 
@@ -1824,9 +1794,9 @@ async function doLoadWeeks(count: number, userInitiated = false) {
   // views must not each keep a complete copy of the note index alive.
   let descriptions = state.search ? new Map(store.getNoteIndex().map(item => [item.id, item.description])) : null;
 
+  const current = () => generation === flowGeneration && store === state.store;
   const sentinel = document.getElementById('scroll-sentinel');
-  const cancelLoading = delayLoading(() => { if (sentinel) sentinel.className = 'scroll-sentinel loading'; },
-    () => generation === flowGeneration && store === state.store);
+  const cancelLoading = delayLoading(() => { if (sentinel) sentinel.className = 'scroll-sentinel loading'; }, current);
 
   try {
     for (let i = start; i < end; i++) {
@@ -1841,7 +1811,7 @@ async function doLoadWeeks(count: number, userInitiated = false) {
           if (retrying) { await store.reloadFile(weekFilePath(monday)); refreshCalendarActivity(store); }
           return store.getWeekEntries(monday);
         },
-        current: () => generation === flowGeneration && store === state.store,
+        current,
         focusFallback: visibleInstanceControl,
         render: async (entries, host) => {
           const opts = getRenderOpts();
@@ -1849,20 +1819,11 @@ async function doLoadWeeks(count: number, userInitiated = false) {
             ? new Map(store.getNoteIndex().map(item => [item.id, item.description])) : descriptions;
           const visible = entries.filter(entry => (!state.filter || entryReferences(entry, state.filter))
             && matchesFlowSearch(entry, state.search, searchDescriptions?.get(entry.meta.created)) && withinTimestampRange(entry.meta.created, localRange()));
-          for (const entry of visible) {
-            const date = entry.meta.created.slice(0, 10);
-            const marker = !retrying && date !== lastMarkerDate
-              ? { date, prev: lastMarkerDate, weekStart: lastWeekFile !== null && entry.weekFile !== lastWeekFile }
-              : undefined;
-            const card = renderEntry(entry, opts, host, marker);
-            if (!retrying) { lastMarkerDate = date; lastWeekFile = entry.weekFile; }
-            const markerNode = card.querySelector<HTMLElement>('.date-marker');
-            if (markerNode) addLatchMarker(markerNode);
-          }
+          appendFlowEntries(visible, host, opts, !retrying);
           const diagnostic = store.diagnosticsFor(weekFilePath(monday));
           if (diagnostic) host.append(fileDiagnosticNotice(diagnostic, () => view.load(true)));
           await renderDiagrams(host, {
-            current: () => generation === flowGeneration && store === state.store && flow.contains(host),
+            current: () => current() && flow.contains(host),
             commit: paint => preserveReadingPosition([$('#flow-scroll') ?? flow], paint),
           });
         },
@@ -1882,7 +1843,6 @@ async function doLoadWeeks(count: number, userInitiated = false) {
       await view.load(false, userInitiated);
       if (generation !== flowGeneration) return;
     }
-    if (generation !== flowGeneration) return;
   } finally { cancelLoading(); descriptions = null; }
 
   state.loadedWeeks = end;
@@ -2057,7 +2017,7 @@ function updateFilterPill(): void {
   }
   const opts = getRenderOpts();
   const label = document.createElement('button'); label.type = 'button';
-  label.className = `filter-pill-label tag tag-${ref.type}`;
+  label.className = `filter-pill-label ref-identity icon-${ref.type}`;
   label.dataset.refType = ref.type; label.dataset.refId = ref.id;
   const text = document.createElement('span'); text.className = 'tag-text';
   text.textContent = opts.resolveName(ref.type, ref.id); label.append(text);
@@ -2067,9 +2027,7 @@ function updateFilterPill(): void {
     const name = current.resolveName(ref.type, ref.id); setDisplayText(node, name); describe(name);
   });
   applyRefStatus(label, ref.type, ref.id, opts);
-  label.addEventListener('click', () => withTimelineControl(() => {
-    if (contextPanel) void inspectContext({ ref, doc: null }); else navigationSidebar?.openSummary();
-  }));
+  label.addEventListener('click', () => withTimelineControl(() => { void inspectContext({ ref, doc: null }); }));
   const clear = document.createElement('button'); clear.type = 'button'; clear.className = 'filter-pill-clear';
   clear.textContent = '×'; clear.title = 'Clear filter'; clear.setAttribute('aria-label', 'Clear filter');
   clear.addEventListener('click', () => clearFilter());
@@ -2092,20 +2050,20 @@ function setRoute(view: ViewState, anchor: FlowAnchor | null = null) {
   }
 }
 
-// Move to a new view state: sync the URL, side panel, document reader, and
-// flow. Every navigation goes through here so the URL always reflects the view.
+// Move to a new view state: sync the URL, context panel, and flow. Every
+// navigation goes through here so the URL always reflects the view. Resolves
+// true once the view has settled with no later navigation superseding it.
 async function applyView(
   next: ViewState,
   opts: { push?: boolean; forceFlow?: boolean; resetPosition?: boolean; anchor?: FlowAnchor | null; panel?: PanelView | null; userInitiated?: boolean; jumpDuration?: number; preserveContext?: boolean; dismissContext?: boolean } = {},
-) {
-  if (!state.store) return;
+): Promise<boolean> {
+  if (!state.store) return false;
   if (!next.source && next.order) next = { ...next, order: undefined };
   if (next.date?.end) next = { ...next, range: { start: next.date.start, end: next.date.end }, date: undefined };
   navigationSidebar?.closePopover();
   const request = ++navigationGeneration;
   const store = state.store;
   const { push = true, forceFlow = false, userInitiated = true } = opts;
-  if (push) stampReaderScroll();
   const previousCalendar = !state.doc && next.doc ? calendarContext() : undefined;
   if (next.doc) {
     const remembered = !push ? (history.state as NavState | null)?.returnFlow : null;
@@ -2124,7 +2082,7 @@ async function applyView(
     || JSON.stringify(state.range) !== JSON.stringify(next.range);
   const search = next.filter?.type === 'entry' ? '' : next.search?.trim() ?? '';
   const searchChanged = state.search !== search;
-  const contextChanged = !!contextPanel && !next.doc && !opts.preserveContext && !sameContext(currentContext(), { ref: next.filter, doc: null });
+  const contextChanged = !next.doc && !opts.preserveContext && !sameContext(currentContext(), { ref: next.filter, doc: null });
   // An anchor only means something across a filter re-render. Navigations
   // that don't carry one (side panel, search) anchor the time cursor: the
   // date readout holds its moment while the cards shared between the two
@@ -2139,13 +2097,13 @@ async function applyView(
   state.order = next.order;
   if (sourceChanged) { queryDefinition = undefined; queryProblem = undefined; }
   state.doc = next.doc;
-  if (contextPanel && !next.doc && !opts.preserveContext && (filterChanged || searchChanged || sourceChanged || forceFlow || contextChanged)) {
+  if (!next.doc && !opts.preserveContext && (filterChanged || searchChanged || sourceChanged || forceFlow || contextChanged)) {
     contextTarget = { ref: next.filter, doc: null };
     if (userInitiated) contextDismissed = false;
   }
-  if (contextPanel && opts.dismissContext) {
+  if (opts.dismissContext) {
     contextDismissed = true; contextInteraction++;
-    contextPanel.close({ restoreFocus: false });
+    contextPanel?.close({ restoreFocus: false });
   }
   documentDetails = undefined;
   syncNavigationSidebar();
@@ -2156,47 +2114,31 @@ async function applyView(
 
   if (push) setRoute({ ...next, search }, anchor);
 
-  // Panel, reader, and flow touch independent DOM — run them concurrently,
-  // and leave the panel alone when only the document changed (it keeps its
-  // scroll position and doesn't flicker through a reload).
+  // A routed document, the summary, and the flow load concurrently; the
+  // summary is left alone when nothing it shows changed, keeping its scroll.
   const tasks: Promise<void>[] = [updateDoc(false, userInitiated)];
-  if (filterChanged || searchChanged || (contextPanel && (sourceChanged || contextChanged)) || opts.panel !== undefined) {
+  if (filterChanged || searchChanged || sourceChanged || contextChanged || opts.panel !== undefined) {
     const panelView = opts.panel !== undefined ? opts.panel : filterChanged ? undefined : panelSnapshot();
     tasks.push(showSidePanel(panelView, userInitiated, opts.panel !== undefined));
   }
   if (filterChanged || searchChanged || sourceChanged || forceFlow) tasks.push(renderFlow(anchor, false, userInitiated));
   await Promise.all(tasks);
-  if (next.date && request === navigationGeneration && store === state.store) {
-    const stamp = localDateStamp(next.date.start);
-    await jumpToDate(stamp.slice(0, 10), stamp.length === 10 ? undefined : stamp, userInitiated, opts.jumpDuration);
-  }
+  if (request !== navigationGeneration || store !== state.store) return false;
+  if (!next.date) return true;
+  const stamp = localDateStamp(next.date.start);
+  return jumpToDate(stamp.slice(0, 10), stamp.length === 10 ? undefined : stamp, userInitiated, opts.jumpDuration);
 }
 
+// A reference opens in the context panel. Its repeat from the timeline, while
+// the panel already shows it, acts on the flow: an entry jumps, a project or
+// action toggles its filter.
 function handleTagClick(ref: EntityRef, source?: HTMLElement) {
-  if (contextPanel) {
-    const target = currentContext();
-    const inTimeline = !!source?.closest('#flow');
-    if (inTimeline && contextPanel.getState().open && !target.doc && sameFilter(target.ref, ref)) {
-      if (ref.type === 'entry') void jumpToEntry(ref.id, true, anchorFromSource(source));
-      else void toggleContextFilter(ref, source);
-    } else void inspectContext({ ref, doc: null });
-    return;
-  }
-  // Entry references jump to their place in the flow rather than filtering;
-  // the entry detail page stays reachable via the entry/<id> route.
-  if (ref.type === 'entry') {
-    jumpToEntry(ref.id, true, anchorFromSource(source));
-    return;
-  }
-  // The active entity's own tag toggles the filter off, anchored on the
-  // clicked card (falling back to the dismiss anchor for clicks elsewhere).
-  // Only real tag clicks toggle — a search result for the active entity is
-  // a "go to", not a dismissal, and just closes any open document.
-  if (sameFilter(state.filter, ref) && source) {
-    applyView({ ...flowContext(), source: state.doc ? undefined : state.source, filter: null, doc: null }, { anchor: anchorFromSource(source) ?? dismissAnchor() });
-    return;
-  }
-  applyView({ ...flowContext(), source: state.doc ? undefined : state.source, filter: ref, doc: null }, { anchor: anchorFromSource(source) });
+  const target = currentContext();
+  const inTimeline = !!source?.closest('#flow');
+  if (inTimeline && contextPanel?.getState().open && !target.doc && sameFilter(target.ref, ref)) {
+    if (ref.type === 'entry') void jumpToEntry(ref.id, true, anchorFromSource(source));
+    else void toggleContextFilter(ref, source);
+  } else void inspectContext({ ref, doc: null });
 }
 
 async function toggleContextFilter(ref: EntityRef, source?: HTMLElement): Promise<void> {
@@ -2226,9 +2168,8 @@ async function jumpToEntry(
   origin: 'reference' | 'lookup' = 'reference',
 ) {
   if (!state.store) return;
-  if (contextPanel) { contextDismissed = true; contextPanel.close({ restoreFocus: false }); }
+  contextDismissed = true; contextPanel?.close({ restoreFocus: false });
   navigationSidebar?.closePopover();
-  if (push) stampReaderScroll();
   const store = state.store;
   let request = ++navigationGeneration;
   const current = () => request === navigationGeneration && store === state.store;
@@ -2261,7 +2202,7 @@ async function jumpToEntry(
       await applying;
       if (!current()) return;
     } else {
-      if (userInitiated) showActionFailure(state.range && !withinTimestampRange(id, localRange()) ? 'This entry is outside the date range.' : 'This entry is outside the flow search.', {
+      if (userInitiated) showActionFailure(excludedByRange ? 'This entry is outside the date range.' : 'This entry is outside the flow search.', {
         label: 'Open in all entries',
         run: () => {
           void (async () => {
@@ -2385,7 +2326,7 @@ async function loadDownToDate(flow: HTMLElement, dateStr: string, targetId = `${
   const store = state.store;
   if (!store) return;
   if (state.source) return loadQueryDownTo(targetId, current, userInitiated);
-  const targetWeek = getMondayOfWeek(new Date(dateStr + 'T00:00:00'));
+  const targetWeek = entryWeek(dateStr);
 
   let target = currentViewWeeks.findIndex((w) => w <= targetWeek);
   if (target < 0) target = currentViewWeeks.length - 1;
@@ -2409,9 +2350,9 @@ async function loadDownToDate(flow: HTMLElement, dateStr: string, targetId = `${
 // recent one before it) to the pane top so the latch reads the target day.
 // Unlike jumpToEntry there may be no entry on the exact date, so it lands on
 // the nearest at-or-before, loading older weeks until one is rendered.
-async function jumpToDate(dateStr: string, target = `${dateStr}T23:59:59`, userInitiated = true, duration?: number) {
+async function jumpToDate(dateStr: string, target = `${dateStr}T23:59:59`, userInitiated = true, duration?: number): Promise<boolean> {
   const flow = $('#flow');
-  if (!state.store || !flow) return;
+  if (!state.store || !flow) return false;
   // Minute clocks denote :00 seconds, including when entries retain seconds.
   if (target.length === 16) target += ':00';
   const request = ++navigationGeneration;
@@ -2419,27 +2360,11 @@ async function jumpToDate(dateStr: string, target = `${dateStr}T23:59:59`, userI
   const generation = flowGeneration;
   const current = () => request === navigationGeneration && store === state.store && generation === flowGeneration;
   await loadDownToDate(flow, dateStr, target, current, userInitiated);
-  if (!current()) return;
+  if (!current()) return false;
   const complete = state.source ? !!queryFlow && !queryFlow.error && !queryProblem
     : [...weekViews].every(([week, view]) => view.status() === 'loaded' && !state.store?.diagnosticsFor(weekFilePath(week)));
   const card = dateJumpCard(flow, target, complete);
-  if (dateLandingBlocked(target, card)) return;
-  if (card) flashJump(card, 'start', duration ?? jumpDuration());
-}
-
-// Load both sides of the target instant and land on the closest available
-// entry in the step direction. Empty views and timeline boundaries hold.
-async function jumpNearDate(targetIso: string, baseDate: string, dir: number): Promise<boolean> {
-  const flow = $('#flow');
-  if (!state.store || !flow) return false;
-  const request = ++navigationGeneration;
-  const store = state.store;
-  const generation = flowGeneration;
-  await loadDownToDate(flow, targetIso.slice(0, 10), targetIso);
-  if (request !== navigationGeneration || store !== state.store || generation !== flowGeneration) return false;
-  const card = quickJumpCard(flow, targetIso, baseDate, dir);
-  if (!card || dateLandingBlocked(targetIso, card)) return false;
-  flashJump(card, 'start', jumpDuration());
+  if (card && !dateLandingBlocked(target, card)) flashJump(card, 'start', duration ?? jumpDuration());
   return true;
 }
 
@@ -2449,10 +2374,9 @@ const datePicker = createDatePicker({
   getCalendarContext: calendarContext,
   getDayCounts: calendarDayCounts,
   jumpToDate: (dateStr) => { void navigateDate({ start: dateStr }); },
-  jumpNear: jumpNearDate,
 });
 
-// --- Catch-up (see "Catch-up" in spec.md): refresh.ts schedules checks, the
+// --- Catch-up: refresh.ts schedules checks, the
 // store stages what changed, and the staged update lands here once the app is
 // quiet — re-rendering only what the change touched.
 
@@ -2470,7 +2394,6 @@ function isQuiet(): boolean {
     && !weeksLoad
     && !queryFlow?.loading
     && !flowRestoring
-    && !datePicker.isOpen()
     && !navigationSidebar?.isCalendarOpen()
     && performance.now() - lastActivity > QUIET_AFTER_MS;
 }
@@ -2478,17 +2401,20 @@ function isQuiet(): boolean {
 // What's on screen — the files a light check revalidates beyond the indexes.
 function currentHotSet(): HotSet {
   const entities: HotSet['entities'] = [];
+  const addEntity = (kind: HotSet['entities'][number]['kind'], id: string) => {
+    if (!entities.some(entity => entity.kind === kind && entity.id === id)) entities.push({ kind, id });
+  };
   const timeline = timelineContext();
-  for (const filter of [state.filter, timeline.filter, contextPanel ? currentContext().ref : null]) {
+  for (const filter of [state.filter, timeline.filter, currentContext().ref]) {
     if (!filter || filter.type === 'entry') continue;
     const id = filter.type === 'action' ? actionSourceId(filter.id) : filter.id;
-    if (!entities.some(entity => entity.kind === filter.type && entity.id === id)) entities.push({ kind: filter.type, id });
+    addEntity(filter.type, id);
   }
   const assets = new Set<string>();
   for (const source of new Set([state.source, timeline.source])) {
     if (!source) continue;
     const id = entrySourceReference(source).id;
-    if (!entities.some(entity => entity.kind === 'artifact' && entity.id === id)) entities.push({ kind: 'artifact', id });
+    addEntity('artifact', id);
     assets.add(sourcePath(source));
   }
   if (state.doc?.kind === 'asset') assets.add(state.doc.path);
@@ -2497,10 +2423,10 @@ function currentHotSet(): HotSet {
     const path = selectedArtifactPath(state.doc.id, state.doc.filename);
     if (path) assets.add(path);
   }
-  const contextDoc = contextPanel ? currentContext().doc : null;
+  const contextDoc = currentContext().doc;
   if (contextDoc?.kind === 'asset') assets.add(contextDoc.path);
   if (contextDoc?.kind === 'artifact') {
-    if (!entities.some(entity => entity.kind === 'artifact' && entity.id === contextDoc.id)) entities.push({ kind: 'artifact', id: contextDoc.id });
+    addEntity('artifact', contextDoc.id);
     const path = selectedArtifactPath(contextDoc.id, contextDoc.filename);
     if (path) assets.add(path);
   }
@@ -2508,16 +2434,8 @@ function currentHotSet(): HotSet {
   for (const path of artifactImageFiles('img[data-artifact-handle]')) assets.add(path);
   for (const path of webpageFiles(document)) assets.add(path);
   // A handle-only image can switch files when its artifact's content changes.
-  for (const id of new Set(artifactImageIds('img[data-artifact-handle]'))) {
-    if (!entities.some(entity => entity.kind === 'artifact' && entity.id === id)) {
-      entities.push({ kind: 'artifact', id });
-    }
-  }
-  for (const source of webpageSources(document)) {
-    if (source.artifactId && !entities.some(entity => entity.kind === 'artifact' && entity.id === source.artifactId)) {
-      entities.push({ kind: 'artifact', id: source.artifactId });
-    }
-  }
+  for (const id of new Set(artifactImageIds('img[data-artifact-handle]'))) addEntity('artifact', id);
+  for (const source of webpageSources(document)) if (source.artifactId) addEntity('artifact', source.artifactId);
   return {
     weeks: state.source ? [...new Set(queryFlow?.entries.map(entry => entry.weekFile) ?? [])] : currentViewWeeks.slice(0, state.loadedWeeks),
     entities,
@@ -2555,21 +2473,18 @@ async function applyDataUpdate(update: PendingUpdate): Promise<void> {
     await renderFlow(timeCursorAnchor());
     // The panel reads the relation map and the entity/instance state — both may
     // have moved; re-render it in place, keeping its scroll and expanded sections.
-    if (!contextPanel || interaction === contextInteraction && sameContext(currentContext(), target)) {
+    if (interaction === contextInteraction && sameContext(currentContext(), target)) {
       await showSidePanel(panelSnapshot(), false, false, !contextRecordChanged);
     }
     // The docked filter pill reads the same caches — its name and status marks
     // move with them.
     updateFilterPill();
     updateSourcePill();
-  }
-  if (contextPanel && !flowAffected) {
-    if (contextRecordChanged) await showSidePanel(panelSnapshot(), false, false, false);
-  }
+  } else if (contextRecordChanged) await showSidePanel(panelSnapshot(), false, false, false);
   syncNavigationSidebar();
   updateSourcePill();
-  // The reader re-renders only when its own document changed — yanking a
-  // document mid-read is worse than a stale linked-from list.
+  // A document still being routed into the panel reloads only when its own
+  // record changed.
   if (state.doc) {
     let docChanged: boolean;
     if (state.doc.kind === 'artifact') {
@@ -2581,11 +2496,6 @@ async function applyDataUpdate(update: PendingUpdate): Promise<void> {
         (entities.has(entityKey(state.filter.type, state.filter.type === 'action' ? actionSourceId(state.filter.id) : state.filter.id)) ||
           state.filter.type === 'action' && state.filter.id.startsWith('~') && [...entities].some(id => id.startsWith('#action/')) && !state.store?.getCachedAction(state.filter.id));
     }
-    // An embedded image changes independently of its containing document.
-    docChanged ||= artifactImageFiles('#doc-body img[data-artifact-handle]').some(path => assets.has(path))
-      || artifactImageIds('#doc-body img[data-artifact-handle]').some(id => entities.has(entityKey('artifact', id)))
-      || webpageFiles($('#doc-body')).some(path => assets.has(path))
-      || webpageSources($('#doc-body')).some(source => source.artifactId && entities.has(entityKey('artifact', source.artifactId)));
     if (docChanged) await updateDoc(true);
   }
   // An open search re-runs over the updated indexes.
@@ -2594,26 +2504,22 @@ async function applyDataUpdate(update: PendingUpdate): Promise<void> {
 }
 
 function openAsset(path: string) {
-  if (contextPanel) { void inspectContext({ ref: null, doc: { kind: 'asset', path } }); return; }
-  applyView({ ...flowContext(), doc: { kind: 'asset', path } });
+  void inspectContext({ ref: null, doc: { kind: 'asset', path } });
 }
 
 function openArtifact(id: string, filename?: string) {
-  if (contextPanel) { void inspectContext({ ref: null, doc: { kind: 'artifact', id, filename } }); return; }
-  void applyView({ ...flowContext(), doc: { kind: 'artifact', id, filename } });
+  void inspectContext({ ref: null, doc: { kind: 'artifact', id, filename } });
 }
 
-// Open the current scope's record in the reader: the filtered project/action,
-// or the instance manifest on the unfiltered flow. Entries have no detail —
-// they read in full in the flow.
+// Expand the panel from the current scope's summary to its complete record.
 function openDetail() {
-  if (contextPanel) { contextPanel.setMode('expanded'); return; }
-  if (state.filter?.type === 'entry') return;
-  applyView({ ...flowContext(), doc: { kind: 'detail' } });
+  contextPanel?.setMode('expanded');
 }
 
+// Leave the inspected context. A document whose route is still loading into
+// the panel returns to the flow it was opened from instead.
 function closeDoc() {
-  if (contextPanel && !state.doc) { contextDismissed = true; contextInteraction++; clearContextRoute(); contextPanel.close(); return; }
+  if (!state.doc) { contextDismissed = true; contextInteraction++; clearContextRoute(); contextPanel?.close(); return; }
   const origin = returnFlow;
   const returning = applyView(origin?.view ?? { ...flowContext(), doc: null },
     { anchor: origin?.anchor, panel: origin?.panel });
@@ -2627,7 +2533,7 @@ function clearFilter() {
   applyView({ ...timelineContext(), filter: null, doc: null }, { anchor: state.doc ? returnFlow?.anchor : dismissAnchor() });
 }
 
-// Clear the view state, summary, and Reader without touching the URL or flow.
+// Clear the view state and summary without touching the URL or flow.
 function resetFilterUi() {
   state.filter = null;
   state.doc = null;
@@ -2638,8 +2544,6 @@ function resetFilterUi() {
   updateFilterPill();
 
   closeSidePanel();
-
-  readerModal?.close(0);
 }
 
 // One context surface retains the summary and its expanded record together.
@@ -2652,10 +2556,10 @@ let planningRefresh: Promise<void> | undefined;
 function refreshPlanningWindow(): Promise<void> {
   if (planningRefresh) return planningRefresh;
   const scope = renderedPanelScope;
-  if (!scope?.planning || scope.store !== state.store || !sameFilter(scope.ref, contextPanel ? currentContext().ref : state.filter)) return Promise.resolve();
+  if (!scope?.planning || scope.store !== state.store || !sameFilter(scope.ref, currentContext().ref)) return Promise.resolve();
   planningRefresh = (async () => {
     const page = await scope.store.getPlanningActions(scope.ref?.type === 'project' ? scope.ref.id : undefined);
-    if (scope !== renderedPanelScope || scope.store !== state.store || !sameFilter(scope.ref, contextPanel ? currentContext().ref : state.filter)) return;
+    if (scope !== renderedPanelScope || scope.store !== state.store || !sameFilter(scope.ref, currentContext().ref)) return;
     if (planningSignature(page) !== scope.planning!.signature) await showSidePanel(panelSnapshot());
   })().catch(error => console.error('Failed to refresh recurrence projections:', error)).finally(() => { planningRefresh = undefined; });
   return planningRefresh;
@@ -2668,8 +2572,8 @@ async function showSidePanel(panelView?: PanelView | null, userInitiated = false
   const body = $('#side-panel-body');
   const store = state.store;
   if (!store) { closeSidePanel(); return; }
-  const opts = getRenderOpts();
-  const selected = contextPanel ? currentContext() : { ref: state.filter, doc: null };
+  const opts = { ...getRenderOpts(), omitContextHeader: !!contextPanel };
+  const selected = currentContext();
   const ref = selected.ref;
 
   // An unfiltered flow whose source has no manifest has no instance to
@@ -2690,12 +2594,11 @@ async function showSidePanel(panelView?: PanelView | null, userInitiated = false
   }
 
   // Loads below can lose a race with a newer navigation; only the load for
-  // the still-current filter may write the panel.
-  const stale = () => generation !== panelLoadGeneration || state.store !== store ||
-    (contextPanel ? !sameContext(currentContext(), selected) : !sameFilter(state.filter, ref));
-  const sameRecord = () => state.store === store && (contextPanel ? sameContext(currentContext(), selected) : sameFilter(state.filter, ref));
+  // the still-current context may write the panel.
+  const sameRecord = () => state.store === store && sameContext(currentContext(), selected);
+  const stale = () => generation !== panelLoadGeneration || !sameRecord();
   const cancelLoading = body && !refreshing
-    ? showDelayedLoading(body, 'Loading summary…', () => !stale()) : () => {};
+    ? showDelayedLoading(body, selected.doc ? 'Loading document…' : 'Loading summary…', () => !stale()) : () => {};
   let failurePath = documentFilePath(selected.doc ?? { kind: 'detail' }, ref);
 
   try {
@@ -2707,6 +2610,9 @@ async function showSidePanel(panelView?: PanelView | null, userInitiated = false
     const paths = new Set<string>([documentFilePath(selected.doc ?? { kind: 'detail' }, ref)]);
     const retryFile = async (path: string) => {
       if (!sameRecord()) return;
+      // Retry disables itself for the read, and a browser drops focus from a
+      // disabled control: keep the keyboard position in the panel meanwhile.
+      if (body) holdPanelFocus(body);
       const request = panelLoadGeneration;
       await retryReadableFile(store, path);
       if (sameRecord() && request === panelLoadGeneration) await showSidePanel(panelSnapshot(), true, true, false);
@@ -2725,12 +2631,15 @@ async function showSidePanel(panelView?: PanelView | null, userInitiated = false
         const instant = /(?:Z|[+-]\d{2}:\d{2})$/.test(datetime) ? Date.parse(datetime) : undefined;
         return formatStamp(localDateStamp(stamp), current, instant !== undefined && Number.isFinite(instant) ? { instant } : undefined);
       };
-      essentials = { kind: date.end ? 'date-range' : 'date', icon: dateIconState(date), name: current => date.end
-        ? `${display(date.start, current)} – ${display(date.end, current)}` : display(date.start, current) };
+      const label = (current: RenderOptions) => date.end
+        ? `${display(date.start, current)} – ${display(date.end, current)}` : display(date.start, current);
+      essentials = { kind: date.end ? 'date-range' : 'date', icon: dateIconState(date), name: label };
       detail = document.createElement('div'); detail.className = 'entity-view date-summary';
-      const heading = document.createElement('h1'); heading.className = 'entity-title';
-      heading.textContent = date.end ? `${display(date.start, opts)} – ${display(date.end, opts)}` : display(date.start, opts);
-      detail.append(heading);
+      if (!opts.omitContextHeader) {
+        const heading = document.createElement('h1'); heading.className = 'entity-title';
+        heading.textContent = label(opts);
+        detail.append(heading);
+      }
     } else if (selected.doc?.kind === 'artifact') {
       const requested = selected.doc;
       const [artifact, relations] = await Promise.all([store.getArtifact(requested.id), store.getRelations()]);
@@ -2760,10 +2669,8 @@ async function showSidePanel(panelView?: PanelView | null, userInitiated = false
         counts: { ...data.stats, artifacts: store.getArtifactIndex().length }, updated: data.latest };
       planning = data.actions.planning;
       detail = renderInstanceSummary(store.getInstance()!.manifest, opts, data, openDetail);
-      if (contextPanel) {
-        const instance = store.getInstance()!;
-        complete = renderInstanceDetail(instance.manifest, instance.body, opts, await instanceDetailData(store));
-      }
+      const instance = store.getInstance()!;
+      complete = renderInstanceDetail(instance.manifest, instance.body, opts, await instanceDetailData(store));
     } else {
       const relations = await store.getRelations();
       if (ref.type === 'project') {
@@ -2774,17 +2681,17 @@ async function showSidePanel(panelView?: PanelView | null, userInitiated = false
           status: () => projectPills(project.frontMatter), marks: () => projectMarks(project.frontMatter) };
         planning = data.actions.planning;
         detail = renderProjectSummary(project, description, opts, data, openDetail);
-        if (contextPanel) complete = renderProjectDetail(ref.id, project, description, opts,
+        complete = renderProjectDetail(ref.id, project, description, opts,
           buildProjectHierarchy(ref.id, relations.relatedProjects), await projectDetailData(ref.id, store, relations));
       } else if (ref.type === 'action') {
         const action = await store.getAction(ref.id);
         const description = indexDescription(store.getActionIndex(), ref.id);
         const data = await actionSummaryData(ref.id, store, relations);
         essentials = { kind: 'action', name: action.frontMatter.name, description, counts: data.stats, updated: data.updated,
-          status: current => [...(data.projected ? [{ label: 'Projected', marks: [] }] : []), ...actionPills(action.frontMatter, current.nowDate)],
+          status: current => actionStatusPills(action.frontMatter, current.nowDate, data.projected),
           marks: current => actionMarks(action.frontMatter, current.nowDate) };
         detail = renderActionSummary(action, description, opts, data, openDetail);
-        if (contextPanel) complete = renderActionDetail(ref.id, action, description, opts, entityStats('action', ref.id, relations));
+        complete = renderActionDetail(ref.id, action, description, opts, entityStats('action', ref.id, relations));
       } else {
         const entry = await resolveEntry(store, ref.id);
         if (!entry) throw new Error(`Entry ${ref.id} not found`);
@@ -2796,18 +2703,16 @@ async function showSidePanel(panelView?: PanelView | null, userInitiated = false
     if (stale()) return;
     const restoringView = refreshing && !restoreView ? panelSnapshot() : panelView;
     let retainedFocus: HTMLElement | null = null;
-    if (contextPanel) {
-      const retained = refreshing && retainBody ? body?.querySelector<HTMLElement>(':scope > .context-content') ?? undefined : undefined;
-      if (retained && !(document.activeElement instanceof Element && document.activeElement.closest('[data-context-detail] > .detail-body'))) {
-        retainedFocus = body ? holdPanelFocus(body) : null;
-      }
-      detail = renderContextContent(detail, complete, retained, renderContextEssentials(essentials, opts));
-      if (retained && detail === retained) refreshDisplay(detail, opts, 0);
-      documentDetails = readerDetails(complete ?? detail);
-      for (const path of paths) {
-        const diagnostic = store.diagnosticsFor(path);
-        if (diagnostic) detail.prepend(fileDiagnosticNotice(diagnostic, () => retryFile(path)));
-      }
+    const retained = refreshing && retainBody ? body?.querySelector<HTMLElement>(':scope > .context-content') ?? undefined : undefined;
+    if (retained && !(document.activeElement instanceof Element && document.activeElement.closest('[data-context-detail] > .detail-body'))) {
+      retainedFocus = body ? holdPanelFocus(body) : null;
+    }
+    detail = renderContextContent(detail, complete, retained, renderContextEssentials(essentials, opts));
+    if (retained && detail === retained) refreshDisplay(detail, opts, 0);
+    documentDetails = readerDetails(complete ?? detail);
+    for (const path of paths) {
+      const diagnostic = store.diagnosticsFor(path);
+      if (diagnostic) detail.prepend(fileDiagnosticNotice(diagnostic, () => retryFile(path)));
     }
     if (body) {
       // A refresh keeps the old content usable during its fetch. Preserve any
@@ -2832,7 +2737,7 @@ async function showSidePanel(panelView?: PanelView | null, userInitiated = false
       updateContextControls();
       contextPanel?.ensureFocus();
       syncNavigationSidebar();
-      if (contextPanel && selected.date) {
+      if (selected.date) {
         // Identity stays usable while a complete count is loading. Replace
         // neither its focused heading nor the live body when the count arrives.
         // Closing cancels work; reopening the same panel resumes it without
@@ -2864,22 +2769,17 @@ async function showSidePanel(panelView?: PanelView | null, userInitiated = false
     if (stale()) return;
     if (body) {
       const previousFocus = holdPanelFocus(body);
-      const retry = document.createElement('button');
-      retry.type = 'button'; retry.textContent = 'Retry';
-      retry.className = 'notice-action';
-      retry.addEventListener('click', () => { if (!stale()) void showSidePanel(undefined, true); });
       if (!refreshing) {
-        if (contextPanel) {
-          const diagnostic = store.diagnosticsFor(failurePath) ?? { path: failurePath, issues: [], error: err instanceof Error ? err.message : String(err) };
-          body.replaceChildren(fileDiagnosticNotice(diagnostic, async () => {
-            if (stale()) return;
-            try { await retryReadableFile(store, failurePath); }
-            finally { if (!stale()) { await showSidePanel(undefined, true, false, false); updateDiagnostics(); } }
-          }));
-        } else body.replaceChildren(retry);
+        const diagnostic = store.diagnosticsFor(failurePath) ?? { path: failurePath, issues: [], error: errorMessage(err) };
+        body.replaceChildren(fileDiagnosticNotice(diagnostic, async () => {
+          if (stale()) return;
+          holdPanelFocus(body);
+          try { await retryReadableFile(store, failurePath); }
+          finally { if (!stale()) { await showSidePanel(undefined, true, false, false); updateDiagnostics(); } }
+        }));
         renderedPanelScope = null;
       }
-      if (userInitiated) showActionFailure(`Could not load this ${ref?.type ?? 'summary'}. Try again.`);
+      if (userInitiated) showActionFailure(`Could not load this ${selected.doc ? 'document' : ref?.type ?? 'summary'}. Try again.`);
       restorePanelFocus(body, previousFocus);
     }
   } finally { cancelLoading(); }
@@ -2925,150 +2825,17 @@ async function retryReadableFile(store: Store, path: string): Promise<void> {
   refreshCalendarActivity(store);
 }
 
-// Render the active document as a normal Reader page.
-let docLoadGeneration = 0;
-async function updateDoc(preserveScroll = false, userInitiated = false) {
-  if (contextPanel) {
-    const requested = state.doc;
-    if (requested) {
-      await inspectContext({ ref: requested.kind === 'detail' ? state.filter : null,
-        doc: requested.kind === 'detail' ? null : requested }, { history: !preserveScroll, view: preserveScroll ? panelSnapshot() : undefined, focus: userInitiated, routed: true });
-      // The URL can identify a context on initial navigation. Its mounted panel
-      // now owns that record; leaving it in the old Reader state would let an
-      // unrelated refresh reopen the route over a newer inspection.
-      if (state.doc === requested) { state.doc = null; returnFlow = null; syncNavigationSidebar(); }
-    }
-    return;
-  }
-  const backdrop = $('#doc-backdrop');
-  const body = $('#doc-body');
-  if (!backdrop || !body) return;
-
-  // Only the latest load for this source, document, and scope may write.
-  const generation = ++docLoadGeneration;
+// Hand a routed document to the context panel. `refresh` reloads it in place:
+// no context history visit, and the panel keeps its current view.
+async function updateDoc(refresh = false, userInitiated = false) {
   const requested = state.doc;
-  const requestedFilter = state.filter;
-  const store = state.store!;
-  const navigation = navigationGeneration;
-  const readerScroll = preserveScroll ? body.scrollTop : (history.state as NavState | null)?.readerScroll ?? 0;
-  const sameReader = () => navigation === navigationGeneration && store === state.store
-    && sameDoc(state.doc, requested) && sameFilter(state.filter, requestedFilter);
-  const stale = () => generation !== docLoadGeneration || !sameReader();
-
-  if (!requested) {
-    documentDetails = undefined;
-    readerModal?.close();
-    syncNavigationSidebar();
-    return;
-  }
-
-  if (!preserveScroll) body.replaceChildren();
-  const cancelLoading = !preserveScroll
-    ? showDelayedLoading(body, 'Loading document…', () => !stale()) : () => {};
-  if (!preserveScroll || backdrop.hidden) readerModal?.open();
-
-  const opts = getRenderOpts();
-  const recordPath = documentFilePath(requested, requestedFilter);
-  let attachmentPath: string | undefined;
-  const retryFile = async (path: string) => {
-    if (!sameReader()) return;
-    // Retained controls survive background refreshes, but a retry only owns
-    // the read generation that was current when the user pressed it.
-    const retryRequest = docLoadGeneration;
-    const retryStale = () => !sameReader() || retryRequest !== docLoadGeneration;
-    readerModal?.ensureFocus();
-    // A failed reload retains cached/recovered content and its diagnostic.
-    // Repaint only if this exact reader is still the current request.
-    try { await retryReadableFile(store, path); }
-    catch (error) {
-      if (retryStale()) return;
-      updateDiagnostics();
-      throw error;
-    }
-    if (retryStale()) return;
-    const updating = updateDoc(true, true);
-    const retryGeneration = docLoadGeneration;
-    await updating;
-    if (retryGeneration === docLoadGeneration && state.store === store && sameDoc(state.doc, requested) && sameFilter(state.filter, requestedFilter)) updateDiagnostics();
-  };
-  opts.onMediaError = (path, error, media) => {
-    if (!sameReader() || !body.contains(media)) return;
-    store.reportAssetFailure(path, error);
-    if (userInitiated) showActionFailure('Could not load this media. Try again.');
-    const notice = fileDiagnosticNotice(store.diagnosticsFor(path)!, () => retryFile(path));
-    media.replaceWith(notice);
-    updateDiagnostics();
-    readerModal?.ensureFocus();
-  };
-
-  try {
-    let doc: HTMLElement;
-    if (requested.kind === 'artifact') {
-      const [artifact, relations] = await Promise.all([store.getArtifact(requested.id), store.getRelations()]);
-      const filename = requested.filename ?? artifactContentFilename(artifact);
-      attachmentPath = filename === undefined ? undefined : artifactAttachmentRelativePath(requested.id, filename);
-      const content = attachmentPath === undefined ? undefined : await loadAssetContent(store, attachmentPath);
-      const description = indexDescription(store.getArtifactIndex(), requested.id);
-      doc = renderArtifactDetail(requested.id, artifact, description, opts, {
-        projects: relations.projectsByArtifact.get(requested.id) ?? [],
-        actions: relations.actionsByArtifact.get(requested.id) ?? [],
-        backlinks: relations.artifactBacklinks.get(requested.id) ?? [],
-      }, content, requested.filename);
-    } else if (requested.kind === 'asset') {
-      const path = requested.path;
-      const [content, relations] = await Promise.all([loadAssetContent(store, path), store.getRelations()]);
-      const descriptions = new Map(store.getNoteIndex().map((i) => [i.id, i.description]));
-      const linkedFrom = (relations.entriesByAsset.get(path) ?? [])
-        .map((id) => ({ id, description: descriptions.get(id) }));
-      doc = renderAssetDetail(path, content, opts, linkedFrom);
-    } else if (!state.filter) {
-      const instance = store.getInstance();
-      if (!instance) throw new Error('No instance manifest (aside.md)');
-      doc = renderInstanceDetail(instance.manifest, instance.body, opts, await instanceDetailData(store));
-    } else {
-      const ref = state.filter;
-      if (ref.type === 'project') {
-        const [project, relations] = await Promise.all([store.getProject(ref.id), store.getRelations()]);
-        const description = indexDescription(store.getProjectIndex(), ref.id);
-        doc = renderProjectDetail(ref.id, project, description, opts,
-          buildProjectHierarchy(ref.id, relations.relatedProjects), await projectDetailData(ref.id, store, relations));
-      } else {
-        const [action, relations] = await Promise.all([store.getAction(ref.id), store.getRelations()]);
-        const description = indexDescription(store.getActionIndex(), ref.id);
-        doc = renderActionDetail(ref.id, action, description, opts, entityStats('action', ref.id, relations));
-      }
-    }
-    if (stale()) return;
-    cancelLoading();
-    body.innerHTML = '';
-    body.appendChild(doc);
-    documentDetails = readerDetails(doc);
-    syncNavigationSidebar();
-    for (const path of new Set([recordPath, ...(attachmentPath ? [attachmentPath] : [])])) {
-      const diagnostic = store.diagnosticsFor(path);
-      if (diagnostic) body.prepend(fileDiagnosticNotice(diagnostic, () => retryFile(path)));
-    }
-    const mountedFocus = document.activeElement;
-    const undisturbed = await renderDiagramsInPlace(body, doc, () => !stale() && body.contains(doc));
-    if (stale() || !body.contains(doc)) return;
-    // The source remains readable while Mermaid loads. Keep any reading or
-    // focus movement the user makes during that wait.
-    if (undisturbed) body.scrollTop = readerScroll;
-    if (document.activeElement === mountedFocus) readerModal?.ensureFocus();
-  } catch (err) {
-    cancelLoading();
-    const what = requested.kind === 'artifact' ? artifactHandle(requested.id, requested.filename)
-      : requested.kind === 'asset' ? requested.path
-      : requestedFilter ? `${requestedFilter.type}: ${requestedFilter.id}` : 'instance detail';
-    console.error(`Failed to load ${what}:`, err);
-    if (stale()) return;
-    if (userInitiated) showActionFailure('Could not load this document. Try again.');
-    const path = attachmentPath ?? recordPath;
-    const diagnostic = store.diagnosticsFor(path) ?? { path, issues: [], error: err instanceof Error ? err.message : String(err) };
-    if (!preserveScroll) body.replaceChildren(fileDiagnosticNotice(diagnostic, () => retryFile(path)));
-    body.scrollTop = readerScroll;
-    readerModal?.ensureFocus();
-  } finally { cancelLoading(); }
+  if (!requested) return;
+  await inspectContext({ ref: requested.kind === 'detail' ? state.filter : null,
+    doc: requested.kind === 'detail' ? null : requested }, { history: !refresh, view: refresh ? panelSnapshot() : undefined, focus: userInitiated, routed: true });
+  // The URL can identify a context on initial navigation. Its mounted panel
+  // now owns that record; leaving it routed would let an unrelated refresh
+  // reopen the route over a newer inspection.
+  if (state.doc === requested) { state.doc = null; returnFlow = null; syncNavigationSidebar(); }
 }
 
 // A route pushed over the control channel (the MCP show tool). It applies
@@ -3089,7 +2856,7 @@ function navigateToRoute(route: string) {
       let request = ++navigationGeneration;
       // The jump's own push carries the filter, so the filter switch doesn't
       // push — one history entry per pushed route, like a deep link.
-      if (!sameFilter(state.filter, view.filter) || state.search !== (view.search ?? '') || state.source !== view.source || JSON.stringify(state.range) !== JSON.stringify(view.range) || state.order !== view.order) {
+      if (!sameFlow(view)) {
         const applying = applyView({ ...view, doc: null }, { push: false, userInitiated: false });
         request = navigationGeneration;
         await applying;
@@ -3123,7 +2890,7 @@ async function handleLocationChange(event?: Event) {
     return;
   }
   if (next.jump) {
-    if (!sameFilter(state.filter, next.filter) || state.search !== (next.search ?? '') || state.source !== next.source || JSON.stringify(state.range) !== JSON.stringify(next.range) || state.order !== next.order) {
+    if (!sameFlow(next)) {
       const applying = applyView({ ...next, doc: null }, { push: false, panel: nav?.panel });
       request = navigationGeneration;
       await applying;
@@ -3135,13 +2902,10 @@ async function handleLocationChange(event?: Event) {
   // Same filter and document — the flow needn't rebuild, but back/forward still
   // lands on the position the destination was left at (e.g. returning from a
   // jump), so restore its stored anchor onto the standing flow.
-  if (sameFilter(state.filter, next.filter) && sameDoc(state.doc, next.doc) && state.search === (next.search ?? '') && state.source === next.source && JSON.stringify(state.range) === JSON.stringify(next.range) && state.order === next.order) {
+  if (sameFlow(next) && sameDoc(state.doc, next.doc)) {
     returnFlow = next.doc ? nav?.returnFlow ?? returnFlow : null;
     updateFilterPill(); updateSourcePill(); updateFlowSearch(); syncNavigationSidebar();
     if (nav?.anchor) restoreFlowScroll(nav.anchor);
-    if (next.doc && nav?.readerScroll !== undefined) {
-      const body = $('#doc-body'); if (body) body.scrollTop = nav.readerScroll;
-    }
     if (nav?.panel !== undefined) await showSidePanel(nav.panel, false, true);
     return;
   }
@@ -3179,57 +2943,5 @@ document.addEventListener('keydown', (e) => {
   }
 });
 
-document.addEventListener('copy', (e) => {
-  const selection = window.getSelection();
-  if (!selection || selection.rangeCount === 0) return;
-
-  const range = selection.getRangeAt(0);
-  if (range.collapsed) return;
-  // Selecting only the visible label omits its enclosing anchor from
-  // cloneContents(). Restore complete smart elements to their authored form;
-  // partial label selections keep the browser's ordinary copy behavior.
-  const ancestor = range.commonAncestorContainer instanceof Element
-    ? range.commonAncestorContainer : range.commonAncestorContainer.parentElement;
-  const locationChip = ancestor?.closest<HTMLElement>('.inline-tag-location[data-location-handle]');
-  const locationLabel = locationChip?.querySelector('.location-label');
-  if (locationLabel && locationLabel.contains(range.startContainer) && locationLabel.contains(range.endContainer)
-      && range.toString() === locationLabel.textContent) {
-    e.clipboardData!.setData('text/plain', locationCopyText(locationChip!)!);
-    e.preventDefault();
-    return;
-  }
-  const dateChip = ancestor?.closest<HTMLElement>('.inline-tag-date[data-date-handle]');
-  const dateLabel = dateChip?.querySelector('time');
-  if (dateLabel && dateLabel.contains(range.startContainer) && dateLabel.contains(range.endContainer)
-      && range.toString() === dateLabel.textContent) {
-    e.clipboardData!.setData('text/plain', dateChip!.dataset.dateHandle!);
-    e.preventDefault();
-    return;
-  }
-  const fragment = range.cloneContents();
-  const inlineTags = fragment.querySelectorAll('.inline-tag');
-  if (inlineTags.length === 0) return;
-
-  for (const tag of inlineTags) {
-    const location = locationCopyText(tag as HTMLElement);
-    if (location !== null) {
-      tag.replaceWith(location);
-      continue;
-    }
-    const date = (tag as HTMLElement).dataset.dateHandle;
-    if (date) {
-      tag.replaceWith(date);
-      continue;
-    }
-    const type = (tag as HTMLElement).dataset.refType;
-    const id = (tag as HTMLElement).dataset.refId;
-    if (type && id) {
-      tag.replaceWith(`#${type}/${id}`);
-    }
-  }
-
-  const tempDiv = document.createElement('div');
-  tempDiv.appendChild(fragment);
-  e.clipboardData!.setData('text/plain', tempDiv.textContent || '');
-  e.preventDefault();
-});
+// Registered at module load, like the shortcut above, not from init.
+setupRefCopy();

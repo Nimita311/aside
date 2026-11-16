@@ -12,8 +12,8 @@
 // A seam is a cut in the timeline — the gap between two adjacent cards, or the
 // outer edge past the newest/oldest, where a boundary card borders the unseen.
 //
-// The full model (accuracy, the soft-knee flight curve, depth, fades, the tuck
-// clip) lives in animation.md. This file is two halves:
+// Presentation constraints: design/interfaces.md#presentation.
+// This file is two halves:
 //   - Pure geometry — neighbors / seamPoint / departureTarget / arrivalOrigin fix
 //     where a flight starts and ends; ghostFlightDy / arrivalFlightDy fix how far
 //     it travels. All exported and unit-tested in flip.test.ts.
@@ -453,20 +453,13 @@ export function animateFlow(scroller: HTMLElement, snapshot: FlowSnapshot): Prom
     !incomingIds.has(c.id) &&
     c.rect.bottom > scrollerRect.top && c.rect.top < scrollerRect.bottom);
 
-  let overlay: HTMLElement | null = null;
-  let stopTracking: (() => void) | null = null;
-  if (ghosts.length > 0) {
-    const o = createGhostOverlay(scroller, scrollerRect);
-    overlay = o.overlay;
-    stopTracking = o.stop;
-    const track = o.track;
-
+  const ghostLayer = ghosts.length > 0 ? createGhostOverlay(scroller, scrollerRect) : null;
+  if (ghostLayer) {
     const flights = ghosts.map((g) => {
       const live = newById.get(g.id);
       const to: FlightPoint | null = live ? { top: live.rect.top } : departureTarget(allNew, g, scrollerRect, snapshot);
-      const dy = to === null ? 0
-        : to.exit ? to.top - g.rect.top
-        : ghostFlightDy(to.top, g.rect, scrollerRect, softFly);
+      // The arrival's rule, mirrored: only an exit skips the ghost's own cap.
+      const dy = to ? arrivalFlightDy(to, g.rect, scrollerRect, softFly) : 0;
       return { g, to, dy };
     });
     stackShortestOnTop(flights.map((f) => ({ el: f.g.el, dy: f.dy })));
@@ -483,7 +476,7 @@ export function animateFlow(scroller: HTMLElement, snapshot: FlowSnapshot): Prom
       g.el.style.top = `${g.rect.top - scrollerRect.top}px`;
       g.el.style.left = `${g.rect.left - scrollerRect.left}px`;
       g.el.style.width = `${g.rect.width}px`;
-      track.appendChild(g.el);
+      ghostLayer.track.appendChild(g.el);
       if (dy !== 0) {
         anims.push(g.el.animate(
           [{ transform: 'translateY(0)' }, { transform: `translateY(${dy}px)` }],
@@ -515,8 +508,8 @@ export function animateFlow(scroller: HTMLElement, snapshot: FlowSnapshot): Prom
   // Stale-safe: every render builds fresh nodes, so a teardown firing
   // after the next transition started only touches detached elements.
   return Promise.allSettled(anims.map((a) => a.finished)).then(() => {
-    stopTracking?.();
-    overlay?.remove();
+    ghostLayer?.stop();
+    ghostLayer?.overlay.remove();
     for (const el of movers) el.classList.remove('flow-mover');
     for (const a of arrivals) { a.el.classList.remove('flow-arrival'); a.el.style.zIndex = ''; }
   });

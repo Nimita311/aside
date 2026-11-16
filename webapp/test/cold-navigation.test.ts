@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { loadApp } from './app-harness';
 import { snapshotFixture } from './snapshot-fixture';
-import { stubBrowserFetch } from './auth-fixture';
+import { stubBrowserFetch } from './connection-fixture';
 
 interface App {
   connectToInstance(id: string): Promise<void>;

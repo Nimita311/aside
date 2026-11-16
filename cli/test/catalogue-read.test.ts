@@ -3,7 +3,6 @@ import { chmodSync, mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, w
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {availableInstances} from '../src/source/instance-admission.js';
-import { WebAuth } from '../src/web/auth.js';
 import { startWeb } from '../src/web/locate.js';
 import { InstanceRegistry } from '../src/mcp/instance-registry.js';
 
@@ -54,7 +53,7 @@ describe('registered metadata read failures', () => {
   });
 
   it('omits unconfirmed rows over HTTP and rejects their routes while preserving duplicate-ID reporting', async () => {
-    const f = fixture(), auth = new WebAuth(join(f.root, "auth")), headers = { Authorization: `Bearer ${auth.issue().token}` }, load = vi.fn(), server = await startWeb(app, { instances: () => availableInstances([f.a, f.b]), register: async () => null, remove: () => {}, load, data: async () => { throw new Error("Unexpected data request"); } }, 0, { auth, stateDirectory: join(f.root, "auth") });
+    const f = fixture(), headers = {}, load = vi.fn(), server = await startWeb(app, { instances: () => availableInstances([f.a, f.b]), register: async () => null, remove: () => {}, load, data: async () => { throw new Error("Unexpected data request"); } }, 0);
     cleanup.push(() => server.close()); rmSync(join(f.b, 'aside.md')); mkdirSync(join(f.b, 'aside.md'));
     const rows = await (await fetch(`http://127.0.0.1:${server.port}/-/api/instances`, { headers })).json();
     expect(rows).toEqual([

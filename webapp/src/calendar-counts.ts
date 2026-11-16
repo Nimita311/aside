@@ -1,10 +1,11 @@
 import type { StoreView } from '../../cli/src/core/data-snapshot';
 import { isCalendarDate } from '../../cli/src/core/scheduling';
 import { withinTimestampRange, type TimestampRange } from '../../cli/src/core/timestamp-range';
-import { WEB_QUERY_TIMEOUT_MS, type WebQueryRequest, type WebQueryResult } from '../../cli/src/core/web-query';
-import { entryReferences, getMondayOfWeek, type EntityRef } from '../lib/types';
+import type { WebQueryRequest, WebQueryResult } from '../../cli/src/core/web-query';
+import { entryReferences, entryWeek, type EntityRef } from '../lib/types';
 import { effectiveSourceOrder, parseSourcePage, sourceRequest, type SourceDefinition, type SourceOrder } from './entry-source';
 import { matchesFlowSearch } from './flow-search';
+import { createRequestScope } from './query-flow';
 
 type CalendarStore = Pick<StoreView, 'getWeeklyDates' | 'getWeekEntries' | 'getNoteIndex' | 'getSearchProgress' | 'loadAllWeeks'>;
 
@@ -64,27 +65,12 @@ export function createCalendarCounts(options: CalendarCountsOptions): CalendarCo
   const query = options.query;
   const complete = new Map<string, ReadonlyMap<string, number>>();
   const pending = new Map<string, Promise<ReadonlyMap<string, number>>>();
-  const controllers = new Set<AbortController>();
+  const requests = createRequestScope('Calendar activity');
   let disposed = false;
 
-  async function request<T>(run: (signal: AbortSignal) => Promise<T>): Promise<T> {
-    if (disposed) throw new Error('This calendar timeline is no longer active.');
-    const controller = new AbortController();
-    controllers.add(controller);
-    let rejectAborted!: (reason: Error) => void;
-    const aborted = new Promise<never>((_, reject) => { rejectAborted = reject; });
-    const onAbort = () => rejectAborted(controller.signal.reason instanceof Error
-      ? controller.signal.reason : new Error('Calendar activity request cancelled.'));
-    controller.signal.addEventListener('abort', onAbort, { once: true });
-    const timeout = setTimeout(() => controller.abort(new Error('Calendar activity request timed out. Try again.')), WEB_QUERY_TIMEOUT_MS);
-    try {
-      return await Promise.race([run(controller.signal), aborted]);
-    } finally {
-      clearTimeout(timeout);
-      controller.signal.removeEventListener('abort', onAbort);
-      controllers.delete(controller);
-    }
-  }
+  // Not async: a caller awaits the scope's own promise, with no added turn.
+  const request = <T>(run: (signal: AbortSignal) => Promise<T>): Promise<T> =>
+    disposed ? Promise.reject(new Error('This calendar timeline is no longer active.')) : requests.run(run);
 
   async function countNative(from: string, to: string, days: Map<string, number>): Promise<void> {
     await request(async signal => {
@@ -92,8 +78,7 @@ export function createCalendarCounts(options: CalendarCountsOptions): CalendarCo
       // before interpreting an absent record as a verified zero.
       if (!await store.loadAllWeeks() || !store.getSearchProgress().complete) throw new CalendarCountsIncompleteError();
       signal.throwIfAborted();
-      const firstWeek = getMondayOfWeek(new Date(`${from}T00:00:00`));
-      const lastWeek = getMondayOfWeek(new Date(`${to}T00:00:00`));
+      const firstWeek = entryWeek(from), lastWeek = entryWeek(to);
       const weeks = store.getWeeklyDates().filter(week => week >= firstWeek && week <= lastWeek);
       const descriptions = new Map(store.getNoteIndex().map(item => [item.id, item.description]));
       const records = await Promise.all(weeks.map(week => store.getWeekEntries(week)));
@@ -172,7 +157,7 @@ export function createCalendarCounts(options: CalendarCountsOptions): CalendarCo
     dispose() {
       disposed = true;
       complete.clear();
-      for (const controller of controllers) controller.abort(new Error('Calendar activity request cancelled.'));
+      requests.abort();
     },
   };
 }

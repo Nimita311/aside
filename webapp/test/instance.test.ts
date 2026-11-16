@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { actionStatus, projectStatus, actionMarks, projectMarks, waiting, actionPills, projectPills, ago, groupOpenActions, orderByActivity, relativeDate, timelineWindow } from '../src/instance';
+import { actionStatus, actionMarks, projectMarks, waiting, actionPills, projectPills, ago, groupOpenActions, orderByActivity, relativeDate, timelineWindow } from '../src/instance';
 import { buildProjectForest, HierarchyNode, RelatedProjectLink } from '../src/hierarchy';
 
 const action = (id: string, fm: { created?: string; scheduled?: string; duration?: string; deadline?: string; calendar?: string; resolution?: 'done' | 'cancelled' }) => ({
@@ -10,7 +10,7 @@ const action = (id: string, fm: { created?: string; scheduled?: string; duration
 const NOW = '2026-07-12'; // week ahead ends 2026-07-19, week behind starts 2026-07-05
 const noEntries = () => undefined;
 
-describe('actionStatus / projectStatus', () => {
+describe('actionStatus', () => {
   it('resolution wins over any dates', () => {
     expect(actionStatus(action('a', { resolution: 'done', deadline: '2026-08-01', scheduled: '2026-07-13T10:00' }).action.frontMatter)).toBe('done');
     expect(actionStatus(action('a', { resolution: 'cancelled' }).action.frontMatter)).toBe('cancelled');
@@ -21,11 +21,6 @@ describe('actionStatus / projectStatus', () => {
     expect(actionStatus(action('a', { scheduled: '2026-07-13T10:00' }).action.frontMatter)).toBe('scheduled');
     expect(actionStatus(action('a', { deadline: '2026-08-01' }).action.frontMatter)).toBe('backlog');
     expect(actionStatus(action('a', {}).action.frontMatter)).toBe('backlog');
-  });
-
-  it('a project is open until it ends', () => {
-    expect(projectStatus({ name: 'p', created: '2026-01-01' })).toBe('open');
-    expect(projectStatus({ name: 'p', created: '2026-01-01', ended: '2026-06-01' })).toBe('ended');
   });
 
   it('chip marks compose: a deadline rings, no upcoming time waits, a resolution stands alone', () => {

@@ -1,11 +1,38 @@
 import type { StoreView } from '../../cli/src/core/data-snapshot';
 import type { WebQueryRequest, WebQueryResult } from '../../cli/src/core/web-query';
 import { WEB_QUERY_TIMEOUT_MS } from '../../cli/src/core/web-query';
-import { getMondayOfWeek, type Entry, type EntityRef } from '../lib/types';
+import { entryWeek, type Entry, type EntityRef } from '../lib/types';
 import { effectiveSourceOrder, parseSourcePage, sourceRequest, SourceIncompleteError, type SourceDefinition, type SourceOrder } from './entry-source';
 
 export const QUERY_FLOW_PAGE_SIZE = 50;
-const entryWeek = (id: string) => getMondayOfWeek(new Date(`${id.slice(0, 10)}T00:00:00`));
+
+// The abortable, deadline-bounded requests of one disposable session. `subject`
+// names the session in its cancellation and timeout messages.
+export function createRequestScope(subject: string) {
+  const controllers = new Set<AbortController>();
+  const cancelled = () => new Error(`${subject} request cancelled.`);
+  return {
+    get busy(): boolean { return controllers.size > 0; },
+    abort(): void { for (const controller of controllers) controller.abort(cancelled()); },
+    async run<T>(run: (signal: AbortSignal) => Promise<T>): Promise<T> {
+      const controller = new AbortController();
+      controllers.add(controller);
+      let rejectAborted!: (reason: Error) => void;
+      const aborted = new Promise<never>((_, reject) => { rejectAborted = reject; });
+      const onAbort = () => rejectAborted(controller.signal.reason instanceof Error ? controller.signal.reason : cancelled());
+      controller.signal.addEventListener('abort', onAbort, { once: true });
+      const timeout = setTimeout(() => controller.abort(new Error(`${subject} request timed out. Try again.`)), WEB_QUERY_TIMEOUT_MS);
+      try {
+        // Race explicitly: a transport or test adapter may ignore AbortSignal.
+        return await Promise.race([run(controller.signal), aborted]);
+      } finally {
+        clearTimeout(timeout);
+        controller.signal.removeEventListener('abort', onAbort);
+        controllers.delete(controller);
+      }
+    },
+  };
+}
 
 export interface QueryFlowOptions {
   definition: SourceDefinition;
@@ -44,7 +71,7 @@ export function createQueryFlow(options: QueryFlowOptions): QueryFlowSession {
     variables: options.variables ? structuredClone(options.variables) : undefined,
     order: options.order,
   };
-  const controllers = new Set<AbortController>();
+  const requests = createRequestScope('Entry source');
   let records: Entry[] = [];
   let totalCount: number | null = null;
   let complete = false;
@@ -53,25 +80,9 @@ export function createQueryFlow(options: QueryFlowOptions): QueryFlowSession {
   let disposed = false;
   let pending: Promise<void> | null = null;
 
-  async function request<T>(run: (signal: AbortSignal) => Promise<T>): Promise<T> {
-    if (disposed) throw new Error('This entry source is no longer active.');
-    const controller = new AbortController();
-    controllers.add(controller);
-    let rejectAborted!: (reason: Error) => void;
-    const aborted = new Promise<never>((_, reject) => { rejectAborted = reject; });
-    const onAbort = () => rejectAborted(controller.signal.reason instanceof Error
-      ? controller.signal.reason : new Error('Entry source request cancelled.'));
-    controller.signal.addEventListener('abort', onAbort, { once: true });
-    const timeout = setTimeout(() => controller.abort(new Error('Entry source request timed out. Try again.')), WEB_QUERY_TIMEOUT_MS);
-    try {
-      // Race explicitly: a transport or test adapter may ignore AbortSignal.
-      return await Promise.race([run(controller.signal), aborted]);
-    } finally {
-      clearTimeout(timeout);
-      controller.signal.removeEventListener('abort', onAbort);
-      controllers.delete(controller);
-    }
-  }
+  // Not async: a caller awaits the scope's own promise, with no added turn.
+  const request = <T>(run: (signal: AbortSignal) => Promise<T>): Promise<T> =>
+    disposed ? Promise.reject(new Error('This entry source is no longer active.')) : requests.run(run);
 
   function loadMore(): Promise<void> {
     if (disposed || complete) return Promise.resolve();
@@ -136,13 +147,13 @@ export function createQueryFlow(options: QueryFlowOptions): QueryFlowSession {
     get complete() { return complete; },
     get error() { return error; },
     get incomplete() { return incomplete; },
-    get loading() { return pending !== null || controllers.size > 0; },
+    get loading() { return pending !== null || requests.busy; },
     get totalCount() { return totalCount; },
     get order() { return order; },
     loadMore, contains,
     dispose() {
       disposed = true;
-      for (const controller of controllers) controller.abort(new Error('Entry source request cancelled.'));
+      requests.abort();
     },
   };
 }

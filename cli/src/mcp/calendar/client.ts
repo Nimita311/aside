@@ -21,6 +21,7 @@ import type {
   GetEventsArgs,
   GetEventsResult,
 } from './protocol.js';
+import { errorMessage } from '../../core/error.js';
 
 // Thrown when the helper can't be reached at all (absent binary, spawn failure,
 // or it exited). Distinguished from a helper-reported error so callers can tell
@@ -41,14 +42,6 @@ export class CalError extends Error {
 interface Pending {
   resolve: (result: unknown) => void;
   reject: (err: Error) => void;
-}
-
-// Locate a usable helper binary, or null when calendar sync can't run here
-// (non-macOS, or the helper hasn't been built). null makes the feature degrade
-// to "unavailable" rather than erroring.
-export function resolveCalBin(): string | null {
-  const candidate = nativeCommand('calendar', { legacyEnv: 'ASIDE_CAL_BIN' })!.file;
-  return diagnoseCalEnvironment(platform(), release(), candidate, existsSync(candidate)) ? null : candidate;
 }
 
 // Talks to one long-lived `aside-native calendar` process over JSON/stdio. The process is
@@ -100,7 +93,7 @@ export class CalClient {
       : code === 'event-time-unrepresentable' ? 'Sync is blocked in both directions for this action. Fix the Calendar time or explicitly change scheduled/timezone to an unambiguous start, then check Instance.calendarSync through query; name, notes, and duration-only edits do not unblock it.'
       : code === 'event-recurring' ? 'Remove the calendar event recurrence to resume sync.'
       : 'Inspect the helper stderr and daemon log, then call systemInfo.calendar through query again. Pending sync retries remain queued.';
-    return this.context({ category: code || (command === 'request-access' ? 'authorization-request-failed' : error instanceof CalError ? 'helper-command-failed' : error instanceof CalUnavailable ? 'helper-communication-failed' : 'operation-failed'), reason: error instanceof Error ? error.message : String(error), recovery, ...(command ? { command } : {}) });
+    return this.context({ category: code || (command === 'request-access' ? 'authorization-request-failed' : error instanceof CalError ? 'helper-command-failed' : error instanceof CalUnavailable ? 'helper-communication-failed' : 'operation-failed'), reason: errorMessage(error), recovery, ...(command ? { command } : {}) });
   }
 
   private context(diagnostic: CalendarDiagnostic): CalendarDiagnostic {
@@ -180,11 +173,7 @@ export class CalClient {
       t.unref?.();
       proc.once('exit', () => clearTimeout(t));
     }
-    const err = new CalUnavailable('calendar helper closed');
-    for (const p of this.pending.values()) p.reject(err);
-    this.pending.clear();
-    this.buf = '';
-    for (const cb of this.exitListeners) cb();
+    this.fail(new CalUnavailable('calendar helper closed'));
   }
 
   private ensureStarted(): ChildProcessWithoutNullStreams {

@@ -38,9 +38,9 @@ Four familiar entities form the core:
 
 Relationships reflect ordinary work: entries connect projects and actions to their context, projects relate to other projects, and artifacts connect reusable content to the work around it. The records support chronological views of work and decisions and views of related information around projects, actions, or artifacts.
 
-Stable IDs and handles make referencing easy and independent of file paths. The [identity rules](identity.md) define how these references remain stable.
+Stable IDs and handles make referencing easy and independent of file paths. The [identity rules](runtime.md#record-identity) define how these references remain stable.
 
-The daemon runs the portable [data core](record-model.md) for both MCP and the webpage. Browser tabs consume structured snapshots. The same core can run in a browser against static files.
+The daemon runs the portable [data core](runtime.md#data-ownership) for both MCP and the webpage. Browser tabs consume structured snapshots. The same core can run in a browser against static files.
 
 The framework provides a persistent core that users can extend through custom software and prompts. Users can add arbitrary files to an Aside directory and custom front matter to its records. Core tooling must respect these extensions and preserve information beyond the fields it understands.
 

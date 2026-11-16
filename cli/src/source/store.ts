@@ -8,7 +8,7 @@ import { InstanceReadCache, readInstanceData, type InstanceFile } from '../core/
 import { assertManagedPath, readManagedText, isManagedInstancePath } from '../core/managed-path.js';
 import { artifactAttachmentPath, collectArtifactReferenceSources, listArtifactAttachments, parseArtifactHandle } from '../core/artifact.js';
 import { isMap, parseDocument, stringify } from 'yaml';
-import { parseProjectFile, parseActionFile, parseArtifactFile, parseWeeklyFile, parseManifest, splitFrontMatter } from '../core/parser.js';
+import { parseProjectFile, parseActionFile, parseArtifactFile, parseWeeklyFile, parseInstanceRecord } from '../core/parser.js';
 import type { ArtifactReferenceSource } from '../core/artifact.js';
 import { artifactReferenceSources, type Relations } from '../core/record-model.js';
 import { DataCore } from '../core/data-core.js';
@@ -17,7 +17,7 @@ import {readSourceMetadata, type SourceMetadata} from '../core/source-metadata.j
 import {readAttachmentFiles, readReferenceRoots, type AttachmentFile} from '../core/attachment-metadata.js';
 import {readExecutionContextSnapshot} from './execution-context.js';
 import {publishReadonly, publishTransportSnapshot} from './publication.js';
-import {sourceHealthPublication, type SourceHealth, type SourceHealthPublication, type SourceRecordKind} from './source-health.js';
+import {sourceDiagnostic, sourceHealthPublication, type SourceHealth, type SourceHealthPublication, type SourceRecordKind} from './source-health.js';
 import {type ExecutionContextSnapshot} from '../core/execution-context.js';
 import { assertRecurrence, assertRecurrenceUpdate, assertOccurrence, occurrenceKey, recurrenceIssues, type RecurrenceSchedule } from '../core/recurrence.js';
 import type { CoreRecords, DataSnapshot } from '../core/data-snapshot.js';
@@ -26,7 +26,7 @@ import { serializeProject, serializeAction, serializeArtifact } from './serializ
 import {prepareArtifactSource, type ArtifactSourceOptions} from './artifact-source.js';
 import type { RelatedProjectEdits } from '../core/link-edits.js';
 import type { AutomationEdits } from '../core/automation-edits.js';
-import { mergeMetadata } from '../core/metadata.js';
+import { mergeMetadata, RECORD_FRONT_MATTER } from '../core/metadata.js';
 import { assertScheduling } from '../core/scheduling.js';
 import {prependIndex, updateIndexDescription} from './index-file.js';
 import {oneLineDescription} from '../core/description.js';
@@ -49,6 +49,7 @@ import type {
   RecordIndexes,
   InstanceRecord,
 } from '../core/types.js';
+import { errorMessage } from '../core/error.js';
 
 // Which entity's year index a synchronous update targets.
 export type { IndexKind } from '../core/types.js';
@@ -100,7 +101,7 @@ function reconcileArtifactAttachments(dataDir: string, id: string, artifact: Art
   const attachments = listArtifactAttachments(dataDir, id);
   if (attachments.length) artifact.frontMatter.attachments = attachments;
   else delete artifact.frontMatter.attachments;
-  const match = original.match(/^(\uFEFF?\s*---[ \t\r]*\n)(?:([\s\S]*?)\n)?(---[ \t\r]*(?:\n[\s\S]*)?)$/);
+  const match = original.match(RECORD_FRONT_MATTER);
   if (!match) { cache.delete(file); return false; }
   const metadata = (match[2] ?? '').replace(/\r(?=\n|$)/g, '');
   let saved = cache.get(file);
@@ -116,8 +117,18 @@ function reconcileArtifactAttachments(dataDir: string, id: string, artifact: Art
   const newline = match[1].endsWith('\r\n') ? '\r\n' : '\n';
   const yaml = mergeMetadata(metadata, stringify(attachments.length ? { attachments } : {}), ['attachments'], file).replace(/\n/g, newline);
   persistMutationWrite(owner, {kind: 'artifact', id, effect: 'UPDATED', path: file, fields: ['attachments']},
-    () => writeFileCrashSafe(file, `${match[1]}${yaml}${newline}${match[3]}`, dataDir));
+    () => writeFileCrashSafe(file, `${match[1]}${yaml}${newline}${match[3]}${match[4] ?? ''}`, dataDir));
   return true;
+}
+
+// Template rules the reload check and saveAction both enforce. Each caller
+// decides when a template counts as cleared and whether it is still referenced.
+function assertTemplateOnly(frontMatter: ActionFrontMatter): void {
+  if (frontMatter.scheduled || frontMatter.resolution || frontMatter.occurrence) throw new Error('A recurrence template cannot also be scheduled, resolved, or an occurrence.');
+}
+function clearedTemplateError(referenced: boolean): Error {
+  return new Error(referenced ? 'Cannot remove recurrence from a referenced template; retain the template with recurrence: [].'
+    : 'Cannot clear a recurrence template; remove its schedules and retain recurrence: [].');
 }
 
 export class Store {
@@ -269,7 +280,7 @@ export class Store {
   }
 
   recordRebuildFailure(error: unknown): void {
-    const message = `Instance source refresh failed: ${error instanceof Error ? error.message : String(error)}`;
+    const message = `Instance source refresh failed: ${errorMessage(error)}`;
     if (this.sourceVersion !== undefined && this.issues.some(issue => issue.code === 'rebuild_failed' && issue.message === message)) return;
     this.issues = [...this.issues.filter(issue => issue.code !== 'rebuild_failed'), {
       severity: 'error', code: 'rebuild_failed', message,
@@ -333,11 +344,8 @@ export class Store {
         if ((before || action.frontMatter.recurrence !== undefined) && loaded.issues.some(issue => issue.severity === 'error' && (issue.file === file || issue.file === relativeFile) && (issue.field === 'recurrence' || issue.code === 'invalid_yaml'))) throw new Error('Recurrence declaration is malformed; preserve accepted history until it is repaired.');
         if (action.frontMatter.recurrence) {
           assertRecurrence(action.frontMatter.recurrence);
-          if (action.frontMatter.scheduled || action.frontMatter.resolution || action.frontMatter.occurrence) throw new Error('A recurrence template cannot also be scheduled, resolved, or an occurrence.');
-        } else if (before) {
-          if (referencedTemplates.has(id)) throw new Error('Cannot remove recurrence from a referenced template; retain the template with recurrence: [].');
-          throw new Error('Cannot clear a recurrence template; remove its schedules and retain recurrence: [].');
-        }
+          assertTemplateOnly(action.frontMatter);
+        } else if (before) throw clearedTemplateError(referencedTemplates.has(id));
         assertRecurrenceUpdate(before, action.frontMatter.recurrence, new Date(), coveredOriginals.get(id));
         if (action.frontMatter.recurrence) accepted.set(id, structuredClone(action.frontMatter.recurrence));
         else accepted.delete(id);
@@ -400,16 +408,8 @@ export class Store {
     return this.published().artifacts;
   }
 
-  getProjectIds(): string[] {
-    return Array.from(this.projects.keys());
-  }
-
   getActionIds(): string[] {
     return Array.from(this.actions.keys());
-  }
-
-  getArtifactIds(): string[] {
-    return Array.from(this.artifacts.keys());
   }
 
   getNoteIndex(): IndexItem[] {
@@ -477,10 +477,6 @@ export class Store {
     return relations;
   }
 
-  getActionsForProject(projectId: string): string[] {
-    return Array.from(this.relations.actionsByProject.get(projectId) ?? []);
-  }
-
   getProjectsForArtifact(id: string): string[] {
     return Array.from(this.relations.projectsByArtifact.get(id) ?? []);
   }
@@ -514,10 +510,14 @@ export class Store {
    * transform. Path validation and source observation stay in this adapter. */
   prepareSourceMutation<T>(file: string, prepare: (source: string | undefined) => T): T {
     assertManagedPath(this.dataDir, file, 'file', true);
-    let source: string | undefined;
-    try {source = readManagedText(this.dataDir, file);}
-    catch (error) {if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;}
-    return prepare(source);
+    return prepare(this.readSource(file));
+  }
+
+  // A managed file's current text; a file that does not exist yet has none.
+  private readSource(file: string): string | undefined {
+    try { return readManagedText(this.dataDir, file); }
+    catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
+    return undefined;
   }
 
   assertMutationPaths(files: readonly string[], allowMissing = true): void {
@@ -558,8 +558,8 @@ export class Store {
     const file = join(this.dataDir, MANIFEST_FILE);
     assertManagedPath(this.dataDir, file, 'file');
     const previous = this.getManifest().id;
-    const parsed = parseManifest(serialized);
-    const instance = {manifest: parsed.value, body: splitFrontMatter(serialized).body.trim()};
+    const parsed = parseInstanceRecord(serialized);
+    const instance = parsed.value;
     const before = original ?? readManagedText(this.dataDir, file);
     if (serialized !== before) persistMutationWrite(this, {kind: 'instance', id: previous, effect: 'UPDATED', path: file, fields: [...fields]},
       () => writeFileCrashSafe(file, serialized, this.dataDir));
@@ -589,10 +589,7 @@ export class Store {
     const serialized = serializeProject(frontMatter, body, file, fields, automationEdits, relatedProjectEdits);
     const persisted = parseProjectFile(serialized).value;
     mkdirSync(dirname(file), { recursive: true });
-    let unchanged = false;
-    try { unchanged = readManagedText(this.dataDir, file) === serialized; }
-    catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
-    if (!unchanged) persistMutationWrite(this, {kind: 'project', id, effect: existsSync(file) ? 'UPDATED' : 'CREATED', path: file},
+    if (this.readSource(file) !== serialized) persistMutationWrite(this, {kind: 'project', id, effect: existsSync(file) ? 'UPDATED' : 'CREATED', path: file},
       () => writeFileCrashSafe(file, serialized, this.dataDir));
     this.core.upsertEntity('project', id, persisted);
     this.invalidateSnapshots();
@@ -627,12 +624,11 @@ export class Store {
     const previous = this.getAction(id)?.frontMatter;
     if (frontMatter.recurrence !== undefined) {
       frontMatter.recurrence = assertRecurrence(frontMatter.recurrence);
-      if (frontMatter.scheduled || frontMatter.resolution || frontMatter.occurrence) throw new Error('A recurrence template cannot also be scheduled, resolved, or an occurrence.');
+      assertTemplateOnly(frontMatter);
     }
     this.assertRecurrenceChange(id, frontMatter.recurrence);
     if ((previous?.recurrence !== undefined || this.recurrenceHistory.has(id)) && frontMatter.recurrence === undefined) {
-      if ([...this.getActions().values()].some(action => action.frontMatter.occurrence?.template === id)) throw new Error('Cannot remove recurrence from a referenced template; retain the template with recurrence: [].');
-      throw new Error('Cannot clear a recurrence template; remove its schedules and retain recurrence: [].');
+      throw clearedTemplateError([...this.getActions().values()].some(action => action.frontMatter.occurrence?.template === id));
     }
     if (frontMatter.occurrence) {
       frontMatter.occurrence = assertOccurrence(frontMatter.occurrence);
@@ -708,7 +704,7 @@ export class Store {
   // layout) and upsert its entry into memory, keyed by created timestamp.
   // Parse the rendered block so preserved external link edits are also reflected
   // in relationships immediately, before the watcher sees the file.
-  saveEntry(created: string, _projectIds: string[], _actionIds: string[], _content: string, file: string, content: string | ((source: string | undefined) => string)): void {
+  saveEntry(created: string, file: string, content: string | ((source: string | undefined) => string)): void {
     assertManagedPath(this.dataDir, file, 'file', true);
     const weeklyContent = typeof content === 'function' ? this.prepareSourceMutation(file, content) : content;
     const entry = parseWeeklyFile(weeklyContent, basename(file)).value.entries.find(entry => entry.meta.created === created);
@@ -753,7 +749,7 @@ export class Store {
     let saved: boolean;
     try { saved = updateIndexDescription(indexFile, id, desc, this.dataDir); }
     catch (error) {
-      recordMutationFailure(this, {kind: 'index', id, path: indexFile, fields: ['description'], message: error instanceof Error ? error.message : String(error)});
+      recordMutationFailure(this, {kind: 'index', id, path: indexFile, fields: ['description'], message: errorMessage(error)});
       throw error;
     }
     if (!saved) {
@@ -918,7 +914,7 @@ export class Store {
         }
       } catch (error) {
         issues.push({ severity: 'error', code: 'artifact_attachment_index_error', file: af.relPath,
-          message: `Attachment index could not be reconciled: ${error instanceof Error ? error.message : String(error)}` });
+          message: `Attachment index could not be reconciled: ${errorMessage(error)}` });
       }
       return take(result, af.relPath);
     });
@@ -943,7 +939,7 @@ export class Store {
     const traversed = collectArtifactReferenceSources(this.dataDir, sources, this.artifacts);
     this.referencedArtifactFiles = traversed.attachments;
     this.refreshAttachmentWatches();
-    this.issues = this.issues.filter(issue => !issue.code.startsWith('artifact_reference_') && issue.code !== 'artifact_attachment_read_error');
+    this.issues = this.issues.filter(sourceDiagnostic);
     const sourceFile = (handle: string): string => {
       if (handle.startsWith('#entry/')) return this.files.notes.get(handle.slice(7)) ?? handle;
       if (handle.startsWith('#project/')) return this.files.projects.get(handle.slice(9)) ?? handle;

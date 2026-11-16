@@ -11,7 +11,7 @@ import type { HotSet, PendingUpdate } from '../../cli/src/core/data-snapshot';
 import { usable } from '../src/modal';
 import { loadApp } from './app-harness';
 import { snapshotFixture } from './snapshot-fixture';
-import { stubBrowserFetch } from './auth-fixture';
+import { stubBrowserFetch } from './connection-fixture';
 
 interface App {
   state: { filter: EntityRef | null; search: string; source?: string; doc: ViewState['doc']; store: RemoteStore | null };
@@ -31,14 +31,14 @@ interface App {
   contextPanel?: ReturnType<typeof createContextPanel>;
   navigationSidebar?: { dispose(): void; layout(): void; openSearch(): void; closePopover(): void };
   stopControl?: () => void;
-  datePicker: { close(): void; dispose?(): void };
+  datePicker: { dispose?(): void };
 }
 
 const project = '2026-10-04-program', action = '2026-10-04-task', otherProject = '2026-10-03-other';
 const element = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
 let app: App | undefined;
 afterEach(() => {
-  app?.stopControl?.(); app?.datePicker.close(); app?.hideConfigModal(); app?.clearInstanceView();
+  app?.stopControl?.(); app?.hideConfigModal(); app?.clearInstanceView();
   app?.navigationSidebar?.dispose(); app?.contextPanel?.destroy(); app?.datePicker.dispose?.(); app = undefined;
   vi.restoreAllMocks(); vi.unstubAllGlobals(); document.body.replaceChildren(); localStorage.clear(); history.replaceState(null, '', '/');
 });
@@ -89,6 +89,20 @@ function timelineProject(): HTMLElement { return document.querySelector<HTMLElem
 function title(): string | null { return document.querySelector('#side-panel-body .entity-title')?.textContent ?? null; }
 
 describe('context panel application navigation', () => {
+  it('keeps Context open when its compact Summary launcher is parked during the click', async () => {
+    const { api } = await setup(1120);
+    await vi.waitFor(() => expect(element('btn-workspace-summary').hidden).toBe(false));
+    api.contextPanel!.close({ animate: false });
+    element<HTMLButtonElement>('btn-pill-more').click();
+    expect(element('workspace-popover').hidden).toBe(false);
+    const launcher = element<HTMLButtonElement>('btn-workspace-summary');
+    launcher.click();
+    expect(element('workspace-parking').contains(launcher)).toBe(true);
+    expect(element('workspace-popover').hidden).toBe(true);
+    expect(api.contextPanel!.getState().open).toBe(true);
+    expect(element('side-panel').hidden).toBe(false);
+  });
+
   it('formats inspected named-zone dates locally and counts their local calendar day', async () => {
     const previousZone = process.env.TZ;
     process.env.TZ = 'America/Los_Angeles';

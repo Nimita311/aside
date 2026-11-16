@@ -13,7 +13,6 @@ import { FileLock, isLocked } from '../src/daemon/filelock.js';
 import { readJob, renderJob, writeJob } from '../src/daemon/launchd.js';
 import { ownHello, type HelloResult, type Status, type StopResult } from '../src/daemon/protocol.js';
 import { CalClient } from '../src/mcp/calendar/client.js';
-import { WebAuth } from '../src/web/auth.js';
 import { buildSchema } from 'graphql';
 import type { GraphQLSchemaResult } from '../src/graphql/schema.js';
 import type { InstanceSessionState } from '../src/mcp/instance-session.js';
@@ -40,14 +39,6 @@ describe('daemon', () => {
   let root: string;
   let daemons: Daemon[];
   let clients: DaemonClient[];
-  let webToken: string | undefined;
-
-  function authenticatedFetch(url: string, options: RequestInit = {}): Promise<Response> {
-    webToken ??= new WebAuth(paths.state).issue().token;
-    const headers = new Headers(options.headers);
-    if (!headers.has('Authorization')) headers.set('Authorization', `Bearer ${webToken}`);
-    return globalThis.fetch(url, {...options, headers});
-  }
 
   beforeEach(() => {
     home = mkdtempSync('/tmp/aside-test-d-');
@@ -55,7 +46,6 @@ describe('daemon', () => {
     root = realpathSync(mkdtempSync('/tmp/aside-test-i-'));
     daemons = [];
     clients = [];
-    webToken = undefined;
   });
 
   afterEach(async () => {
@@ -160,8 +150,8 @@ describe('daemon', () => {
     const daemon = await startDaemon(), c = client();
     await c.request('known.add', { paths: [linked] });
     expect((await c.request<Status>('status')).known.sort()).toEqual([primary, linked].sort());
-    const { port } = await c.request<{ port: number }>('serve', {navigate: false});
-    const listing = async () => (await authenticatedFetch(`http://127.0.0.1:${port}/-/api/instances`)).json();
+    const { port } = await c.request<{ port: number }>('serve', {});
+    const listing = async () => (await fetch(`http://127.0.0.1:${port}/-/api/instances`)).json();
     expect(await listing()).toHaveLength(2);
     await c.request('known.forget', { paths: [primary] });
     expect(await listing()).toEqual([]);
@@ -177,12 +167,12 @@ describe('daemon', () => {
     const host = new InstanceHost(new CalClient(null));
     await startDaemon({ known: [one, two], host });
     const c = client();
-    const { port } = await c.request<{ port: number }>('serve', {navigate: false});
+    const { port } = await c.request<{ port: number }>('serve', {});
     const base = `http://127.0.0.1:${port}`;
-    const chooser = await authenticatedFetch(`${base}/-/api/control`);
+    const chooser = await fetch(`${base}/-/api/control`);
     const chooserReader = chooser.body!.getReader();
     await chooserReader.read();
-    const selected = await authenticatedFetch(`${base}/-/api/instances/one/control`);
+    const selected = await fetch(`${base}/-/api/instances/one/control`);
     const selectedReader = selected.body!.getReader();
     await selectedReader.read();
     c.close();
@@ -199,7 +189,7 @@ describe('daemon', () => {
     const host = new InstanceHost(new CalClient(null));
     const daemon = await startDaemon({ known: [alias, one], host });
     const { port } = await host.web();
-    const catalogue = await (await authenticatedFetch(`http://127.0.0.1:${port}/-/api/instances`)).json();
+    const catalogue = await (await fetch(`http://127.0.0.1:${port}/-/api/instances`)).json();
     expect(catalogue).toEqual([expect.objectContaining({ id: 'one', path: canonical })]);
     expect(host.loadedPaths()).toEqual([canonical]);
     expect(JSON.parse(readFileSync(paths.known, 'utf8'))).toEqual([canonical]);
@@ -207,7 +197,7 @@ describe('daemon', () => {
     const restarted = new InstanceHost(new CalClient(null));
     await startDaemon({ host: restarted });
     const { port: nextPort } = await restarted.web();
-    expect(await (await authenticatedFetch(`http://127.0.0.1:${nextPort}/-/api/instances`)).json())
+    expect(await (await fetch(`http://127.0.0.1:${nextPort}/-/api/instances`)).json())
       .toEqual([expect.objectContaining({ id: 'one', path: canonical })]);
     expect(restarted.loadedPaths()).toEqual([canonical]);
   });
@@ -257,7 +247,7 @@ describe('daemon', () => {
       await startDaemon({ known: [one], host });
       expect(JSON.parse(readFileSync(paths.known, 'utf8'))).toEqual([one]); expect(host.loadedPaths()).toEqual([]);
       const { port } = await host.web();
-      expect(await (await authenticatedFetch(`http://127.0.0.1:${port}/-/api/instances`)).json()).toEqual([expect.objectContaining({ path: one })]);
+      expect(await (await fetch(`http://127.0.0.1:${port}/-/api/instances`)).json()).toEqual([expect.objectContaining({ path: one })]);
     } finally { loading.mockRestore(); }
   });
 
@@ -300,9 +290,9 @@ describe('daemon', () => {
     expect(await daemon.listen()).toBe(true);
     daemons.push(daemon);
     const c = client();
-    const { port } = await c.request<{ port: number }>('serve', {navigate: false});
-    const register = () => authenticatedFetch(`http://127.0.0.1:${port}/-/api/instances/register`, {
-      method: 'POST', headers: { 'X-Aside-Control': '1' }, body: JSON.stringify({ kind: 'manifest' }),
+    const { port } = await c.request<{ port: number }>('serve', {});
+    const register = () => fetch(`http://127.0.0.1:${port}/-/api/instances/register`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ kind: 'manifest' }),
     });
     const first = await register();
     expect(first.status).toBe(200);
@@ -326,10 +316,10 @@ describe('daemon', () => {
     const daemon = new Daemon({ paths, host, webPort: 0, picker });
     expect(await daemon.listen()).toBe(true); daemons.push(daemon);
     const { port } = await host.web();
-    const pick = () => authenticatedFetch(`http://127.0.0.1:${port}/-/api/instances/pick`, { method: 'POST', headers: { Origin: `http://127.0.0.1:${port}`, 'Content-Type': 'application/json', 'X-Aside-Control': '1' }, body: JSON.stringify({ kind: 'directory' }) });
+    const pick = () => fetch(`http://127.0.0.1:${port}/-/api/instances/pick`, { method: 'POST', headers: { Origin: `http://127.0.0.1:${port}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ kind: 'directory' }) });
     expect(await (await pick()).json()).toEqual({ path: one });
     expect(picker).toHaveBeenCalledWith('directory'); expect(host.loadedPaths()).toEqual([]);
-    expect((await (await authenticatedFetch(`http://127.0.0.1:${port}/-/api/instances`)).json())).toEqual([]);
+    expect((await (await fetch(`http://127.0.0.1:${port}/-/api/instances`)).json())).toEqual([]);
     picker.mockResolvedValue(null); expect(await (await pick()).json()).toEqual({ path: null });
     expect(host.loadedPaths()).toEqual([]);
   });
@@ -338,7 +328,7 @@ describe('daemon', () => {
     const one = instance('one'), host = new InstanceHost(new CalClient(null));
     await startDaemon({ known: [one], host });
     const summary = vi.spyOn(host, 'summary'), { port } = await host.web();
-    const request = (suffix: string) => authenticatedFetch(`http://127.0.0.1:${port}/-/api/instances${suffix}`);
+    const request = (suffix: string) => fetch(`http://127.0.0.1:${port}/-/api/instances${suffix}`);
     const listing = await (await request('')).json();
     expect(listing[0].summary).toMatchObject({ projects: { open: 0, total: 0 }, actions: { open: 0, total: 0 }, entries: 0 });
     expect(summary).toHaveBeenCalledWith(one); summary.mockClear();
@@ -355,8 +345,8 @@ describe('daemon', () => {
     expect(await daemon.listen()).toBe(true); daemons.push(daemon);
     const { port } = await host.web();
     for (const entered of [one, join(one, 'aside.md'), alias, `~/${relative(homedir(), one)}`]) {
-      const response = await authenticatedFetch(`http://127.0.0.1:${port}/-/api/instances/register`, {
-        method: 'POST', headers: { 'X-Aside-Control': '1' }, body: JSON.stringify({ path: `  ${entered}  ` }),
+      const response = await fetch(`http://127.0.0.1:${port}/-/api/instances/register`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ path: `  ${entered}  ` }),
       });
       expect(response.status).toBe(200);
       expect((await response.json()).instance.path).toBe(one);
@@ -372,8 +362,8 @@ describe('daemon', () => {
     const daemon = new Daemon({ paths, host, webPort: 0, picker });
     expect(await daemon.listen()).toBe(true); daemons.push(daemon);
     const { port } = await host.web();
-    const register = (body: unknown) => authenticatedFetch(`http://127.0.0.1:${port}/-/api/instances/register`, {
-      method: 'POST', headers: { 'X-Aside-Control': '1' }, body: JSON.stringify(body),
+    const register = (body: unknown) => fetch(`http://127.0.0.1:${port}/-/api/instances/register`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
     });
     for (const body of [{ path: '' }, { path: ' ' }, { path: 3 }, { path: null }, { path: 'relative' }, { path: one, kind: 'manifest' }]) {
       expect((await register(body)).status).toBe(400);
@@ -391,34 +381,34 @@ describe('daemon', () => {
     const daemon = await startDaemon();
     const c = client();
     await c.request('known.add', { paths: [one, copy] });
-    const { port } = await c.request<{ port: number }>('serve', {navigate: false});
+    const { port } = await c.request<{ port: number }>('serve', {});
     const base = `http://127.0.0.1:${port}/-/api/instances`;
-    expect((await authenticatedFetch(`${base}/one`)).status).toBe(404);
-    const response = await authenticatedFetch(`${base}/remove`, {
-      method: 'POST', headers: { 'X-Aside-Control': '1' }, body: JSON.stringify({ path: copy }),
+    expect((await fetch(`${base}/one`)).status).toBe(404);
+    const response = await fetch(`${base}/remove`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ path: copy }),
     });
     expect(response.status).toBe(200);
     expect((await response.json()).instances).toEqual([expect.objectContaining({ id: 'one', path: one })]);
-    expect((await authenticatedFetch(`${base}/one`)).status).toBe(200);
+    expect((await fetch(`${base}/one`)).status).toBe(200);
     expect(readFileSync(join(copy, 'aside.md'), 'utf8')).toBe(manifest);
     expect(JSON.parse(readFileSync(paths.known, 'utf8'))).toEqual([one]);
     await daemon.shutdown();
     const host = new InstanceHost(new CalClient(null));
     await startDaemon({ host });
     const restarted = await host.web();
-    expect((await (await authenticatedFetch(`http://127.0.0.1:${restarted.port}/-/api/instances`)).json()).map((row: { path: string }) => row.path)).toEqual([one]);
+    expect((await (await fetch(`http://127.0.0.1:${restarted.port}/-/api/instances`)).json()).map((row: { path: string }) => row.path)).toEqual([one]);
   });
 
   it('validates browser removal requests before touching the catalogue', async () => {
     const one = instance('one');
     const c = client();
     await c.request('known.add', { paths: [one] });
-    const { port } = await c.request<{ port: number }>('serve', {navigate: false});
+    const { port } = await c.request<{ port: number }>('serve', {});
     const endpoint = `http://127.0.0.1:${port}/-/api/instances/remove`;
-    const post = (body: unknown, headers: Record<string, string> = { 'X-Aside-Control': '1' }) => authenticatedFetch(endpoint, { method: 'POST', headers, body: JSON.stringify(body) });
-    expect((await authenticatedFetch(endpoint)).status).toBe(405);
+    const post = (body: unknown, headers: Record<string, string> = { 'Content-Type': 'application/json' }) => fetch(endpoint, { method: 'POST', headers, body: JSON.stringify(body) });
+    expect((await fetch(endpoint)).status).toBe(405);
     expect((await post({ path: one }, {})).status).toBe(403);
-    expect((await post({ path: one }, { 'X-Aside-Control': '1', Origin: 'http://evil.example' })).status).toBe(403);
+    expect((await post({ path: one }, { 'Content-Type': 'application/json', Origin: 'http://evil.example' })).status).toBe(403);
     for (const body of [{}, { path: 3 }, { path: '' }, { path: 'one' }]) expect((await post(body)).status).toBe(400);
     expect((await post({ path: join(root, 'unknown') })).status).toBe(404);
     expect(JSON.parse(readFileSync(paths.known, 'utf8'))).toEqual([one]);
@@ -429,9 +419,9 @@ describe('daemon', () => {
     await startDaemon({ host });
     const c = client();
     await c.request('instance.info', { instance: one });
-    const { port } = await c.request<{ port: number }>('serve', {navigate: false});
-    const response = await authenticatedFetch(`http://127.0.0.1:${port}/-/api/instances/remove`, {
-      method: 'POST', headers: { 'X-Aside-Control': '1' }, body: JSON.stringify({ path: one }),
+    const { port } = await c.request<{ port: number }>('serve', {});
+    const response = await fetch(`http://127.0.0.1:${port}/-/api/instances/remove`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ path: one }),
     });
     expect((await response.json()).instances).toEqual([]);
     expect(host.loadedPaths()).toEqual([one]);
@@ -684,7 +674,7 @@ describe('daemon', () => {
     (daemon as any).reconcileKnown();
     const prune = vi.spyOn(daemon as any, 'pruneKnown');
     const web = await host.web();
-    const listing = await (await authenticatedFetch(`http://127.0.0.1:${web.port}/-/api/instances`)).json();
+    const listing = await (await fetch(`http://127.0.0.1:${web.port}/-/api/instances`)).json();
     expect(listing.map((instance: { path: string }) => instance.path)).toEqual([valid]);
     expect(JSON.parse(readFileSync(paths.known, 'utf8'))).toEqual([valid]);
     expect(host.loadedPaths()).toEqual([valid]);
@@ -755,7 +745,7 @@ describe('daemon', () => {
     await user.request('instance.info', { instance: alpha }, { read: true });
     const web = await host.web(join(__dirname, '../../webapp'));
     const abort = new AbortController();
-    const tab = await authenticatedFetch(`http://127.0.0.1:${web.port}/-/api/instances/alpha/control`, { signal: abort.signal });
+    const tab = await fetch(`http://127.0.0.1:${web.port}/-/api/instances/alpha/control`, { signal: abort.signal });
     expect(tab.status).toBe(200);
     await until(() => host.tabCount() === 1);
     const env = { ...process.env, ASIDE_DAEMON_HOME: home, ASIDE_CAL_BIN: '/nonexistent/aside-cal' };
@@ -788,15 +778,17 @@ describe('daemon', () => {
     const alpha = instance('alpha');
     const host = new InstanceHost(new CalClient(null));
     await startDaemon({ known: [alpha], host });
-    const user = client();
+    // The busy client runs on a connection the test holds, to observe its close.
+    const connection = (await tryConnect(paths))!;
+    const user = new DaemonClient({ paths, initialConnection: connection }); clients.push(user);
     await user.request('instance.info', { instance: alpha }, { read: true });
     const disconnected = vi.fn();
-    user.onDisconnect(disconnected);
+    connection.peer.onClose(disconnected);
     const web = await host.web(join(__dirname, '../../webapp'));
     const abort = new AbortController();
     const flush = vi.spyOn(host, 'flush');
     try {
-      const tab = await authenticatedFetch(`http://127.0.0.1:${web.port}/-/api/instances/alpha/control`, { signal: abort.signal });
+      const tab = await fetch(`http://127.0.0.1:${web.port}/-/api/instances/alpha/control`, { signal: abort.signal });
       expect(tab.status).toBe(200);
       await until(() => host.tabCount() === 1);
       if (paths.job) writeJob(paths, process.execPath, BUNDLE, 1234);

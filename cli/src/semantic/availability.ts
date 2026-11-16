@@ -1,4 +1,4 @@
-import {OllamaEmbedder, SemanticSetupError} from './embedding.js';
+import {configuredEmbeddingModel, configuredEmbeddingUrl, OllamaEmbedder, SemanticSetupError} from './embedding.js';
 
 export type SemanticAvailabilityReason = 'AVAILABLE' | 'UNSUPPORTED_PLATFORM' | 'INDEX_UNAVAILABLE'
   | 'OLLAMA_UNREACHABLE' | 'MODEL_MISSING' | 'CONFIGURATION_ERROR' | 'OLLAMA_ERROR';
@@ -28,8 +28,8 @@ const pullCommand = (model: string) => `ollama pull ${/^[\w./:@-]+$/.test(model)
 /** Check dependencies through local module loading and metadata reads only. */
 export async function semanticSearchAvailability(options: SemanticAvailabilityOptions = {}): Promise<SemanticAvailability> {
   options.signal?.throwIfAborted();
-  const model = options.model ?? process.env.ASIDE_EMBEDDING_MODEL ?? 'qwen3-embedding:0.6b';
-  const url = (options.url ?? process.env.ASIDE_EMBEDDING_URL ?? 'http://127.0.0.1:11434').replace(/\/$/, '');
+  const model = options.model ?? configuredEmbeddingModel();
+  const url = (options.url ?? configuredEmbeddingUrl()).replace(/\/$/, '');
   const timeoutMs = options.timeoutMs ?? 3000;
   const result = (reason: SemanticAvailabilityReason, message: string, recovery: string | null): SemanticAvailability =>
     ({available: reason === 'AVAILABLE', reason, message, recovery, model});

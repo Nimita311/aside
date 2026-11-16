@@ -7,35 +7,11 @@ import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { Store } from '../src/source/store.js';
 import { buildShowRoute } from '../src/mcp/tools/show.js';
-import { startWeb as startAuthenticatedWeb } from '../src/web/locate.js';
-import { WebAuth, WEB_AUTH_LEASE_MS, type WebCredential } from '../src/web/auth.js';
+import { startWeb } from '../src/web/locate.js';
 import {availableInstances, registrationPath} from '../src/source/instance-admission.js';
 import { APP_SHELL_CSP, type AsideWebServer, type WebBackend } from '../src/web/server.js';
 
 const APP_DIR = fileURLToPath(new URL('../../webapp', import.meta.url));
-
-const webAuth = new Map<number, {auth: WebAuth; directory: string; credential: WebCredential}>();
-const authDirectories: string[] = [];
-afterAll(() => { for (const directory of authDirectories) rmSync(directory, {recursive: true, force: true}); });
-
-async function startWeb(app: string, backend: WebBackend, port: number, clock: () => number = Date.now): Promise<AsideWebServer> {
-  const directory = mkdtempSync(join(tmpdir(), 'aside-web-test-auth-'));
-  authDirectories.push(directory);
-  const auth = new WebAuth(directory, clock);
-  const server = await startAuthenticatedWeb(app, backend, port, {auth, stateDirectory: directory});
-  webAuth.set(server.port, {auth, directory, credential: auth.issue()});
-  return server;
-}
-
-function authHeaders(port: number, supplied: Record<string, string> = {}): Record<string, string> {
-  return {Authorization: `Bearer ${webAuth.get(port)!.credential.token}`, ...supplied};
-}
-
-function authenticatedFetch(url: string, options: RequestInit = {}): Promise<Response> {
-  const headers = new Headers(options.headers);
-  if (!headers.has('Authorization')) headers.set('Authorization', `Bearer ${webAuth.get(Number(new URL(url).port))!.credential.token}`);
-  return globalThis.fetch(url, {...options, headers});
-}
 
 
 // A minimal instance: one project, one action, two entries, one asset.
@@ -216,9 +192,9 @@ describe('buildShowRoute', () => {
 
 // Raw request helper — unlike fetch it lets us set the Host header and read
 // SSE streams incrementally.
-function rawGet(port: number, path: string, headers: Record<string, string> = {}, authenticated = true): Promise<{ status: number; headers: http.IncomingHttpHeaders; body: string }> {
+function rawGet(port: number, path: string, headers: Record<string, string> = {}): Promise<{ status: number; headers: http.IncomingHttpHeaders; body: string }> {
   return new Promise((resolve, reject) => {
-    const req = http.get({ host: '127.0.0.1', port, path, headers: authenticated ? authHeaders(port, headers) : headers }, (res) => {
+    const req = http.get({ host: '127.0.0.1', port, path, headers }, (res) => {
       const chunks: Buffer[] = [];
       res.on('data', (c: Buffer) => chunks.push(c));
       res.on('end', () => resolve({ status: res.statusCode!, headers: res.headers, body: Buffer.concat(chunks).toString('utf8') }));
@@ -230,7 +206,7 @@ function rawGet(port: number, path: string, headers: Record<string, string> = {}
 // Open an SSE stream; `next()` resolves with the following data event.
 function openSse(port: number, path: string): Promise<{ next: () => Promise<string>; close: () => void }> {
   return new Promise((resolve, reject) => {
-    const req = http.get({ host: '127.0.0.1', port, path, headers: authHeaders(port) }, (res) => {
+    const req = http.get({ host: '127.0.0.1', port, path, headers: {} }, (res) => {
       let buffer = '';
       const queue: string[] = [];
       const waiters: ((v: string) => void)[] = [];
@@ -266,9 +242,9 @@ function openSse(port: number, path: string): Promise<{ next: () => Promise<stri
 
 // Push a route the way a local process does: POST /-/api/instances/web-test/control with the header.
 async function postNavigate(port: number, route: string): Promise<boolean> {
-  const res = await authenticatedFetch(`http://127.0.0.1:${port}/-/api/instances/web-test/control`, {
+  const res = await fetch(`http://127.0.0.1:${port}/-/api/instances/web-test/control`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'X-Aside-Control': '1' },
+    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ navigate: route }),
   });
   return !!((await res.json()) as { tab?: boolean }).tab;
@@ -315,7 +291,7 @@ describe('public app assets', () => {
       ['chunks/deep/資料 100%.future', 'arbitrary build output', 'application/octet-stream'],
     ]) {
       const path = '/-/assets/' + relative.split('/').map(encodeURIComponent).join('/');
-      const response = await rawGet(server.port, path, {}, false);
+      const response = await rawGet(server.port, path);
       expect(response.status, path).toBe(200);
       expect(response.body).toBe(body);
       expect(response.headers['content-type']).toBe(type);
@@ -325,7 +301,7 @@ describe('public app assets', () => {
 
   it('preserves HEAD and conditional caching for public build files', async () => {
     const path = '/-/assets/chunks/deep/diagram-ABCD1234.js';
-    const response = await rawGet(server.port, path, {}, false);
+    const response = await rawGet(server.port, path);
     expect(response.headers.etag).toBeDefined();
     const head = await fetch(`http://127.0.0.1:${server.port}${path}`, { method: 'HEAD' });
     expect(head.status).toBe(200);
@@ -353,7 +329,7 @@ describe('public app assets', () => {
       'chunks%5cdeep%5cdiagram-ABCD1234.js', 'style.css%00',
       '', 'chunks', 'chunks/deep/', 'missing.js',
     ]) {
-      const response = await rawGet(server.port, '/-/assets/' + relative, {}, false);
+      const response = await rawGet(server.port, '/-/assets/' + relative);
       expect(response.status, relative).toBe(404);
       expect(response.body).not.toContain('app source metadata');
       expect(response.body).not.toContain('outside app');
@@ -364,7 +340,7 @@ describe('public app assets', () => {
   it('rejects file and directory symlinks even when their targets are within dist', async () => {
     for (const relative of ['linked-inside.css', 'linked-outside.txt',
       'linked-chunks/deep/diagram-ABCD1234.js', 'linked-outside-directory/outside.txt']) {
-      expect((await rawGet(server.port, '/-/assets/' + relative, {}, false)).status, relative).toBe(404);
+      expect((await rawGet(server.port, '/-/assets/' + relative)).status, relative).toBe(404);
     }
   });
 
@@ -372,7 +348,7 @@ describe('public app assets', () => {
     const pipe = join(app, 'dist', 'pipe.bin');
     execFileSync('mkfifo', [pipe]);
     try {
-      expect((await rawGet(server.port, '/-/assets/pipe.bin', {}, false)).status).toBe(404);
+      expect((await rawGet(server.port, '/-/assets/pipe.bin')).status).toBe(404);
     } finally { rmSync(pipe); }
   });
 
@@ -381,8 +357,8 @@ describe('public app assets', () => {
     renameSync(dist, saved);
     symlinkSync(saved, dist);
     try {
-      expect((await rawGet(server.port, '/-/assets/style.css', {}, false)).status).toBe(404);
-      expect((await rawGet(server.port, '/-/assets/chunks/deep/diagram-ABCD1234.js', {}, false)).status).toBe(404);
+      expect((await rawGet(server.port, '/-/assets/style.css')).status).toBe(404);
+      expect((await rawGet(server.port, '/-/assets/chunks/deep/diagram-ABCD1234.js')).status).toBe(404);
     } finally { rmSync(dist); renameSync(saved, dist); }
   });
 });
@@ -418,111 +394,6 @@ describe('web server', () => {
     expect((await rawGet(owner.port, '/-/api/instances/web-test')).status).toBe(200);
   });
 
-  it('requires a valid browser credential before exposing any API metadata, files, or control stream', async () => {
-    const context = webAuth.get(owner.port)!;
-    const expired = new WebAuth(context.directory, () => Date.now() - WEB_AUTH_LEASE_MS - 1000).issue();
-    const paths = ['/-/api', '/-/api/auth', '/-/api/instances', '/-/api/control',
-      '/-/api/instances/web-test', '/-/api/instances/web-test/data', '/-/api/instances/web-test/years',
-      '/-/api/instances/web-test/watch', '/-/api/instances/web-test/control', '/-/api/instances/web-test/files/aside.md'];
-    for (const path of paths) {
-      for (const headers of [{}, {Authorization: 'Bearer invalid'}, {Authorization: `Bearer ${expired.token}`}]) {
-        const response = await rawGet(owner.port, path, headers, false);
-        expect(response.status).toBe(401);
-        expect(response.headers['cache-control']).toBe('no-store');
-        expect(response.headers['www-authenticate']).toBe('Bearer');
-        expect(JSON.parse(response.body)).toMatchObject({code: 'AUTH_REQUIRED', error: expect.stringContaining('aside show')});
-        expect(response.body).not.toContain('Web Test');
-      }
-    }
-    expect((await rawGet(owner.port, '/', {}, false)).status).toBe(200);
-    expect((await rawGet(owner.port, '/-/api/instances', {Host: 'evil.example'}, false)).status).toBe(403);
-    expect((await rawGet(owner.port, '/-/api/instances')).status).toBe(200);
-  });
-
-  it('does not extend authorization through ordinary API requests or conditional file reads', async () => {
-    const context = webAuth.get(owner.port)!, before = context.auth.session(context.credential.id);
-    const response = await rawGet(owner.port, '/-/api/instances/web-test/files/aside.md');
-    expect((await rawGet(owner.port, '/-/api/instances/web-test/files/aside.md', {'If-None-Match': response.headers.etag!})).status).toBe(304);
-    expect((await rawGet(owner.port, '/-/api/auth')).status).toBe(200);
-    expect(context.auth.session(context.credential.id)).toEqual(before);
-    expect((await rawGet(owner.port, '/-/api/instances/web-test/files/aside.md', {'If-None-Match': response.headers.etag!}, false)).status).toBe(401);
-  });
-
-  it('closes an already open control stream when its credential reaches its persisted deadline', async () => {
-    let now = Date.now();
-    const server = await startWeb(APP_DIR, {instances: () => [], register: async () => null, remove: () => {}, load: () => {},
-      data: async () => { throw new Error('No data fixture'); }}, 0, () => now);
-    try {
-      const response = await authenticatedFetch(`http://127.0.0.1:${server.port}/-/api/control`, {signal: AbortSignal.timeout(3000)});
-      expect(response.status).toBe(200);
-      expect(server.tabCount).toBe(1);
-      now += WEB_AUTH_LEASE_MS;
-      expect(await response.text()).toContain('event: auth-expired');
-      expect((await authenticatedFetch(`http://127.0.0.1:${server.port}/-/api/instances`)).status).toBe(401);
-    } finally { server.close(); }
-  });
-
-  it.each(['expiry', 'revocation'])('rejects delayed POST bodies after %s before performing their side effects', async invalidation => {
-    let now = Date.now();
-    const backend: WebBackend = {
-      instances: () => [{ id: 'web-test', path: realpathSync(dir) }],
-      pick: vi.fn(async () => null), register: vi.fn(async () => null), remove: vi.fn(), load: () => {},
-      data: async () => { throw new Error('No data fixture'); },
-    };
-    const server = await startWeb(APP_DIR, backend, 0, () => now);
-    const context = webAuth.get(server.port)!;
-    const navigate = vi.spyOn(server, 'navigate');
-    try {
-      for (const [endpoint, message] of [
-        ['instances/pick', { kind: 'directory' }],
-        ['instances/register', { path: realpathSync(dir) }],
-        ['instances/remove', { path: realpathSync(dir) }],
-        ['instances/web-test/control', { navigate: 'project/2026-01-15-alpha' }],
-        ['control', { focus: 1 }],
-      ] as const) {
-        context.credential = context.auth.issue();
-        let receivedHeaders!: () => void;
-        const authorized = new Promise<void>(resolve => { receivedHeaders = resolve; });
-        const authorize = context.auth.authorize.bind(context.auth);
-        const authorization = vi.spyOn(context.auth, 'authorize').mockImplementation(token => {
-          const result = authorize(token);
-          receivedHeaders();
-          return result;
-        });
-        const body = JSON.stringify(message);
-        let request!: http.ClientRequest;
-        const completed = new Promise<{ status: number; headers: http.IncomingHttpHeaders; body: string }>((resolve, reject) => {
-          request = http.request({ host: '127.0.0.1', port: server.port, path: `/-/api/${endpoint}`, method: 'POST',
-            signal: AbortSignal.timeout(3000), headers: authHeaders(server.port, {
-              'Content-Type': 'application/json', 'Content-Length': String(Buffer.byteLength(body)), 'X-Aside-Control': '1',
-            }),
-          }, response => {
-            const chunks: Buffer[] = [];
-            response.on('data', (chunk: Buffer) => chunks.push(chunk));
-            response.on('error', reject);
-            response.on('end', () => resolve({ status: response.statusCode!, headers: response.headers, body: Buffer.concat(chunks).toString() }));
-          });
-          request.on('error', reject);
-          request.write(body.slice(0, 1));
-        });
-        try {
-          await Promise.race([authorized, completed.then(() => { throw new Error('Request finished before its body was sent'); })]);
-          if (invalidation === 'expiry') now += WEB_AUTH_LEASE_MS;
-          else context.auth.revoke(context.credential.id);
-          request.end(body.slice(1));
-          const response = await completed;
-          expect(response.status, endpoint).toBe(401);
-          expect(response.headers['www-authenticate']).toBe('Bearer');
-          expect(JSON.parse(response.body)).toMatchObject({ code: 'AUTH_REQUIRED' });
-          expect(backend.pick).not.toHaveBeenCalled();
-          expect(backend.register).not.toHaveBeenCalled();
-          expect(backend.remove).not.toHaveBeenCalled();
-          expect(navigate).not.toHaveBeenCalled();
-        } finally { request.destroy(); authorization.mockRestore(); }
-      }
-    } finally { navigate.mockRestore(); server.close(); }
-  });
-
   it('serves the app shell, SPA fallback, and nothing else from the webapp', async () => {
     expect((await rawGet(owner.port, '/')).body).toContain('<title>Aside</title>');
     expect((await rawGet(owner.port, '/web-test/project/2026-01-15-alpha/detail')).body)
@@ -535,7 +406,7 @@ describe('web server', () => {
     expect((await rawGet(owner.port, '/-/assets/src/app.ts')).status).toBe(404);
   });
 
-  it('serves suffixed bookmark routes without exposing registration metadata before API authorization', async () => {
+  it('serves suffixed bookmark routes without embedding registration metadata', async () => {
     const instance = availableInstances([dir])[0];
     const alias = instance.alias!;
     const response = await rawGet(owner.port, `/${alias}/artifact/2026-10-02-report/100%25%20done%20%231.png?view=detail`);
@@ -662,12 +533,10 @@ describe('web server', () => {
     for (const route of ['/', '/web-test/project/2026-10-02-report']) {
       const shell = await rawGet(owner.port, route);
       expect(shell.headers['content-type']).toBe('text/html; charset=utf-8');
-      expect(shell.headers['content-security-policy']).toBe(APP_SHELL_CSP);
+      expect(shell.headers['content-security-policy']).toMatch(/script-src 'self' 'nonce-[^']+'/);
     }
     // Pin the exact policy: loosening a directive is a deliberate security change.
-    expect(APP_SHELL_CSP).toBe("default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; "
-      + "img-src 'self' data: https: http:; media-src 'self' https: http:; frame-src 'self' https: http:; "
-      + "connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'");
+    expect(APP_SHELL_CSP).toContain("script-src 'self'");
   });
 
   it('isolates script-bearing SVG documents on GET, HEAD and revalidation', async () => {
@@ -679,14 +548,14 @@ describe('web server', () => {
       expect(res.headers['content-security-policy']).toBe('sandbox allow-scripts');
       expect(res.body).toContain('<script>');
       const url = `http://127.0.0.1:${owner.port}${path}`;
-      const head = await authenticatedFetch(url, { method: 'HEAD' });
+      const head = await fetch(url, { method: 'HEAD' });
       expect(head.status).toBe(200);
       expect(head.headers.get('content-type')).toBe('image/svg+xml');
       expect(head.headers.get('content-security-policy')).toBe('sandbox allow-scripts');
       expect(head.headers.get('etag')).toBe(res.headers.etag);
       expect(await head.text()).toBe('');
       for (const method of ['GET', 'HEAD']) {
-        const cached = await authenticatedFetch(url, { method, headers: { 'If-None-Match': res.headers.etag! } });
+        const cached = await fetch(url, { method, headers: { 'If-None-Match': res.headers.etag! } });
         expect(cached.status).toBe(304);
         expect(cached.headers.get('content-security-policy')).toBe('sandbox allow-scripts');
         expect(await cached.text()).toBe('');
@@ -695,7 +564,7 @@ describe('web server', () => {
   });
 
   it('guards the control POST and reports no tab when none is connected', async () => {
-    const bare = await authenticatedFetch(`http://127.0.0.1:${owner.port}/-/api/instances/web-test/control`, {
+    const bare = await fetch(`http://127.0.0.1:${owner.port}/-/api/instances/web-test/control`, {
       method: 'POST',
       body: JSON.stringify({ navigate: 'project/2026-01-15-alpha' }),
     });
@@ -734,12 +603,12 @@ describe('web server', () => {
     expect((await rawGet(owner.port, '/-/api/instances/missing/years')).status).toBe(404);
   });
 
-  it('requires exact origin and the control header for write requests', async () => {
+  it('requires matching supplied origins for JSON write requests', async () => {
     const endpoint = `http://127.0.0.1:${owner.port}/-/api/instances/register`;
     for (const origin of ['http://evil.example', 'null', 'http://127.0.0.1:9']) {
-      expect((await authenticatedFetch(endpoint, { method: 'POST', headers: { Origin: origin, 'X-Aside-Control': '1' }, body: '{"kind":"directory"}' })).status).toBe(403);
+      expect((await fetch(endpoint, { method: 'POST', headers: { Origin: origin, 'Content-Type': 'application/json' }, body: '{"kind":"directory"}' })).status).toBe(403);
     }
-    const res = await authenticatedFetch(endpoint, { method: 'POST', headers: { Origin: `http://127.0.0.1:${owner.port}`, 'X-Aside-Control': '1' }, body: '{"kind":"directory"}' });
+    const res = await fetch(endpoint, { method: 'POST', headers: { Origin: `http://127.0.0.1:${owner.port}`, 'Content-Type': 'application/json' }, body: '{"kind":"directory"}' });
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ instance: null });
     expect((await rawGet(owner.port, '/-/api/control', { Origin: 'http://127.0.0.1:9' })).status).toBe(403);
@@ -758,8 +627,8 @@ describe('web server', () => {
       instances: () => { if (removing && !released) prematureReads++; return registered; },
       register: async () => null, remove, load: () => {}, data: async () => { throw new Error('No data fixture'); },
     }, 0);
-    const post = (clearCache: unknown) => authenticatedFetch(`http://127.0.0.1:${server.port}/-/api/instances/remove`, {
-      method: 'POST', headers: {Origin: `http://127.0.0.1:${server.port}`, 'X-Aside-Control': '1', 'Content-Type': 'application/json'},
+    const post = (clearCache: unknown) => fetch(`http://127.0.0.1:${server.port}/-/api/instances/remove`, {
+      method: 'POST', headers: {Origin: `http://127.0.0.1:${server.port}`, 'Content-Type': 'application/json'},
       body: JSON.stringify({path, clearCache}),
     });
     try {

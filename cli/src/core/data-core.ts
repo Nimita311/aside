@@ -12,15 +12,14 @@ import type {
   ParseIssue,
 } from './types.js';
 import { deriveWeeklyFiles, getMondayOfWeek, weekFilePath, entityFilePath, entryReferences, entityKey, type EntityRef } from './record-reference.js';
-import { parseIndex, parseWeeklyFile, parseProjectFile, parseActionFile, parseArtifactFile, parseManifest, splitFrontMatter } from './parser.js';
-import { artifactHandle, artifactAttachmentRelativePath, parseArtifactHandle } from './artifact-reference.js';
+import { parseIndex, parseWeeklyFile, parseProjectFile, parseActionFile, parseArtifactFile, parseInstanceRecord } from './parser.js';
 
-import { buildRelations, artifactReferenceSources, type RecordCollection, type Relations } from './record-model.js';
+import { buildRelations, artifactReferenceSources, newestFirst, type RecordCollection, type Relations } from './record-model.js';
 import { ENTITY_KINDS, type EntityKind, type EntityRecord, type IndexKind, type InstanceRecord } from './types.js';
 import type { ArtifactReferenceSource as ArtifactSource } from './artifact-reference.js';
 import type { CoreRecords, DataSnapshot, SnapshotRelations } from './data-snapshot.js';
+import { errorMessage } from './error.js';
 export { ENTITY_KINDS };
-export type { Relations, EntityKind, EntityRecord, InstanceRecord };
 
 export interface SearchProgress { loaded: number; total: number; pending: number; complete: boolean; failures: string[] }
 
@@ -30,9 +29,8 @@ export interface FileDiagnostic {
   error?: string;
 }
 
-// A catch-up check's inputs and outputs — see "Catch-up" in spec.md. A light
-// check covers the indexes plus the hot set; a full sweep also revalidates
-// every cached file.
+// A catch-up check's inputs and outputs. A light check covers the indexes plus
+// the hot set; a full sweep also revalidates every cached file.
 export type CheckScope = 'light' | 'full';
 
 const ENTITY_PARSERS: { [K in EntityKind]: (raw: string) => ParseResult<EntityRecord[K]> } = {
@@ -90,6 +88,10 @@ interface Staged<T> {
   value: T | null;
   version: string | null;
   readRevision: number;
+}
+
+function bump(revisions: Map<string, number>, key: string): number {
+  const next = (revisions.get(key) ?? 0) + 1; revisions.set(key, next); return next;
 }
 
 export class DataCore {
@@ -199,11 +201,21 @@ export class DataCore {
     }
   }
   private recordReadFailure(path: string, error: unknown): void {
-    this.recordDiagnostics(path, this.diagnostics.get(path)?.issues ?? [], error instanceof Error ? error.message : String(error));
+    this.recordDiagnostics(path, this.diagnostics.get(path)?.issues ?? [], errorMessage(error));
   }
   private clearReadFailure(path: string): void {
     this.recordDiagnostics(path, this.diagnostics.get(path)?.issues ?? []);
   }
+  // Hold an in-flight read until it settles: a success now lives in its cache,
+  // a failure is free to retry. Search progress follows both edges.
+  private track<T>(loads: Map<string, Promise<T>>, key: string, load: Promise<T>): Promise<T> {
+    loads.set(key, load);
+    this.publishSearch();
+    const done = () => { loads.delete(key); this.publishSearch(); };
+    load.then(done, done);
+    return load;
+  }
+
   private parseResult<T>(result: ParseResult<T>, path: string): T {
     if ((this.fileWriteReadRevisions.get(path) ?? 0) === (this.fileReadRevisions.get(path) ?? 0)) this.recordDiagnostics(path, result.issues);
     return result.value;
@@ -260,7 +272,7 @@ export class DataCore {
   }
 
   getEntries(): Entry[] {
-    return this.entryRecords ??= [...this.weeklyCache.values()].flat().sort((a, b) => a.meta.created < b.meta.created ? 1 : a.meta.created > b.meta.created ? -1 : 0);
+    return this.entryRecords ??= [...this.weeklyCache.values()].flat().sort(newestFirst);
   }
   getProjects(): ReadonlyMap<string, Project> { return this.entities.project; }
   getActions(): ReadonlyMap<string, Action> { return this.entities.action; }
@@ -295,7 +307,7 @@ export class DataCore {
     const index = entries.findIndex(candidate => candidate.meta.created === entry.meta.created);
     if (index >= 0) entries[index] = entry;
     else entries.push(entry);
-    entries.sort((a, b) => a.meta.created < b.meta.created ? 1 : a.meta.created > b.meta.created ? -1 : 0);
+    entries.sort(newestFirst);
     this.cacheWeek(entry.weekFile, entries);
     this.relationsCache = null;
     this.filterWeeksCache.clear();
@@ -333,11 +345,7 @@ export class DataCore {
   }
 
   // Read a file and record its version for later revalidation.
-  private beginFileRead(path: string): number {
-    const revision = (this.fileReadRevisions.get(path) ?? 0) + 1;
-    this.fileReadRevisions.set(path, revision);
-    return revision;
-  }
+  private beginFileRead(path: string): number { return bump(this.fileReadRevisions, path); }
 
   private async readTracked(path: string, superseded?: () => string | null | undefined): Promise<string | null> {
     const readRevision = this.beginFileRead(path);
@@ -368,12 +376,7 @@ export class DataCore {
     try {
       const raw = await this.fileSource().read('aside.md');
       if (raw == null) { this.recordReadFailure('aside.md', 'Instance manifest aside.md is missing'); return; }
-      if (raw != null) {
-        this.instance = {
-          manifest: this.parseResult(parseManifest(raw.text), 'aside.md'),
-          body: splitFrontMatter(raw.text).body.trim(),
-        };
-      }
+      this.instance = this.parseResult(parseInstanceRecord(raw.text), 'aside.md');
     } catch (err) {
       this.recordReadFailure('aside.md', err);
       console.warn('Failed to read aside.md:', err);
@@ -443,7 +446,7 @@ export class DataCore {
       if (raw === null) { this.recordReadFailure(path, 'Record file is missing'); return; }
       const { kind, id } = record;
       this.cacheEntity(kind, id, this.parseResult<EntityRecord[EntityKind]>(ENTITY_PARSERS[kind](raw), path));
-      this.entityWriteRevisions.set(path, (this.entityWriteRevisions.get(path) ?? 0) + 1);
+      bump(this.entityWriteRevisions, path);
       this.relationRevision++; this.relationsCache = null;
       return;
     }
@@ -452,7 +455,7 @@ export class DataCore {
       const raw = await this.readTracked(path);
       if (raw === null) { this.recordReadFailure(path, 'File is missing'); return; }
       this.assetCache.set(path, raw);
-      this.assetWriteRevisions.set(path, (this.assetWriteRevisions.get(path) ?? 0) + 1);
+      bump(this.assetWriteRevisions, path);
       this.recordDiagnostics(path, []); this.relationRevision++; this.relationsCache = null;
       return;
     }
@@ -487,7 +490,7 @@ export class DataCore {
 
   async getPlanningActions(project?: string, after?: string): Promise<PlanningPage> {
     const relations = await this.getRelations();
-    return planningActions(this.entities.action, { projectionsOnly: true, templates: project ? relations.actionsByProject.get(project) ?? [] : undefined, after });
+    return planningActions(this.entities.action, { templates: project ? relations.actionsByProject.get(project) ?? [] : undefined, after });
   }
 
   getCachedArtifact(id: string): Artifact | undefined {
@@ -548,12 +551,7 @@ export class DataCore {
         this.cacheWeek(monday, entries);
         return entries;
       });
-      this.weeklyLoads.set(monday, load);
-      this.publishSearch();
-      // Drop the in-flight entry once settled: a success now lives in
-      // weeklyCache (the early return above), a failure is free to retry.
-      const done = () => { this.weeklyLoads.delete(monday); this.publishSearch(); };
-      load.then(done, done);
+      this.track(this.weeklyLoads, monday, load);
     }
     return load;
   }
@@ -606,10 +604,7 @@ export class DataCore {
       return value;
     });
     load.catch(error => { this.recordReadFailure(path, error); });
-    this.entityLoads.set(path, load);
-    this.publishSearch();
-    const done = () => { this.entityLoads.delete(path); this.publishSearch(); };
-    load.then(done, done);
+    this.track(this.entityLoads, path, load);
     return load;
   }
 
@@ -645,11 +640,7 @@ export class DataCore {
       }
       return text;
     });
-    this.assetLoads.set(path, load);
-    this.publishSearch();
-    const done = () => { this.assetLoads.delete(path); this.publishSearch(); };
-    load.then(done, done);
-    return load;
+    return this.track(this.assetLoads, path, load);
   }
 
   // URL for an asset's bytes, for embedding media directly (see DataSource.assetUrl).
@@ -679,7 +670,7 @@ export class DataCore {
         this.fileWriteReadRevisions.set(path, readRevision);
         this.clearReadFailure(path);
         if (retry || (previous !== undefined && version !== undefined && version !== previous)) {
-          this.assetRevisions.set(path, (this.assetRevisions.get(path) ?? 0) + 1);
+          bump(this.assetRevisions, path);
         }
       }
       return this.assetUrl(path);
@@ -792,6 +783,7 @@ export class DataCore {
     // The rest of the check set: everything cached (full), or the hot set —
     // what's on screen plus the current week, the file still growing.
     const assetsToCheck = new Set<string>();
+    const tracked = (path: string) => this.assetCache.has(path) || this.assetLoads.has(path) || this.assetWriteRevisions.has(path);
     if (scope === 'full') {
       for (const monday of this.weeklyCache.keys()) weeksToCheck.add(monday);
       for (const kind of ENTITY_KINDS) for (const id of this.entities[kind].keys()) addEntity(kind, id);
@@ -801,26 +793,18 @@ export class DataCore {
       for (const monday of hot.weeks) weeksToCheck.add(monday);
       weeksToCheck.add(getMondayOfWeek(new Date()));
       for (const e of hot.entities) addEntity(e.kind, e.id);
-      for (const path of hot.assets) {
-        if (this.assetCache.has(path) || this.assetLoads.has(path) || this.assetWriteRevisions.has(path)) assetsToCheck.add(path);
-      }
+      for (const path of hot.assets) if (tracked(path)) assetsToCheck.add(path);
     }
 
-    for (const path of this.diagnostics.keys()) {
+    // Paths with diagnostics recheck with the sweep. Server-pushed paths check
+    // directly — how a cold file's body edit lands without waiting for a full
+    // sweep. Indexes are always checked above; unrecognized paths matter only
+    // when they're a cached asset.
+    for (const path of [...this.diagnostics.keys(), ...changedPaths]) {
       const record = recordAt(path);
       if (record && 'week' in record) weeksToCheck.add(record.week);
       else if (record) addEntity(record.kind, record.id);
-      else if (this.assetCache.has(path) || this.assetLoads.has(path) || this.assetWriteRevisions.has(path)) assetsToCheck.add(path);
-    }
-
-    // Server-pushed paths check directly — how a cold file's body edit lands
-    // without waiting for a full sweep. Indexes are always checked above;
-    // unrecognized paths matter only when they're a cached asset.
-    for (const path of changedPaths) {
-      const record = recordAt(path);
-      if (record && 'week' in record) weeksToCheck.add(record.week);
-      else if (record) addEntity(record.kind, record.id);
-      else if (this.assetCache.has(path) || this.assetLoads.has(path) || this.assetWriteRevisions.has(path)) assetsToCheck.add(path);
+      else if (tracked(path)) assetsToCheck.add(path);
     }
 
     await mapLimit([...weeksToCheck], 6, async (monday) => {
@@ -887,7 +871,7 @@ export class DataCore {
       for (const [path, staged] of stagedMedia) {
         if (this.assetVersions.get(path) !== staged.base) continue;
         this.assetVersions.set(path, staged.value);
-        this.assetRevisions.set(path, (this.assetRevisions.get(path) ?? 0) + 1);
+        bump(this.assetRevisions, path);
       }
     } };
   }
@@ -919,7 +903,7 @@ export class DataCore {
     const landEntity = <K extends EntityKind>(kind: K, id: string, staged: Staged<EntityRecord[K]>): boolean => {
       const path = entityFilePath(kind, id);
       if (!land(path, staged, value => this.cacheEntity(kind, id, value), () => this.entities[kind].delete(id))) return false;
-      this.entityWriteRevisions.set(path, (this.entityWriteRevisions.get(path) ?? 0) + 1);
+      bump(this.entityWriteRevisions, path);
       return true;
     };
 
@@ -952,7 +936,7 @@ export class DataCore {
     }
     for (const [path, staged] of stagedAssets) {
       if (land(path, staged, (text) => this.assetCache.set(path, text), () => this.assetCache.delete(path))) {
-        this.assetWriteRevisions.set(path, (this.assetWriteRevisions.get(path) ?? 0) + 1);
+        bump(this.assetWriteRevisions, path);
         entriesChanged = true;
       }
     }
@@ -1007,17 +991,9 @@ export class DataCore {
     return relations;
   }
 
-  private recordCollection(
-    weeks = this.weeklyCache,
-    projects = this.entities.project,
-    actions = this.entities.action,
-    artifacts = this.entities.artifact,
-  ): RecordCollection {
-    return { entries: [...weeks.values()].flat(), projects, actions, artifacts };
-  }
-
   private buildRelations(): Relations {
-    const records = this.recordCollection();
+    const records: RecordCollection = { entries: [...this.weeklyCache.values()].flat(),
+      projects: this.entities.project, actions: this.entities.action, artifacts: this.entities.artifact };
     return buildRelations(records, artifactReferenceSources(records));
   }
 

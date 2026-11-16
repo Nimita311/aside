@@ -1,3 +1,5 @@
+import { errorMessage } from '../core/error.js';
+
 // Mutation receipts describe confirmed durable effects, independently of the
 // response selection or a later failure. A journal belongs to one synchronous
 // mutation; nested handlers share it so linked creates retain their results.
@@ -38,7 +40,7 @@ export class MutationWriteError extends Error {
   /** Set by lifecycle when saved effects could not be republished for readback. */
   readbackError?: string;
   constructor(error: unknown, readonly partialResult: MutationResult) {
-    const message = error instanceof Error ? error.message : String(error);
+    const message = errorMessage(error);
     super(partialResult.changes.length
       ? `${message}\nSaved changes: ${JSON.stringify(partialResult.changes)}\nRecovery: ${partialResult.recovery}` : message, { cause: error });
     this.name = 'MutationWriteError';
@@ -95,7 +97,7 @@ export function persistMutationWrite<T>(owner: object, change: MutationChange, w
     return value;
   } catch (error) {
     const {effect: _effect, ...target} = change;
-    recordMutationFailure(owner, { ...target, message: error instanceof Error ? error.message : String(error) });
+    recordMutationFailure(owner, { ...target, message: errorMessage(error) });
     throw error;
   }
 }
@@ -107,7 +109,7 @@ export function trackMutation<T>(owner: object, action: () => T): { value: T; re
   journals.set(owner, journal);
   try { return { value: action(), result: snapshot(journal) }; }
   catch (error) {
-    if (!journal.failures.length) recordMutationFailure(owner, { message: error instanceof Error ? error.message : String(error) });
+    if (!journal.failures.length) recordMutationFailure(owner, { message: errorMessage(error) });
     throw new MutationWriteError(error, snapshot(journal, true));
   } finally { journals.delete(owner); }
 }

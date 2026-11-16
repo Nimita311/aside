@@ -3,7 +3,6 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { AsideWebServer, type WebBackend } from '../src/web/server.js';
-import { WebAuth } from '../src/web/auth.js';
 import { Store } from '../src/source/store.js';
 import { InstanceHost } from '../src/daemon/host.js';
 import { CalClient } from '../src/mcp/calendar/client.js';
@@ -28,17 +27,15 @@ async function setup() {
     instances: () => [{ id: 'sidebar-http', path: directory! }], register: async () => null,
     remove() {}, load() {}, data: async () => store!.snapshot(), updateSidebar, query,
   };
-  const auth = new WebAuth(join(directory, 'auth'));
-  server = (await AsideWebServer.start(fileURLToPath(new URL('../../webapp/', import.meta.url)), backend, 0,
-    { auth, stateDirectory: join(directory, 'auth') }))!;
-  const origin = `http://127.0.0.1:${server.port}`, token = auth.issue().token;
-  const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json', 'X-Aside-Control': '1', Origin: origin };
+  server = (await AsideWebServer.start(fileURLToPath(new URL('../../webapp/', import.meta.url)), backend, 0))!;
+  const origin = `http://127.0.0.1:${server.port}`;
+  const headers = { 'Content-Type': 'application/json', Origin: origin };
   const url = `${origin}/-/api/instances/sidebar-http/sidebar`;
   const post = (body: unknown) => fetch(url, { method: 'POST', headers, body: JSON.stringify(body) });
   return { file, origin, url, headers, post, updateSidebar, query };
 }
 
-describe('authenticated browser sidebar writes', () => {
+describe('browser sidebar writes', () => {
   it('persists only the sidebar through the same instance writer and makes it available in snapshots', async () => {
     const { file, origin, headers, post, updateSidebar } = await setup();
     const sidebar = [{ title: 'Focus', items: [{ timeline: '#artifact/2026-10-12-decisions/focus.json' }, { entity: '#project/2026-10-12-launch', label: 'Launch' }] }];
@@ -69,12 +66,12 @@ describe('authenticated browser sidebar writes', () => {
     expect(updateSidebar).not.toHaveBeenCalled();
   });
 
-  it('requires browser authorization and control headers while GraphQL remains read-only', async () => {
+  it('requires JSON and matching origins while GraphQL remains read-only', async () => {
     const { origin, url, headers, updateSidebar, query } = await setup();
     const body = JSON.stringify({ sidebar: [], expectedSidebar: [] });
-    expect((await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body })).status).toBe(401);
-    const noControl = { ...headers }; delete noControl['X-Aside-Control'];
-    expect((await fetch(url, { method: 'POST', headers: noControl, body })).status).toBe(403);
+    for (const contentType of ['', 'text/plain', 'application/x-www-form-urlencoded', 'multipart/form-data']) {
+      expect((await fetch(url, { method: 'POST', headers: { 'Content-Type': contentType }, body })).status).toBe(403);
+    }
     expect((await fetch(url, { method: 'POST', headers: { ...headers, Origin: 'https://other.invalid' }, body })).status).toBe(403);
     expect((await fetch(url, { headers })).status).toBe(405);
     const mutation = await fetch(`${origin}/-/api/instances/sidebar-http/graphql`, { method: 'POST', headers,

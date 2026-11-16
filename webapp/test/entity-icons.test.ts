@@ -20,7 +20,7 @@ describe('entity icons', () => {
     }
   });
 
-  it('swaps to the pill drawing at pill size where an icon has one, and keeps one drawing otherwise', () => {
+  it('uses small artwork at 13px and below where an icon has it, and keeps one drawing otherwise', () => {
     const pill = parse(iconMarkup('instance', 'worktree', ICON_SIZE.pill));
     const full = parse(iconMarkup('instance', 'worktree', ICON_SIZE.title));
     expect(shape(pill)).not.toBe(shape(full));
@@ -58,6 +58,20 @@ describe('entity icons', () => {
     setEntityIcon(host, 'action', 'done', ICON_SIZE.title);
     expect(host.querySelectorAll('svg')).toHaveLength(1);
     expect(host.querySelector('svg')).not.toBe(svg);
+  });
+
+  it('retains the SVG and masks when resized within the same artwork family', () => {
+    const host = document.createElement('span');
+    setEntityIcon(host, 'action', 'done', 14);
+    const svg = host.querySelector('svg')!, mask = svg.querySelector('mask')!.id;
+    setEntityIcon(host, 'action', 'done', 20);
+    expect(host.querySelector('svg')).toBe(svg);
+    expect(svg.getAttribute('width')).toBe('20');
+    expect(svg.getAttribute('height')).toBe('20');
+    expect(svg.querySelector('mask')!.id).toBe(mask);
+    setEntityIcon(host, 'action', 'done', 12);
+    expect(host.querySelector('svg')).not.toBe(svg);
+    expect(host.querySelector('.m.bold')).not.toBeNull();
   });
 
   it('reads the lifecycle from chip marks', () => {

@@ -3,7 +3,7 @@ import { describe, it, expect, afterEach, vi } from 'vitest';
 import { writeFileSync, chmodSync, rmSync, readFileSync, existsSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { CalClient, CalUnavailable, resolveCalBin } from '../src/mcp/calendar/client.js';
+import { CalClient, CalUnavailable } from '../src/mcp/calendar/client.js';
 import { calendarReport } from './support/calendar-report.js';
 import { CalSync as BaseCalSync, storeAction, type SyncAction, type CalendarReconciliationRequest } from '../src/mcp/calendar/sync.js';
 import { SyncLock } from '../src/mcp/calendar/lock.js';
@@ -253,7 +253,7 @@ describe('CalClient', () => {
   }, 10_000);
 });
 
-describe('resolveCalBin', () => {
+describe('calendar helper resolution', () => {
   it.runIf(process.platform === 'darwin')('dispatches the unified calendar mode while preserving explicit and environment stand-ins', async () => {
     const response = { 'auth-status': { ok: true, result: { status: 'fullAccess' } } };
     const unified = writeFake(response, { expectedArgs: ['calendar'] });
@@ -280,9 +280,10 @@ describe('resolveCalBin', () => {
     const prev = process.env.ASIDE_CAL_BIN;
     process.env.ASIDE_CAL_BIN = p;
     try {
+      const client = new CalClient(); clients.push(client);
+      expect(client.helperPath()).toBe(p);
       // Only meaningful on darwin; elsewhere calendar sync is unavailable.
-      if (process.platform === 'darwin') expect(resolveCalBin()).toBe(p);
-      else expect(resolveCalBin()).toBeNull();
+      expect(client.available()).toBe(process.platform === 'darwin');
     } finally {
       if (prev === undefined) delete process.env.ASIDE_CAL_BIN;
       else process.env.ASIDE_CAL_BIN = prev;

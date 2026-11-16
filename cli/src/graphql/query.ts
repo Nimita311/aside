@@ -181,10 +181,8 @@ function projectionProbePoints(where: Where, dates = new Set<string>(), original
   return {dates, originals, ids};
 }
 
-function paginate(nodes: readonly RecordNode[], ascending: boolean, offset: number, limit: number, needsPage: boolean) {
-  const page = !needsPage ? [] : ascending ? nodes.slice(offset, offset + limit)
-    : nodes.slice(Math.max(0, nodes.length - offset - limit), Math.max(0, nodes.length - offset)).reverse();
-  return { nodes: page, offset, count: Math.min(limit, Math.max(0, nodes.length - offset)), totalCount: nodes.length };
+function paginate(nodes: readonly RecordNode[], offset: number, limit: number, needsPage = true) {
+  return { nodes: needsPage ? nodes.slice(offset, offset + limit) : [], offset, count: Math.min(limit, Math.max(0, nodes.length - offset)), totalCount: nodes.length };
 }
 
 export function status(node: RecordNode): string | null {
@@ -692,19 +690,22 @@ export class QueryView {
       this.tick();
       return scalar(node);
     });
+    // Not async: each caller decides where a synchronous narrowing failure surfaces.
+    const nested = (filter: Where, suffix: string) => this.compile(kind, filter, depth + 1,
+      hasSearch(filter) || hasActionRelations(filter) ? narrowScope() : undefined, path, `${filterPath}.${suffix}`);
     if (where.and) {
-      const predicates = await Promise.all(where.and.map(async (filter: Where, index: number) => this.compile(kind, filter, depth + 1, hasSearch(filter) || hasActionRelations(filter) ? narrowScope() : undefined, path, `${filterPath}.and.${index}`)));
+      const predicates = await Promise.all(where.and.map(async (filter: Where, index: number) => nested(filter, `and.${index}`)));
       tests.push(node => predicates.every(p => p(node)));
     }
     if (where.or) {
-      const predicates = await Promise.all(where.or.map(async (filter: Where, index: number) => this.compile(kind, filter, depth + 1, hasSearch(filter) || hasActionRelations(filter) ? narrowScope() : undefined, path, `${filterPath}.or.${index}`)));
+      const predicates = await Promise.all(where.or.map(async (filter: Where, index: number) => nested(filter, `or.${index}`)));
       tests.push(node => predicates.some(p => p(node)));
     }
     if (where.not) {
-      const predicate = await this.compile(kind, where.not, depth + 1, hasSearch(where.not) || hasActionRelations(where.not) ? narrowScope() : undefined, path, `${filterPath}.not`);
+      const predicate = await nested(where.not, 'not');
       tests.push(node => !predicate(node));
     }
-    for (const [field, target] of Object.entries(relationKinds[kind]) as [string, Kind][]) {
+    for (const [field, target] of relationFields[kind]) {
       const relation = where[field];
       if (!relation) continue;
       for (const operator of ['some', 'none']) {
@@ -765,12 +766,12 @@ export class QueryView {
     const ascending = orderBy === 'CREATED_ASC';
     const timeOrder = kind === 'action' && /^(SCHEDULED|DEADLINE)_(ASC|DESC)$/.test(orderBy);
     const page = (nodes: readonly RecordNode[]) => {
-      if (!needsPage) return {nodes: [], offset, count: Math.min(limit, Math.max(0, nodes.length - offset)), totalCount: nodes.length};
-      if (timeOrder) return paginate(this.snapshot.inActionTimeOrder(nodes, orderBy), true, offset, limit, true);
+      if (!needsPage) return paginate(nodes, offset, limit, false);
+      if (timeOrder) return paginate(this.snapshot.inActionTimeOrder(nodes, orderBy), offset, limit);
       // Missing creation times stay last in both directions. Reverse only saved
       // rows; projected rows retain a stable ID order across pages.
       const saved = nodes.filter(node => !node.projected), projected = nodes.filter(node => node.projected);
-      return paginate([...ascending ? saved : [...saved].reverse(), ...projected], true, offset, limit, true);
+      return paginate([...ascending ? saved : [...saved].reverse(), ...projected], offset, limit);
     };
     const where = args.where ?? {};
     const hasTemplates = [...this.snapshot.records.action.values()].some(node => node.record.frontMatter.recurrence != null);

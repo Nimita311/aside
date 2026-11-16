@@ -1,28 +1,20 @@
 import { readdirSync } from 'node:fs';
-import { join, relative, resolve, isAbsolute, sep } from 'node:path';
+import { join, resolve } from 'node:path';
 import { artifactReferenceTraversal, type ArtifactLoadResult, type ArtifactTraversal } from './artifact-traversal.js';
 import type { Artifact } from './types.js';
 import { contentAttachmentPath } from './content-attachment.js';
 import { assertManagedPath } from './managed-path.js';
 
-import { assertArtifactId, assertAttachmentFilename, parseArtifactHandle, type ArtifactReferenceSource } from './artifact-reference.js';
+import { artifactAttachmentRelativePath, artifactRecordPath, assertArtifactId, assertAttachmentFilename, parseArtifactHandle, type ArtifactReferenceSource } from './artifact-reference.js';
+import { errorMessage } from './error.js';
 export * from './artifact-reference.js';
 
 export function artifactFilePath(dataDir: string, id: string): string {
-  assertArtifactId(id);
-  return join(dataDir, 'artifacts', id.slice(0, 4), `${id}.md`);
+  return join(dataDir, artifactRecordPath(id));
 }
 
 export function artifactAttachmentPath(dataDir: string, id: string, filename: string): string {
-  assertArtifactId(id);
-  assertAttachmentFilename(filename);
-  return join(dataDir, 'artifacts', id.slice(0, 4), id, filename);
-}
-
-// Whether `path` is `root` or lies beneath it.
-export function isInside(root: string, path: string): boolean {
-  const rel = relative(root, path);
-  return rel !== '..' && !rel.startsWith(`..${sep}`) && !isAbsolute(rel);
+  return join(dataDir, artifactAttachmentRelativePath(id, filename));
 }
 
 // Reserved names used by attachment imports and crash-safe record writes.
@@ -73,7 +65,7 @@ export function collectArtifactReferenceSources(
       }
       result = {};
     } catch (err) {
-      result = { error: err instanceof Error ? err.message : String(err) };
+      result = { error: errorMessage(err) };
     }
     next = traversal.next(result);
   }

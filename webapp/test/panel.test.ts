@@ -13,7 +13,7 @@ function setup() {
   document.body.innerHTML = '<button id="summary-trigger">Summary</button>' +
     '<aside id="side-panel" hidden inert><div id="side-panel-body"></div></aside>' +
     '<div id="pill-summary"></div><input id="other">';
-  const state: SidePanelState = { filter: null, store: null };
+  const state: SidePanelState = { filter: null };
   const setAvailable = vi.fn();
   const fallback = document.getElementById('summary-trigger')!;
   const panel = document.getElementById('side-panel')!;

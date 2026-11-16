@@ -277,7 +277,7 @@ describe('artifact reading and relationships', () => {
     const content = `#artifact/${plan}/missing.pdf`;
     store.saveProject(projectId, {name: 'Project', created: '2026-10-02T10:00'}, content, join(dir, 'projects/2026', `${projectId}.md`));
     const weekly = `---\nweek: 40\nweek_start: 2026-09-28\nweek_end: 2026-10-04\n---\n\n---\n\x60\x60\x60entry\ncreated: ${entryId}\nprojects: [${projectId}]\n\x60\x60\x60\n\n${content}\n`;
-    store.saveEntry(entryId, [projectId], [], content, join(dir, 'notes/2026/2026-09-28.md'), weekly);
+    store.saveEntry(entryId, join(dir, 'notes/2026/2026-09-28.md'), weekly);
     expect(store.getRelations().artifactsByEntity.get(`#entry/${entryId}`)).toBeUndefined();
     expect(store.getRelations().artifactsByEntity.get(`#project/${projectId}`)).toBeUndefined();
     expect(store.getProjectsForArtifact(plan)).toEqual([]);
@@ -300,7 +300,7 @@ describe('artifact reading and relationships', () => {
     store.saveAction('action', { name: 'Action', created: '2026-10-02T09:00' }, `#artifact/${plan}`, join(dir, 'actions', '2026', 'action.md'));
     const content = `#artifact/${plan}`;
     const weekly = `---\nweek: 40\nweek_start: 2026-09-28\nweek_end: 2026-10-04\n---\n\n---\n\`\`\`entry\ncreated: 2026-10-02T11:00\nprojects: [tagged-project]\nactions: [tagged-action]\n\`\`\`\n\n${content}\n`;
-    store.saveEntry('2026-10-02T11:00', ['tagged-project'], ['tagged-action'], content, join(dir, 'notes', '2026', '2026-09-28.md'), weekly);
+    store.saveEntry('2026-10-02T11:00', join(dir, 'notes', '2026', '2026-09-28.md'), weekly);
     expect(store.getProjectsForArtifact(plan)).toEqual(['tagged-project', 'project']);
     expect(store.getActionsForArtifact(plan)).toEqual(['tagged-action', 'action']);
     expect(store.getArtifactBacklinks(plan)).toEqual(['#project/project', '#entry/2026-10-02T11:00', '#action/action']);

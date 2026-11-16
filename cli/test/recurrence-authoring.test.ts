@@ -112,9 +112,7 @@ describe('recurrence authoring', () => {
     expect(store.getAction(template)?.frontMatter.recurrence).toEqual([]);
     expect([...(store.getRelations().projectsByAction.get(saved) ?? [])]).toContain(project);
     expect([...(store.getRelations().projectsByAction.get(future) ?? [])]).toContain(project);
-    const page = planningActions(store.getActions(), { from: '2026-01-01', to: '2099-01-04' });
-    expect(page.nodes.map(row => row.id).sort()).toEqual([saved, future].sort());
-    expect(page.nodes.every(row => !row.projected)).toBe(true);
+    expect(planningActions(store.getActions()).nodes).toEqual([]);
     expect(handleUpdateOccurrence(store, { template, original: '2026-01-03', name: 'Renamed saved work' }).id).toBe(saved);
     handleUpdateAction(store, { id: template, recurrence: { append: { dtstart: '2099-01-01', rrule: 'FREQ=WEEKLY' } } });
     expect(store.getAction(template)?.frontMatter.recurrence).toHaveLength(1);
@@ -201,9 +199,10 @@ describe('recurrence authoring', () => {
   });
   it('paginates all history and filters projects before selecting a page', () => {
     const count = store.getActions().size;
-    const templates = store.getActionsForProject(project);
+    const templates = [...(store.getRelations().actionsByProject.get(project) ?? [])];
     const ids = new Set<string>(); let after: string | undefined;
-    do { const page = planningActions(store.getActions(), { templates, savedIds: templates, from: '2026-01-01', to: '2026-12-31', limit: 17, after }); for (const row of page.nodes) { expect(ids.has(row.id)).toBe(false); ids.add(row.id); } after = page.next ?? undefined; } while (after);
+    // On 24 December the daily rule has 358 days of history and 7 of lookahead: every day of 2026.
+    do { const page = planningActions(store.getActions(), { templates, now: new Date(2026, 11, 24, 12), after }); for (const row of page.nodes) { expect(ids.has(row.id)).toBe(false); ids.add(row.id); } after = page.next ?? undefined; } while (after);
     expect(ids.size).toBe(365); expect(store.getActions().size).toBe(count);
   });
   it('exposes typed recurrence and projected occurrences through the ordinary action query', async () => {

@@ -36,7 +36,7 @@ function entry(content: string, opts = options(), projects: string[] = [], actio
 }
 function compact(type: 'project' | 'action' | 'entry', opts = options(), id = type === 'project' ? PROJECT : type === 'action' ? ACTION : ENTRY): HTMLElement {
   if (type === 'entry') {
-    return take(renderAssetDetail('assets/brief.txt', { kind: 'text', text: '' }, opts, [{ id, description: 'Review note' }]), '.tag-entry');
+    return take(renderAssetDetail('assets/brief.txt', { kind: 'text', text: '' }, opts, [{ id, description: 'Review note' }]), '.ref-row-entry');
   }
   return take(entry('', opts, type === 'project' ? [id] : [], type === 'action' ? [id] : []), `.tag-${type}`);
 }

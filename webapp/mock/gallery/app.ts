@@ -1,5 +1,6 @@
 import type { Scenario } from '../scenarios';
 import { catalogue as catalogueTree, filterCatalogue, type CatalogueNode } from './catalogue';
+import { errorMessage } from '../../../cli/src/core/error';
 
 type Theme = 'light' | 'dark';
 type Viewport = 'desktop' | 'tablet' | 'mobile';
@@ -51,6 +52,11 @@ function setStatus(state: 'loading' | 'ready' | 'error', message: string): void 
   $('#preview-stage').setAttribute('aria-busy', String(state === 'loading'));
   $<HTMLButtonElement>('#btn-recover').disabled = state !== 'ready';
   $('#preview-start').hidden = state !== 'loading';
+}
+
+function showError(message: string): void {
+  const host = $('#gallery-error');
+  host.textContent = message; host.hidden = false;
 }
 
 function shareUrl(): string {
@@ -207,15 +213,14 @@ async function loadPreview(): Promise<void> {
         pendingFrame?.remove(); pendingFrame = undefined;
         const message = 'Preview is taking longer than expected. Reset to retry.';
         setStatus('error', message);
-        $('#gallery-error').textContent = message; $('#gallery-error').hidden = false;
+        showError(message);
       }
     }, 22_000);
   } catch (error) {
     if (current !== generation || request.signal.aborted) return;
-    const message = error instanceof Error ? error.message : String(error);
-    $('#preview-start').hidden = true;
+    const message = errorMessage(error);
     setStatus('error', 'Preview unavailable');
-    $('#gallery-error').textContent = message; $('#gallery-error').hidden = false;
+    showError(message);
   }
 }
 
@@ -250,7 +255,7 @@ async function recoverPreview(): Promise<void> {
     $('#btn-recover').hidden = true;
   } catch (error) {
     if (session !== current) return;
-    setStatus('error', error instanceof Error ? error.message : String(error));
+    setStatus('error', errorMessage(error));
   }
 }
 
@@ -278,14 +283,14 @@ window.addEventListener('message', event => {
   if (event.data.type === 'aside:mock:activate') { revealPreview(); return; }
   if (event.data.type === 'aside:mock:ready' || event.data.type === 'aside:mock:recovered') {
     revealPreview();
-    clearTimeout(statusTimer); $('#preview-start').hidden = true;
+    clearTimeout(statusTimer);
     $('#gallery-error').hidden = true;
     setStatus('ready', event.data.type === 'aside:mock:recovered' ? 'Preview recovered' : 'Preview ready');
   } else if (event.data.type === 'aside:mock:error') {
     pendingFrame?.remove(); pendingFrame = undefined;
-    clearTimeout(statusTimer); $('#preview-start').hidden = true;
+    clearTimeout(statusTimer);
     setStatus('error', 'Preview setup could not finish');
-    $('#gallery-error').textContent = String(event.data.message ?? 'The scenario did not reach its initial state.'); $('#gallery-error').hidden = false;
+    showError(String(event.data.message ?? 'The scenario did not reach its initial state.'));
   }
 });
 
@@ -344,7 +349,7 @@ try {
   selected = scenarios.find(item => item.id === initial.get('scenario')) ?? scenarios[0];
   await selectScenario(selected);
 } catch (error) {
-  const message = error instanceof Error ? error.message : String(error);
-  $('#preview-start').hidden = true; setStatus('error', 'Gallery unavailable');
-  $('#gallery-error').textContent = message; $('#gallery-error').hidden = false;
+  const message = errorMessage(error);
+  setStatus('error', 'Gallery unavailable');
+  showError(message);
 }

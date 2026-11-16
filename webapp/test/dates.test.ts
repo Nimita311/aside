@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 import { getMondayOfWeek } from '../lib/types';
-import { parseLooseDate, shiftDate, shiftByUnit } from '../src/dates';
+import { parseLooseDate } from '../src/dates';
 
 // Pin a UTC+ timezone: formatting via toISOString() (UTC) would shift local
 // midnight back a day, so these tests fail if the formatting is not local.
@@ -66,25 +66,5 @@ describe('parseLooseDate', () => {
     expect(parseLooseDate('13')).toBeNull(); // no 13th month
     expect(parseLooseDate('septic 2024')).toBeNull();
     expect(parseLooseDate('')).toBeNull();
-  });
-});
-
-describe('shiftDate', () => {
-  it('clamps a month shift to the target month end', () => {
-    expect(shiftDate('2026-05-31', -1, 0)).toBe('2026-04-30');
-    expect(shiftDate('2026-01-31', 1, 0)).toBe('2026-02-28');
-  });
-
-  it('shifts by days across month boundaries', () => {
-    expect(shiftDate('2026-05-31', 0, 7)).toBe('2026-06-07');
-    expect(shiftDate('2026-01-03', 0, -7)).toBe('2025-12-27');
-  });
-});
-
-describe('shiftByUnit', () => {
-  it('steps a week in days and months/quarters in months', () => {
-    expect(shiftByUnit('2026-07-07', 'week', -1)).toBe('2026-06-30');
-    expect(shiftByUnit('2026-05-31', 'month', -1)).toBe('2026-04-30');
-    expect(shiftByUnit('2026-05-31', 'quarter', 1)).toBe('2026-08-31');
   });
 });

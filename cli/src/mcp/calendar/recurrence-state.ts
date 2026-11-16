@@ -9,6 +9,8 @@ import type { CalEvent } from './protocol.js';
 import type { NativeSeries } from './recurrence-rule.js';
 import { isCalendarDate, isWallMinute } from '../../core/scheduling.js';
 
+const MALFORMED = 'Calendar recurrence mirror is malformed; preserve Calendar events until it is repaired.';
+
 export interface FamilyMirror {
   template: string; family: NativeSeries; definition?: string;
   eventId?: string; externalId?: string;
@@ -34,27 +36,27 @@ export class RecurrenceMirror {
     let raw: unknown;
     try { raw = JSON.parse(readFileSync(this.path, 'utf8')); }
     catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return; throw new Error('Calendar recurrence mirror is unreadable; preserve Calendar events until it is repaired.', { cause: error }); }
-    if (!raw || typeof raw !== 'object' || !('version' in raw) || raw.version !== 1 || !('families' in raw) || !Array.isArray(raw.families)) throw new Error('Calendar recurrence mirror is malformed; preserve Calendar events until it is repaired.');
+    if (!raw || typeof raw !== 'object' || !('version' in raw) || raw.version !== 1 || !('families' in raw) || !Array.isArray(raw.families)) throw new Error(MALFORMED);
     if ('pendingOrdinary' in raw) {
-      if (!Array.isArray(raw.pendingOrdinary) || raw.pendingOrdinary.some(id => typeof id !== 'string' || !id)) throw new Error('Calendar recurrence mirror is malformed; preserve Calendar events until it is repaired.');
+      if (!Array.isArray(raw.pendingOrdinary) || raw.pendingOrdinary.some(id => typeof id !== 'string' || !id)) throw new Error(MALFORMED);
       for (const id of raw.pendingOrdinary) this.pendingOrdinary.add(id);
     }
     if ('pendingNative' in raw) {
-      if (!Array.isArray(raw.pendingNative) || raw.pendingNative.some(id => typeof id !== 'string' || !id)) throw new Error('Calendar recurrence mirror is malformed; preserve Calendar events until it is repaired.');
+      if (!Array.isArray(raw.pendingNative) || raw.pendingNative.some(id => typeof id !== 'string' || !id)) throw new Error(MALFORMED);
       for (const id of raw.pendingNative) this.pendingNative.add(id);
     }
     if ('ordinaryEvents' in raw) {
-      if (!Array.isArray(raw.ordinaryEvents) || raw.ordinaryEvents.some(item => !Array.isArray(item) || item.length !== 2 || item.some(value => typeof value !== 'string' || !value))) throw new Error('Calendar recurrence mirror is malformed; preserve Calendar events until it is repaired.');
+      if (!Array.isArray(raw.ordinaryEvents) || raw.ordinaryEvents.some(item => !Array.isArray(item) || item.length !== 2 || item.some(value => typeof value !== 'string' || !value))) throw new Error(MALFORMED);
       for (const [id, eventId] of raw.ordinaryEvents) this.ordinaryEvents.set(id, eventId);
     }
     if ('ordinaryStarts' in raw) {
-      if (!Array.isArray(raw.ordinaryStarts) || raw.ordinaryStarts.some(item => !Array.isArray(item) || item.length !== 2 || typeof item[0] !== 'string' || !item[0] || typeof item[1] !== 'string' || !isCalendarDate(item[1]) && !isWallMinute(item[1]))) throw new Error('Calendar recurrence mirror is malformed; preserve Calendar events until it is repaired.');
+      if (!Array.isArray(raw.ordinaryStarts) || raw.ordinaryStarts.some(item => !Array.isArray(item) || item.length !== 2 || typeof item[0] !== 'string' || !item[0] || typeof item[1] !== 'string' || !isCalendarDate(item[1]) && !isWallMinute(item[1]))) throw new Error(MALFORMED);
       for (const [id, start] of raw.ordinaryStarts) this.ordinaryStarts.set(id, start);
     }
     for (const item of raw.families) {
       if (!Array.isArray(item) || item.length !== 2 || typeof item[0] !== 'string' || typeof item[1]?.template !== 'string' || !item[1]?.family?.schedule || !item[1].family.rule || !Array.isArray(item[1].observed)) throw new Error('Calendar recurrence mirror is malformed.');
       try { assertRecurrence([item[1].family.schedule]); for (const witness of item[1].observed) { assertOccurrence(witness.identity); if (!witness.event || typeof witness.event.id !== 'string') throw new Error('Invalid witness.'); } }
-      catch (error) { throw new Error('Calendar recurrence mirror is malformed; preserve Calendar events until it is repaired.', { cause: error }); }
+      catch (error) { throw new Error(MALFORMED, { cause: error }); }
       this.families.set(item[0], item[1]);
     }
   }

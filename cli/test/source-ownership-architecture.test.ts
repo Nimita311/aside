@@ -57,7 +57,7 @@ describe('feature source ownership architecture', () => {
     ['source/bootstrap', 'init'],
     ['source/instance-admission', 'availableInstances'], ['source/instance-admission', 'registrationPath'],
     ['core/worktree', 'checkoutInfo'], ['core/worktree', 'primaryCounterpart'], ['core/worktree', 'instanceFamily'],
-    ['core/worktree', 'withPrimaryInstances'], ['core/worktree', 'withoutInstanceFamilies'], ['core/worktree', 'worktreeCalendarReason'],
+    ['core/worktree', 'withPrimaryInstances'], ['core/worktree', 'withoutInstanceFamilies'],
     ['daemon/host', 'instanceKey'],
     ['source/recurrence-history', 'recurrenceHistoryPath'], ['source/recurrence-history', 'readRecurrenceHistory'],
     ['source/recurrence-history', 'writeRecurrenceHistory'], ['daemon/instance-operations', 'bootstrapInstanceSource'],
@@ -123,8 +123,8 @@ describe('feature source ownership architecture', () => {
     ['mcp/tools/update', 'handleUpdateAction'], ['mcp/tools/update', 'handleUpdateProject'], ['mcp/tools/update', 'handleUpdateEntry'],
     ['mcp/tools/capture', 'handleCapture'], ['mcp/tools/capture', 'resolveEntityRefs'],
     ['mcp/tools/instance', 'handleUpdateInstance'], ['mcp/tools/recurrence', 'handleUpdateOccurrence'],
-    ['mcp/tools/artifact', 'handleCreateArtifact'], ['mcp/tools/artifact', 'createArtifact'],
-    ['mcp/tools/artifact', 'handleUpdateArtifact'], ['mcp/tools/artifact', 'prepareCreateArtifact'],
+    ['mcp/tools/artifact', 'createArtifact'], ['mcp/tools/artifact', 'handleUpdateArtifact'],
+    ['mcp/tools/artifact', 'prepareCreateArtifact'],
   ])('rejects mutation adapter %s.%s from a new query', (module, helper) => {
     const file = 'graphql/new-feature.ts';
     const source = `import {${helper} as mutate} from '../${module}.js'; function query(store){return mutate(store, args);}`;

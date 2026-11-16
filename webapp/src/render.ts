@@ -23,14 +23,15 @@ import { buildRoute } from './route';
 import { bindDisplay, setDisplayText, moveDisplayNode, refreshRevealed } from './display';
 import { entityMentions, parseEntityHandle } from './entity-reference';
 import { dateHandle, dateMentions, dateTimeAttribute, localDateStamp, type DateReference } from './date-reference';
-import { parseLocationHandle, locationDisplay, locationMentions, type LocationReference } from './location-reference';
+import { parseLocationHandle, locationHandle, locationDisplay, locationMentions, type LocationReference } from './location-reference';
 import type { HierarchyNode } from './hierarchy';
 import { scheduleInstant, wallTimeAt } from '../../cli/src/core/scheduling';
-import { ICON_SIZE, actionIconState, artifactIconState, dateIconState, fileIconState, iconMarkup, locationIconState, projectIconState, refIconState, setEntityIcon, type IconKind } from './entity-icons';
-import { relativeDate, timelineWindow, stampInstant, clockInstant, actionMarks, actionPills, projectMarks, projectPills, ago, type OpenActionGroups, type RefStatus, type SummaryPill } from './instance';
+import { ICON_SIZE, actionIconState, artifactIconState, dateIconState, fileIconState, iconMarkup, locationIconState, projectIconState, refIconState, setReferenceIcon, type IconKind } from './entity-icons';
+import { relativeDate, timelineWindow, stampInstant, clockInstant, actionMarks, actionStatusPills, projectMarks, projectPills, ago, type OpenActionGroups, type RefStatus, type SummaryPill } from './instance';
 
 import { formatStamp, formatTime, formatDate, formatClock, dateColumns, calendarLabel, type DateTimeFormat } from './date-display';
 import type { DateTimePreferences } from './preferences';
+import { escapeHtml } from './search';
 export { formatStamp, formatTime } from './date-display';
 export type { TimeFormat } from './preferences';
 // `source` is the clicked tag element — navigation uses it to anchor the
@@ -49,7 +50,7 @@ const markdownParser = new Marked({ extensions: [{
     const match = /^#date\/[^\s<>(){}"'`]+/.exec(source);
     if (match) return { type: 'dateReference', raw: match[0] };
   },
-  renderer: token => token.raw.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'),
+  renderer: token => escapeHtml(token.raw),
 }, {
   name: 'locationReference', level: 'inline',
   start: source => source.indexOf('#location/'),
@@ -58,7 +59,7 @@ const markdownParser = new Marked({ extensions: [{
     if (match) return { type: 'locationReference', raw: match[0] };
   },
   renderer: token => {
-    const escaped = token.raw.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    const escaped = escapeHtml(token.raw);
     return locationMentions(token.raw).length ? escaped : `<span class="literal-location">${escaped}</span>`;
   },
 }] });
@@ -71,8 +72,10 @@ export interface RenderOptions extends DateTimePreferences {
   liveDurationMs?: number;
   expandProjects: boolean;
   expandActions: boolean;
-  // The entity the flow is filtered to — its tags and mentions render bold.
+  // The selected entity scope is highlighted without changing reference text.
   activeFilter: EntityRef | null;
+  // Context Essentials supplies identity and summary facts for embedded records.
+  omitContextHeader?: boolean;
   resolveName: ResolveName;
   onTagClick: OnTagClick;
   onAssetClick: OnAssetClick;
@@ -111,6 +114,7 @@ export interface EntityRelations {
 
 type IconType = 'instance' | 'entry' | 'project' | 'action' | 'artifact' | 'asset';
 const iconKind = (type: IconType): IconKind => type === 'artifact' || type === 'asset' ? 'content' : type;
+const REFERENCE_ICON_SIZE = { inline: 12, row: 14, title: 20 } as const;
 
 // An entity's icon markup (see entity-icons.ts), in its resting state unless
 // a state is given, drawn for the size its placement renders at — pill size
@@ -119,16 +123,9 @@ export function entityIcon(type: IconType, state?: string, size: number = ICON_S
   return iconMarkup(iconKind(type), state ?? '', size);
 }
 
-// The icon carries an entity's lifecycle state — the ring fills and ticks
-// when done, slashes when cancelled, shows clock hands once its time
-// slipped, dashes while in the backlog — and the pill carries the rest: a
-// deadline is a ring around it (CSS), and closed work (done, cancelled,
-// ended) mutes — the CSS greys the field and washes the name while the icon
-// keeps the full type color, a cancelled name additionally striking through.
-// The classes a set of marks paints on a chip: one per mark, plus the shared
-// closed class — done, cancelled, and ended are one visual family (the
-// mute), so the CSS styles the family, not each member.
-function markClasses(marks: RefStatus[]): string[] {
+// Status classes retain deadline descriptions and group closed lifecycle states.
+// The icon carries lifecycle; metadata and rows also mute closed names.
+export function markClasses(marks: RefStatus[]): string[] {
   const classes = marks.map((mark) => `tag-status-${mark}`);
   if (marks.some((mark) => mark === 'done' || mark === 'cancelled' || mark === 'ended')) {
     classes.push('tag-status-closed');
@@ -136,9 +133,7 @@ function markClasses(marks: RefStatus[]): string[] {
   return classes;
 }
 
-// Dress an element in its lifecycle marks: the mark classes driving the due
-// ring and the closed mute, and — given the type of a chip with an icon —
-// the icon's state, morphing in place when the marks change.
+// Update lifecycle classes and the icon without replacing its reference label.
 function applyMarks(host: HTMLElement, marks: RefStatus[], type?: 'project' | 'action' | 'entry'): void {
   // Rewrite the mark classes only when they change: a repaint carrying the
   // same marks must not invalidate the chip's style every minute.
@@ -148,13 +143,24 @@ function applyMarks(host: HTMLElement, marks: RefStatus[], type?: 'project' | 'a
     host.classList.remove(...present);
     host.classList.add(...wanted);
   }
-  if (type) setEntityIcon(host, type, refIconState(type, marks), ICON_SIZE.pill);
+  if (type) {
+    const size = host.classList.contains('inline-tag') ? REFERENCE_ICON_SIZE.inline
+      : host.classList.contains('ref-row') ? REFERENCE_ICON_SIZE.row : ICON_SIZE.pill;
+    setReferenceIcon(host, type, refIconState(type, marks), size);
+  }
 }
 
 // Fill an element with an entity icon. The markup is generated from constant
 // geometry — never user data — so setting innerHTML is safe.
 function setIcon(host: HTMLElement, type: IconType, state?: string, size?: number): void {
   host.innerHTML = entityIcon(type, state, size);
+}
+
+function referenceLabel(host: Element): HTMLElement {
+  const label = el('span', { className: 'tag-text' });
+  while (host.firstChild) label.append(host.firstChild);
+  host.append(label);
+  return label;
 }
 
 const INLINE_ARTIFACT_RE = /(?<![\p{L}\p{N}_/\\])#artifact\/[^\s<>()[\]{}"'`]+/gu;
@@ -171,7 +177,7 @@ function validArtifactReference(handle: string): ArtifactReference | undefined {
   }
 }
 
-function artifactLink(id: string, filename: string | undefined, opts: RenderOptions, label?: string): HTMLAnchorElement {
+function artifactLink(id: string, filename: string | undefined, opts: RenderOptions, label?: string, form: 'inline' | 'row' = 'inline'): HTMLAnchorElement {
   const handle = artifactHandle(id, filename);
   const anchor = el('a', {
     className: 'artifact-link',
@@ -179,12 +185,15 @@ function artifactLink(id: string, filename: string | undefined, opts: RenderOpti
     title: handle,
     textContent: label ?? filename ?? opts.resolveArtifactName?.(id) ?? id,
   });
-  wireArtifactLink(anchor, id, filename, opts);
+  wireArtifactLink(anchor, id, filename, opts, form);
   return anchor;
 }
 
-function wireArtifactLink(anchor: Element, id: string, filename: string | undefined, opts: RenderOptions): void {
-  anchor.classList.add('artifact-link');
+function wireArtifactLink(anchor: Element, id: string, filename: string | undefined, opts: RenderOptions, form: 'inline' | 'row' = 'inline'): void {
+  anchor.classList.add('artifact-link', ...(form === 'row' ? ['ref-row', 'ref-row-artifact'] : ['inline-tag', 'inline-tag-artifact']));
+  anchor.setAttribute('data-ref-hover', `artifact:${artifactHandle(id, filename)}`);
+  referenceLabel(anchor);
+  setReferenceIcon(anchor, 'content', artifactIconState(opts.resolveArtifact?.(id), filename), REFERENCE_ICON_SIZE[form]);
   anchor.setAttribute('href', opts.artifactHref?.(id, filename) ?? artifactHandle(id, filename));
   if (!opts.onArtifactClick) return;
   wireNavigationLink(anchor, () => opts.onArtifactClick!(id, filename));
@@ -211,12 +220,17 @@ function el<K extends keyof HTMLElementTagNameMap>(
   return node;
 }
 
+// An activation the browser keeps: a non-primary button or any modifier.
+export function isModifiedClick(event: MouseEvent): boolean {
+  return event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey;
+}
+
 // Intercept only an ordinary activation. Modifiers, middle clicks, explicit
 // new-window targets, and downloads keep the browser's native link behavior.
 function wireNavigationLink(anchor: Element, navigate: () => void): void {
   anchor.addEventListener('click', event => {
     const e = event as MouseEvent;
-    if (e.defaultPrevented || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+    if (e.defaultPrevented || isModifiedClick(e)) return;
     if (anchor.hasAttribute('download') || (anchor.getAttribute('target') && anchor.getAttribute('target') !== '_self')) return;
     e.preventDefault();
     e.stopPropagation();
@@ -233,9 +247,10 @@ function referenceHref(type: 'project' | 'action' | 'entry', id: string, opts: R
 function wireDateLink(anchor: HTMLAnchorElement, ref: DateReference, opts: RenderOptions): void {
   anchor.classList.add('inline-tag', 'inline-tag-date');
   anchor.dataset.dateHandle = dateHandle(ref);
+  anchor.dataset.refHover = `date:${anchor.dataset.dateHandle}`;
   // A calendar page keyed by the value; constant geometry — never user data.
-  anchor.insertAdjacentHTML('afterbegin', iconMarkup('date', dateIconState(ref), ICON_SIZE.pill));
-  const label = el('time', { dateTime: dateTimeAttribute(ref.start) });
+  anchor.insertAdjacentHTML('afterbegin', iconMarkup('date', dateIconState(ref), REFERENCE_ICON_SIZE.inline));
+  const label = el('time', { className: 'tag-text', dateTime: dateTimeAttribute(ref.start) });
   anchor.append(label);
   bindDisplay(anchor, opts, (node, current) => {
     const display = (stamp: string) => {
@@ -269,7 +284,7 @@ function locationChip(ref: LocationReference, handle: string, authored?: HTMLAnc
   }
   host.classList.add('inline-tag', 'inline-tag-location');
   host.dataset.locationHandle = handle;
-  const label = el('span', {className: 'location-label'});
+  const label = el('span', {className: 'location-label tag-text'});
   const hasAuthoredLabel = !!authored && (!!host.textContent || !!host.querySelector('img'));
   if (hasAuthoredLabel) {
     host.dataset.locationLabel = host.textContent ?? '';
@@ -278,13 +293,15 @@ function locationChip(ref: LocationReference, handle: string, authored?: HTMLAnc
   } else label.textContent = locationDisplay(ref);
   // The pin around its point, or pending without coordinates; constant
   // geometry — never user data.
-  host.insertAdjacentHTML('afterbegin', iconMarkup('location', locationIconState(ref), ICON_SIZE.pill));
+  host.insertAdjacentHTML('afterbegin', iconMarkup('location', locationIconState(ref), REFERENCE_ICON_SIZE.inline));
   host.append(label);
   const description = `${handle} · ${ref.geo ? 'Open in Apple Maps' : 'Coordinates unavailable'}`;
   host.title ||= description;
-  describeReference(host, description);
+  if (ref.geo) describeReference(host, description);
+  else host.append(el('span', { className: 'ref-description ref-explanation', textContent: ' Coordinates unavailable' }));
   if (ref.geo) {
     const anchor = host as HTMLAnchorElement;
+    anchor.dataset.refHover = `location:${locationHandle(ref)}`;
     anchor.href = locationMapHref(ref);
     anchor.target ||= '_blank';
     anchor.rel = 'noopener';
@@ -317,9 +334,7 @@ function describeReference(host: HTMLElement, text: string): void {
   setDisplayText(description, text);
 }
 
-// The shared body of a reference chip — icon, resolved name, status, and the
-// ref dataset plus active state that hover-linking and filter-bolding key
-// off. Callers pick the class variant and attach the click behavior.
+// Icon, name, status, selection and native navigation shared by reference forms.
 function refChip(
   type: 'project' | 'action' | 'entry',
   id: string,
@@ -335,6 +350,7 @@ function refChip(
   if (type === 'entry') bindDisplay(label, opts, (node, current) => setDisplayText(node, current.resolveName(type, id)));
   span.appendChild(label);
   applyRefStatus(span, type, id, opts);
+  wireNavigationLink(span, () => opts.onTagClick({ type, id }, span));
   return span;
 }
 
@@ -352,15 +368,43 @@ export function applyRefStatus(
   });
 }
 
-function renderTag(
-  type: 'project' | 'action' | 'entry',
-  id: string,
-  opts: RenderOptions,
-  onClick: (source: HTMLElement) => void,
-): HTMLElement {
-  const span = refChip(type, id, opts, `tag tag-${type}`);
-  wireNavigationLink(span, () => onClick(span));
-  return span;
+// Replace each mention a prose text node carries with its chip. Nodes are
+// collected before any is rewritten; code, links, and location chips keep
+// their authored text. `keepEmptyTail` leaves a text node after a final mention
+// even when nothing follows it.
+function replaceMentions<M extends { index: number; length: number }>(
+  root: HTMLElement, find: (text: string) => M[], chip: (mention: M) => Node, keepEmptyTail = true): void {
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+  const found: [Text, M[]][] = [];
+  let node: Text | null;
+  while ((node = walker.nextNode() as Text | null)) {
+    if (node.parentElement?.closest('pre, code, a, .inline-tag-location, .literal-location')) continue;
+    const mentions = find(node.data);
+    if (mentions.length) found.push([node, mentions]);
+  }
+  for (const [textNode, mentions] of found) {
+    const frag = document.createDocumentFragment();
+    let lastIndex = 0;
+    for (const mention of mentions) {
+      frag.append(document.createTextNode(textNode.data.slice(lastIndex, mention.index)), chip(mention));
+      lastIndex = mention.index + mention.length;
+    }
+    if (keepEmptyTail || lastIndex < textNode.data.length) frag.append(document.createTextNode(textNode.data.slice(lastIndex)));
+    textNode.parentNode!.replaceChild(frag, textNode);
+  }
+}
+
+// A record's body as it reads in a detail view.
+function detailBody(markdown: string, opts: RenderOptions, baseFile: string): HTMLElement {
+  const body = renderContent(markdown, opts, baseFile);
+  body.classList.add('detail-body');
+  return body;
+}
+
+function renderReference(type: 'project' | 'action' | 'entry', id: string, opts: RenderOptions, form: 'pill' | 'row'): HTMLElement {
+  const link = refChip(type, id, opts, form === 'pill' ? `tag tag-${type}` : `ref-row ref-row-${type}`);
+  if (type === 'action' && id.startsWith('~')) link.appendChild(el('span', { className: 'ref-note', textContent: 'Projected' }));
+  return link;
 }
 
 // `baseFile` is the root-relative path of the file the markdown came from;
@@ -447,6 +491,7 @@ function renderContent(markdown: string, opts: RenderOptions, baseFile?: string)
     const entity = parseEntityHandle(href);
     if (entity) {
       anchor.classList.add('inline-tag', `inline-tag-${entity.type}`);
+      referenceLabel(anchor);
       if (isActiveRef(opts, entity.type, entity.id)) anchor.classList.add('is-active');
       const link = anchor as HTMLAnchorElement;
       link.dataset.refType = entity.type;
@@ -464,8 +509,10 @@ function renderContent(markdown: string, opts: RenderOptions, baseFile?: string)
     }
     const assetPath = baseFile ? resolveRelativePath(baseFile, href) : null;
     if (assetPath) {
-      anchor.classList.add('asset-link');
-      anchor.insertAdjacentHTML('afterbegin', entityIcon('asset', fileIconState(assetPath), ICON_SIZE.row)); // generated from constant geometry — never user data
+      anchor.classList.add('asset-link', 'inline-tag', 'inline-tag-asset');
+      anchor.setAttribute('data-ref-hover', `asset:${assetPath}`);
+      referenceLabel(anchor);
+      setReferenceIcon(anchor, 'content', fileIconState(assetPath), REFERENCE_ICON_SIZE.inline);
       // Real href so copy/middle-click deep-link; in-app handling on plain click.
       anchor.setAttribute('href', opts.routeHref(buildRoute({ filter: opts.activeFilter, doc: { kind: 'asset', path: assetPath } })));
       wireNavigationLink(anchor, () => opts.onAssetClick(assetPath));
@@ -504,91 +551,24 @@ function renderContent(markdown: string, opts: RenderOptions, baseFile?: string)
 
   // Work on text nodes after Markdown parsing, so code and link labels retain
   // their authored content and cannot become nested links.
-  const artifactWalker = document.createTreeWalker(wrapper, NodeFilter.SHOW_TEXT);
-  const artifactNodes: Text[] = [];
-  let artifactNode: Text | null;
-  while ((artifactNode = artifactWalker.nextNode() as Text | null)) {
-    if (artifactNode.parentElement?.closest('pre, code, a, .inline-tag-location, .literal-location')) continue;
-    INLINE_ARTIFACT_RE.lastIndex = 0;
-    if (INLINE_ARTIFACT_RE.test(artifactNode.data)) artifactNodes.push(artifactNode);
-  }
-  for (const textNode of artifactNodes) {
-    const frag = document.createDocumentFragment();
-    let lastIndex = 0;
-    INLINE_ARTIFACT_RE.lastIndex = 0;
-    for (const match of textNode.data.matchAll(INLINE_ARTIFACT_RE)) {
-      const handle = match[0].replace(/[.,;:!?]+$/g, '');
-      if (handle.includes(literalHash)) continue;
-      const ref = validArtifactReference(handle);
-      if (!ref) continue;
-      frag.append(document.createTextNode(textNode.data.slice(lastIndex, match.index)),
-        artifactLink(ref.id, ref.filename, opts));
-      lastIndex = match.index + handle.length;
-    }
-    if (lastIndex === 0) continue;
-    frag.appendChild(document.createTextNode(textNode.data.slice(lastIndex)));
-    textNode.parentNode!.replaceChild(frag, textNode);
-  }
-
-  const walker = document.createTreeWalker(wrapper, NodeFilter.SHOW_TEXT);
-  const textNodes: Text[] = [];
-  let node: Text | null;
-  while ((node = walker.nextNode() as Text | null)) {
-    if (node.parentElement?.closest('pre, code, a, .inline-tag-location, .literal-location')) continue;
-    if (entityMentions(node.data).length) textNodes.push(node);
-  }
-
-  for (const textNode of textNodes) {
-    const frag = document.createDocumentFragment();
-    let lastIndex = 0;
-    for (const { ref, index, length } of entityMentions(textNode.data)) {
-      frag.appendChild(document.createTextNode(textNode.data.slice(lastIndex, index)));
-      frag.appendChild(createInlineTagElement(ref.type, ref.id, opts));
-      lastIndex = index + length;
-    }
-    if (lastIndex < textNode.data.length) {
-      frag.appendChild(document.createTextNode(textNode.data.slice(lastIndex)));
-    }
-    textNode.parentNode!.replaceChild(frag, textNode);
-  }
-
-  const dateWalker = document.createTreeWalker(wrapper, NodeFilter.SHOW_TEXT);
-  const dateNodes: Text[] = [];
-  while ((node = dateWalker.nextNode() as Text | null)) {
-    if (!node.parentElement?.closest('pre, code, a, .inline-tag-location, .literal-location') && dateMentions(node.data).length) dateNodes.push(node);
-  }
-  for (const textNode of dateNodes) {
-    const frag = document.createDocumentFragment();
-    let lastIndex = 0;
-    for (const { ref, index, length } of dateMentions(textNode.data)) {
-      frag.append(document.createTextNode(textNode.data.slice(lastIndex, index)));
-      const anchor = el('a');
-      wireDateLink(anchor, ref, opts);
-      frag.append(anchor);
-      lastIndex = index + length;
-    }
-    frag.append(document.createTextNode(textNode.data.slice(lastIndex)));
-    textNode.parentNode!.replaceChild(frag, textNode);
-  }
-
-  const locationWalker = document.createTreeWalker(wrapper, NodeFilter.SHOW_TEXT);
-  const locationNodes: Text[] = [];
-  while ((node = locationWalker.nextNode() as Text | null)) {
-    if (!node.parentElement?.closest('pre, code, a, .inline-tag-location, .literal-location') && locationMentions(node.data).length) locationNodes.push(node);
-  }
-  for (const textNode of locationNodes) {
-    const frag = document.createDocumentFragment();
-    let lastIndex = 0;
-    for (const {ref, index, length, handle} of locationMentions(textNode.data)) {
-      frag.append(document.createTextNode(textNode.data.slice(lastIndex, index)), locationChip(ref, handle));
-      lastIndex = index + length;
-    }
-    frag.append(document.createTextNode(textNode.data.slice(lastIndex)));
-    textNode.parentNode!.replaceChild(frag, textNode);
-  }
+  const artifactMentions = (text: string) => Array.from(text.matchAll(INLINE_ARTIFACT_RE)).flatMap(match => {
+    const handle = match[0].replace(/[.,;:!?]+$/g, '');
+    const ref = handle.includes(literalHash) ? undefined : validArtifactReference(handle);
+    return ref ? [{ ref, index: match.index, length: handle.length }] : [];
+  });
+  // Each pass skips the chips of the passes before it, so their order matters.
+  replaceMentions(wrapper, artifactMentions, ({ ref }) => artifactLink(ref.id, ref.filename, opts));
+  replaceMentions(wrapper, entityMentions, ({ ref }) => refChip(ref.type, ref.id, opts, `inline-tag inline-tag-${ref.type}`), false);
+  replaceMentions(wrapper, dateMentions, ({ ref }) => {
+    const anchor = el('a');
+    wireDateLink(anchor, ref, opts);
+    return anchor;
+  });
+  replaceMentions(wrapper, locationMentions, ({ ref, handle }) => locationChip(ref, handle));
 
   if (protectedHtml !== rawHtml) {
     const literals = document.createTreeWalker(wrapper, NodeFilter.SHOW_TEXT);
+    let node: Text | null;
     while ((node = literals.nextNode() as Text | null)) {
       if (node.data.includes(literalHash)) node.data = node.data.split(literalHash).join('#');
     }
@@ -603,14 +583,13 @@ function renderContent(markdown: string, opts: RenderOptions, baseFile?: string)
   return wrapper;
 }
 
-function createInlineTagElement(type: 'project' | 'action' | 'entry', id: string, opts: RenderOptions): HTMLElement {
-  const span = refChip(type, id, opts, `inline-tag inline-tag-${type}`);
-  wireNavigationLink(span, () => opts.onTagClick({ type, id }, span));
-  return span;
-}
-
 function weekdayName(date: string): string {
   return calendarLabel(date, { weekday: 'short' });
+}
+
+// A status pill's hover text: its scheduled moment, where it carries one.
+export function pillHoverTitle(pill: SummaryPill, format: DateTimeFormat): string {
+  return pill.hover ? `${pill.hover.prefix} ${formatScheduledStamp(pill.hover.stamp, pill.hover.timezone, format)}${pill.hover.suffix ?? ''}` : '';
 }
 
 // Zoned schedules display in the browser zone and retain the authored clock
@@ -831,7 +810,7 @@ function setTagGroupState(
 
   const count = expanded ? ids.length : 1;
   for (let i = 0; i < count; i++) {
-    const tag = filterTag(type, ids[i], opts);
+    const tag = renderReference(type, ids[i], opts, 'pill');
     const name = opts.resolveName(type, ids[i]);
     // Ellipsized timeline pills retain the complete name on hover.
     tag.title = name === ids[i] ? ids[i] : `${name}\n${ids[i]}`;
@@ -852,12 +831,10 @@ function setTagGroupState(
   });
   if (!expanded) {
     // The entities folded behind this bubble — carry their state onto it:
-    // the active filter's bold, and the co-hover of a hidden entity when one
+    // the active filter's highlight, and the co-hover of a hidden entity when one
     // of its other references is hovered elsewhere (matched by `data-ref-hidden`).
-    // The bubble stands in for the hidden active tag, so it also carries that
-    // tag's mark classes — the fill it takes stays the fill the tag would
-    // have (a closed entity's grey, a due one's ring); classes only, the
-    // bubble's +N leaves no room for an icon.
+    // The bubble carries the hidden selected tag's lifecycle classes;
+    // its +N label leaves no room for an icon.
     const hidden = ids.slice(count);
     const activeHidden = hidden.find((id) => isActiveRef(opts, type, id));
     if (activeHidden !== undefined) {
@@ -879,14 +856,8 @@ function setTagGroupState(
   if (retainFocus) pill.focus({ preventScroll: true });
 }
 
-// The status pill row — each pill a lifecycle state or an exception, worn in
-// the entity-pill style: the type accent field carrying the same marks the
-// entity's own chips wear (the due ring, the closed mute and strike); an
-// exception pill styles as an absence instead. No type icon — the title
-// directly above already carries it, in the entity's state. A stamped pill
-// spells its absolute stamp on hover — the label carries the distance, the
-// hover the calendar fact. Which pills, and why time rides some labels: see
-// actionPills in instance.ts.
+// Native reader lifecycle and scheduling facts. Relative values retain their
+// absolute stamp on hover and show authored timezone annotations alongside.
 function statusPills(type: 'project' | 'action', read: (opts: RenderOptions) => SummaryPill[], opts: RenderOptions): HTMLElement {
   const row = el('div', { className: 'status-pills' });
   // Retain the slots even while absent: a clock correction can bring the
@@ -900,7 +871,7 @@ function statusPills(type: 'project' | 'action', read: (opts: RenderOptions) => 
       node.hidden = !state;
       if (!state) return;
       node.classList.toggle('pill-exception', !!state.exception);
-      node.title = state.hover ? `${state.hover.prefix} ${formatScheduledStamp(state.hover.stamp, state.hover.timezone, current)}${state.hover.suffix ?? ''}` : '';
+      node.title = pillHoverTitle(state, current);
       setDisplayText(label, state.label);
       applyMarks(node, state.marks);
     });
@@ -916,12 +887,9 @@ function statusPills(type: 'project' | 'action', read: (opts: RenderOptions) => 
   return row;
 }
 
-// A clickable entity tag filtering the flow to the entity — the related
-// sections' standard row.
+// The shared list reference filters the flow to its entity.
 function filterTag(type: 'project' | 'action' | 'entry', id: string, opts: RenderOptions): HTMLElement {
-  const tag = renderTag(type, id, opts, (src) => opts.onTagClick({ type, id }, src));
-  if (type === 'action' && id.startsWith('~')) tag.appendChild(el('span', { className: 'pill', textContent: 'Projected' }));
-  return tag;
+  return renderReference(type, id, opts, 'row');
 }
 
 // Each row hangs on a rail (drawn by the timeline-list CSS) behind a fixed
@@ -1051,8 +1019,7 @@ function appendDatedSection(sections: HTMLElement, title: string, entries: { id:
 // The open-work sections every scope's panel shares: Scheduled on the dated
 // rail with the now tick and week-ahead window; Backlog by last update,
 // longest-quiet first — going quiet attracts attention — folding its
-// freshest rows instead of its tail. A deadline never regroups an action —
-// the chip's due ring carries it.
+// freshest rows instead of its tail. Deadline facts do not regroup actions.
 function appendOpenActionSections(sections: HTMLElement, actions: OpenActionGroups, opts: RenderOptions): HTMLElement {
   const container = el('div');
   sections.appendChild(container);
@@ -1128,15 +1095,13 @@ export function renderFactsLine(stats: ScopeStats, updated: string | undefined, 
   return row;
 }
 
-// The side panel summary — identity, the status pills, the authored index
-// description, and the facts line closing the header, then the scope's
-// related sections — never the full record; the detail opens in the reader
-// via the title's open-arrow.
+// Summary context and related sections; native headers are omitted when
+// the Context panel supplies Essentials.
 function renderSummary(
   type: 'project' | 'action',
   name: string,
   state: TitleIconState,
-  pills: HTMLElement,
+  pills: () => HTMLElement,
   description: string | undefined,
   opts: RenderOptions,
   updated: string | undefined,
@@ -1145,10 +1110,12 @@ function renderSummary(
   onOpenDetail: () => void,
 ): HTMLElement {
   const container = el('div', { className: `entity-view ${type}-summary` });
-  container.appendChild(renderEntityTitle(type, name, { state, opts, onOpenDetail, href: opts.routeHref(buildRoute({ filter: opts.activeFilter, doc: { kind: 'detail' } })) }));
-  container.appendChild(pills);
-  if (description) container.appendChild(el('p', { className: 'summary-description', textContent: description }));
-  container.appendChild(renderFactsLine(stats, updated, opts));
+  if (!opts.omitContextHeader) {
+    container.appendChild(renderEntityTitle(type, name, { state, opts, onOpenDetail, href: opts.routeHref(buildRoute({ filter: opts.activeFilter, doc: { kind: 'detail' } })) }));
+    container.appendChild(pills());
+    if (description) container.appendChild(el('p', { className: 'summary-description', textContent: description }));
+    container.appendChild(renderFactsLine(stats, updated, opts));
+  }
   container.appendChild(sections);
   return container;
 }
@@ -1187,7 +1154,7 @@ export function renderProjectSummary(
   appendOpenActionSections(sections, data.actions, opts);
   appendSection(sections, 'Related projects', data.related.map((id) => filterTag('project', id, opts)), undefined, true);
   appendAssetSection(sections, data.assets, opts);
-  return renderSummary('project', fm.name, projectIconState(projectMarks(fm)), statusPills('project', () => projectPills(fm), opts), description,
+  return renderSummary('project', fm.name, projectIconState(projectMarks(fm)), () => statusPills('project', () => projectPills(fm), opts), description,
     opts, data.updated, data.stats, sections, onOpenDetail);
 }
 
@@ -1212,7 +1179,7 @@ export function renderActionSummary(
   const sections = el('div', { className: 'entity-related' });
   appendSection(sections, 'Projects', data.projects.map((id) => filterTag('project', id, opts)), undefined, true);
   appendAssetSection(sections, data.assets, opts);
-  return renderSummary('action', fm.name, current => actionIconState(actionMarks(fm, current.nowDate)), statusPills('action', current => [...(data.projected ? [{ label: 'Projected', marks: [] }] : []), ...actionPills(fm, current.nowDate)], opts), description,
+  return renderSummary('action', fm.name, current => actionIconState(actionMarks(fm, current.nowDate)), () => statusPills('action', current => actionStatusPills(fm, current.nowDate, data.projected), opts), description,
     opts, data.updated, data.stats, sections, onOpenDetail);
 }
 
@@ -1245,9 +1212,11 @@ export function renderInstanceSummary(
   onOpenDetail: () => void,
 ): HTMLElement {
   const container = el('div', { className: 'entity-view instance-summary' });
-  container.appendChild(renderEntityTitle('instance', manifest.name ?? manifest.id, { state: 'active', onOpenDetail, href: opts.routeHref(buildRoute({ filter: null, doc: { kind: 'detail' } })) }));
-  if (manifest.description) container.appendChild(el('p', { className: 'summary-description', textContent: manifest.description }));
-  container.appendChild(renderFactsLine(data.stats, data.latest, opts));
+  if (!opts.omitContextHeader) {
+    container.appendChild(renderEntityTitle('instance', manifest.name ?? manifest.id, { state: 'active', onOpenDetail, href: opts.routeHref(buildRoute({ filter: null, doc: { kind: 'detail' } })) }));
+    if (manifest.description) container.appendChild(el('p', { className: 'summary-description', textContent: manifest.description }));
+    container.appendChild(renderFactsLine(data.stats, data.latest, opts));
+  }
 
   const sections = el('div', { className: 'entity-related' });
   appendSection(sections, 'Open projects', timelineRows(data.projects.map((p) =>
@@ -1283,14 +1252,15 @@ function renderEntityTitle(
 ): HTMLElement {
   const title = el('h2', { className: 'entity-title' });
   const icon = el('span', { className: `entity-title-icon icon-${type}`, title: type });
-  if (typeof state === 'function') bindDisplay(icon, opts!, (node, current) => setEntityIcon(node, iconKind(type), state(current), ICON_SIZE.title));
-  else setIcon(icon, type, state, ICON_SIZE.title);
+  if (typeof state === 'function') bindDisplay(icon, opts!, (node, current) => setReferenceIcon(node, iconKind(type), state(current), REFERENCE_ICON_SIZE.title));
+  else setIcon(icon, type, state, REFERENCE_ICON_SIZE.title);
   const label = el('span', { className: 'entity-title-label', textContent: name });
   if (onOpenDetail) {
     const btn = el('a', { className: 'title-open', href: href!, title: 'Open details', 'aria-label': `Open details for ${name}` });
     const arrow = el('span', { className: 'title-detail', 'aria-hidden': 'true' });
     arrow.innerHTML = OPEN_DETAIL_ICON; // hardcoded SVG only — never user data
-    btn.append(icon, label, arrow);
+    label.appendChild(arrow);
+    btn.append(icon, label);
     wireNavigationLink(btn, onOpenDetail);
     title.appendChild(btn);
   } else {
@@ -1351,9 +1321,11 @@ export interface ProjectDetailData {
 export function renderProjectDetail(id: string, project: Project, description: string | undefined, opts: RenderOptions, hierarchy: HierarchyNode[], data: ProjectDetailData): HTMLElement {
   const container = el('div', { className: 'entity-view entity-detail' });
   const fm = project.frontMatter;
-  container.appendChild(renderEntityTitle('project', fm.name, { state: projectIconState(projectMarks(fm)) }));
-  container.appendChild(statusPills('project', () => projectPills(fm), opts));
-  if (description) container.appendChild(el('p', { className: 'summary-description', textContent: description }));
+  if (!opts.omitContextHeader) {
+    container.appendChild(renderEntityTitle('project', fm.name, { state: projectIconState(projectMarks(fm)) }));
+    container.appendChild(statusPills('project', () => projectPills(fm), opts));
+    if (description) container.appendChild(el('p', { className: 'summary-description', textContent: description }));
+  }
 
   const fields: [string, FieldValue, boolean?][] = [['ID', id, true], ['Created', current => formatStamp(fm.created, current)]];
   if (fm.ended) fields.push(['Ended', current => formatStamp(fm.ended!, current)]);
@@ -1368,20 +1340,18 @@ export function renderProjectDetail(id: string, project: Project, description: s
   derived.appendChild(renderFoldSection('Stats', null, true, renderFields(data.stats, opts)));
   container.appendChild(derived);
 
-  if (project.body) {
-    const content = renderContent(project.body, opts, entityFilePath('project', id));
-    content.classList.add('detail-body');
-    container.appendChild(content);
-  }
+  if (project.body) container.appendChild(detailBody(project.body, opts, entityFilePath('project', id)));
   return container;
 }
 
 export function renderActionDetail(id: string, action: Action, description: string | undefined, opts: RenderOptions, stats: [string, FieldValue][]): HTMLElement {
   const container = el('div', { className: 'entity-view entity-detail' });
   const fm = action.frontMatter;
-  container.appendChild(renderEntityTitle('action', fm.name, { state: current => actionIconState(actionMarks(fm, current.nowDate)), opts }));
-  container.appendChild(statusPills('action', current => [...(id.startsWith('~') ? [{ label: 'Projected', marks: [] }] : []), ...actionPills(fm, current.nowDate)], opts));
-  if (description) container.appendChild(el('p', { className: 'summary-description', textContent: description }));
+  if (!opts.omitContextHeader) {
+    container.appendChild(renderEntityTitle('action', fm.name, { state: current => actionIconState(actionMarks(fm, current.nowDate)), opts }));
+    container.appendChild(statusPills('action', current => actionStatusPills(fm, current.nowDate, id.startsWith('~')), opts));
+    if (description) container.appendChild(el('p', { className: 'summary-description', textContent: description }));
+  }
 
   const fields: [string, FieldValue | HTMLElement, boolean?][] = id.startsWith('~') ? [] : [['ID', id, true], ['Created', current => formatStamp(fm.created!, current)]];
   if (fm.occurrence) { fields.push(['Template', fm.occurrence.template], ['Original occurrence', current => formatScheduledStamp(fm.occurrence!.original, fm.occurrence!.timezone, current)]); }
@@ -1411,11 +1381,7 @@ export function renderActionDetail(id: string, action: Action, description: stri
   derived.appendChild(renderFoldSection('Stats', null, true, renderFields(stats, opts)));
   container.appendChild(derived);
 
-  if (action.body) {
-    const content = renderContent(action.body, opts, entityFilePath('action', id.startsWith('~') ? action.frontMatter.occurrence!.template : id));
-    content.classList.add('detail-body');
-    container.appendChild(content);
-  }
+  if (action.body) container.appendChild(detailBody(action.body, opts, entityFilePath('action', id.startsWith('~') ? action.frontMatter.occurrence!.template : id)));
   return container;
 }
 
@@ -1462,8 +1428,10 @@ export function renderInstanceDetail(
   data: InstanceDetailData,
 ): HTMLElement {
   const container = el('div', { className: 'entity-view entity-detail' });
-  container.appendChild(renderEntityTitle('instance', manifest.name ?? manifest.id, { state: 'active' }));
-  if (manifest.description) container.appendChild(el('p', { className: 'summary-description', textContent: manifest.description }));
+  if (!opts.omitContextHeader) {
+    container.appendChild(renderEntityTitle('instance', manifest.name ?? manifest.id, { state: 'active' }));
+    if (manifest.description) container.appendChild(el('p', { className: 'summary-description', textContent: manifest.description }));
+  }
 
   const fields: [string, FieldValue, boolean?][] = [['ID', manifest.id, true]];
   if (manifest.version) fields.push(['Version', manifest.version, true]);
@@ -1485,24 +1453,25 @@ export function renderInstanceDetail(
   census.appendChild(renderFoldSection('Stats', null, true, renderFields(data.stats, opts)));
   container.appendChild(census);
 
-  if (body) {
-    const content = renderContent(body, opts, 'aside.md');
-    content.classList.add('detail-body');
-    container.appendChild(content);
-  }
+  if (body) container.appendChild(detailBody(body, opts, 'aside.md'));
   return container;
 }
 
-// A related-entity row: clickable tag plus an optional muted description.
+// A list reference with an optional muted description.
 function renderTagRow(
   type: 'project' | 'action' | 'entry',
   id: string,
   description: string | undefined,
   opts: RenderOptions,
 ): HTMLElement {
-  const row = el('span', { className: 'related-row' });
-  row.appendChild(filterTag(type, id, opts));
-  if (description) row.appendChild(el('span', { className: 'related-desc', textContent: ` — ${description}` }));
+  const row = filterTag(type, id, opts);
+  row.classList.add('related-row');
+  if (description) {
+    const label = row.querySelector<HTMLElement>(':scope > .tag-text')!;
+    const copy = el('span', { className: 'ref-row-copy' });
+    label.replaceWith(copy);
+    copy.append(label, el('span', { className: 'related-desc', textContent: ` — ${description}` }));
+  }
   return row;
 }
 
@@ -1514,8 +1483,8 @@ function appendRelatedItems(list: HTMLElement, items: HTMLElement[]): void {
 
 // The project hierarchy as nested related lists: ancestor paths above the
 // open project, its descendant subtree below. Rows are the usual clickable
-// tags — the open project carries the active-filter fill (a doc opens over
-// its own filter) — with the link's declared description muted after the tag.
+// references — the open project carries selection — with its declared
+// description following the name.
 function renderHierarchyList(nodes: HierarchyNode[], opts: RenderOptions): HTMLElement {
   const list = el('ul', { className: 'related-list hierarchy-list' });
   for (const node of nodes) {
@@ -1530,9 +1499,7 @@ function renderHierarchyList(nodes: HierarchyNode[], opts: RenderOptions): HTMLE
 function renderRelatedList(title: string, rows: HTMLElement[]): HTMLElement {
   const container = el('div', { className: 'entity-related' });
   container.appendChild(el('h3', { className: 'related-heading', textContent: title }));
-  const list = el('ul', { className: 'related-list' });
-  appendRelatedItems(list, rows);
-  container.appendChild(list);
+  container.appendChild(relatedList(rows));
   return container;
 }
 
@@ -1585,9 +1552,10 @@ function appendSection(container: HTMLElement, title: string, items: HTMLElement
 // An asset row — file icon and link title, opening the reader; shared by the
 // related lists and the instance summary's Assets timeline.
 function renderAssetRow(asset: AssetLink, opts: RenderOptions): HTMLElement {
-  const row = el('a', { className: 'related-row asset-row', title: asset.path, href: opts.routeHref(buildRoute({ filter: opts.activeFilter, doc: { kind: 'asset', path: asset.path } })) });
-  setIcon(row, 'asset', fileIconState(asset.path), ICON_SIZE.row);
-  row.appendChild(el('span', { className: 'asset-row-title', textContent: asset.title }));
+  const row = el('a', { className: 'related-row asset-row ref-row ref-row-asset', title: asset.path, href: opts.routeHref(buildRoute({ filter: opts.activeFilter, doc: { kind: 'asset', path: asset.path } })) });
+  row.dataset.refHover = `asset:${asset.path}`;
+  setIcon(row, 'asset', fileIconState(asset.path), REFERENCE_ICON_SIZE.row);
+  row.appendChild(el('span', { className: 'asset-row-title tag-text', textContent: asset.title }));
   wireNavigationLink(row, () => opts.onAssetClick(asset.path));
   return row;
 }
@@ -1606,12 +1574,12 @@ function renderRelatedSections(rel: EntityRelations, opts: RenderOptions): HTMLE
 // the #entry/<id> URL — in-app entry references jump in the flow instead.
 export function renderEntryDetail(entry: Entry, opts: RenderOptions, rel?: EntityRelations): HTMLElement {
   const container = el('div', { className: 'entity-view entry-detail' });
-  const title = renderEntityTitle('entry', opts.resolveName('entry', entry.meta.created));
-  bindDisplay(title.querySelector<HTMLElement>('.entity-title-label')!, opts, (node, current) => setDisplayText(node, current.resolveName('entry', entry.meta.created)));
-  container.appendChild(title);
-  const body = renderContent(entry.content, opts, weekFilePath(entry.weekFile));
-  body.classList.add('detail-body');
-  container.appendChild(body);
+  if (!opts.omitContextHeader) {
+    const title = renderEntityTitle('entry', opts.resolveName('entry', entry.meta.created));
+    bindDisplay(title.querySelector<HTMLElement>('.entity-title-label')!, opts, (node, current) => setDisplayText(node, current.resolveName('entry', entry.meta.created)));
+    container.appendChild(title);
+  }
+  container.appendChild(detailBody(entry.content, opts, weekFilePath(entry.weekFile)));
   if (rel) container.appendChild(renderRelatedSections(rel, opts));
   return container;
 }
@@ -1651,20 +1619,14 @@ function fullPageHtml(preview: HTMLElement, details: HTMLElement): HTMLElement {
 function artifactBacklink(handle: string, opts: RenderOptions): HTMLElement {
   const artifact = validArtifactReference(handle);
   if (artifact) {
-    const anchor = artifactLink(artifact.id, artifact.filename, opts);
-    const label = el('span', { className: 'tag-text', textContent: anchor.textContent ?? '' });
-    anchor.classList.add('tag', 'tag-artifact');
-    setIcon(anchor, 'artifact', artifactIconState(opts.resolveArtifact?.(artifact.id), artifact.filename));
-    anchor.appendChild(label);
-    return anchor;
+    return artifactLink(artifact.id, artifact.filename, opts, undefined, 'row');
   }
   const ref = /^#(project|action|entry)\/(.+)$/.exec(handle);
   if (!ref) return el('span', { textContent: handle });
   const type = ref[1] as 'project' | 'action' | 'entry';
   const id = ref[2];
-  const anchor = refChip(type, id, opts, `tag tag-${type}`);
+  const anchor = refChip(type, id, opts, `ref-row ref-row-${type}`);
   anchor.title = handle;
-  wireNavigationLink(anchor, () => opts.onTagClick({ type, id }, anchor));
   return anchor;
 }
 
@@ -1680,14 +1642,14 @@ export function renderArtifactDetail(
   filename?: string,
 ): HTMLElement {
   const container = el('div', { className: 'entity-view asset-detail artifact-detail' });
-  container.appendChild(el('h2', { className: 'entity-title', textContent: filename ?? artifact.frontMatter.name }));
+  if (!opts.omitContextHeader) container.appendChild(renderEntityTitle('artifact', filename ?? artifact.frontMatter.name, { state: artifactIconState(artifact, filename) }));
   if (filename) {
     const parent = el('div', { className: 'artifact-parent' });
     parent.appendChild(artifactLink(id, undefined, opts, artifact.frontMatter.name));
     container.appendChild(parent);
   }
   container.appendChild(el('div', { className: 'asset-path', textContent: artifactHandle(id, filename) }));
-  if (!filename && description) {
+  if (!opts.omitContextHeader && !filename && description) {
     container.appendChild(el('p', { className: 'summary-description', textContent: description }));
   }
 
@@ -1697,15 +1659,13 @@ export function renderArtifactDetail(
     preview = renderAssetBody(artifactAttachmentRelativePath(id, target), content, opts, true);
     container.appendChild(preview);
   } else {
-    const body = renderContent(artifact.body, opts, artifactRecordPath(id));
-    body.classList.add('detail-body');
-    container.appendChild(body);
+    container.appendChild(detailBody(artifact.body, opts, artifactRecordPath(id)));
   }
 
   const related = el('div', { className: 'entity-related' });
   if (!filename) {
     appendSection(related, 'Attachments', (artifact.frontMatter.attachments ?? [])
-      .map((attachment) => artifactLink(id, attachment, opts)));
+      .map((attachment) => artifactLink(id, attachment, opts, undefined, 'row')));
   }
   appendSection(related, 'Projects', relations.projects.map((project) => filterTag('project', project, opts)));
   appendSection(related, 'Actions', relations.actions.map((action) => filterTag('action', action, opts)));
@@ -1724,7 +1684,7 @@ export function renderAssetDetail(
   linkedFrom: { id: string; description?: string }[],
 ): HTMLElement {
   const container = el('div', { className: 'entity-view asset-detail' });
-  container.appendChild(el('h2', { className: 'entity-title', textContent: assetDisplayName(path) }));
+  if (!opts.omitContextHeader) container.appendChild(renderEntityTitle('asset', assetDisplayName(path), { state: fileIconState(path) }));
   container.appendChild(el('div', { className: 'asset-path', textContent: path }));
   const preview = renderAssetBody(path, content, opts);
   container.appendChild(preview);
@@ -1749,11 +1709,8 @@ function renderAssetBody(path: string, content: AssetContent, opts: RenderOption
     return media;
   };
   switch (content.kind) {
-    case 'markdown': {
-      const body = renderContent(stripFrontMatter ? splitFrontMatter(content.text).body : content.text, opts, path);
-      body.classList.add('detail-body');
-      return body;
-    }
+    case 'markdown':
+      return detailBody(stripFrontMatter ? splitFrontMatter(content.text).body : content.text, opts, path);
     case 'text': {
       const pre = el('pre', { className: 'asset-plain detail-body' });
       pre.appendChild(el('code', { textContent: content.text }));

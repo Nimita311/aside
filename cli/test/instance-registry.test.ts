@@ -17,7 +17,6 @@ describe('InstanceRegistry', () => {
     const r = new InstanceRegistry([a, b]);
     expect(r.activeInstance).toBeNull();
     expect(r.all()).toEqual([a, b]);
-    expect(r.others()).toEqual([a, b]);
   });
 
   it('keeps selection and catalogue reads in memory until the owner reconciles eligibility', () => {
@@ -30,7 +29,7 @@ describe('InstanceRegistry', () => {
     const restored = new InstanceRegistry(); restored.restore(state);
     expect(restored.selection()).toEqual(state);
     r.reconcile([a]);
-    expect(r.all()).toEqual([a]); expect(r.activeInstance).toBeNull(); expect(r.others()).toEqual([a]);
+    expect(r.all()).toEqual([a]); expect(r.activeInstance).toBeNull();
     expect(r.catalogue([])).toEqual([{ path: a, workspace: true, active: false }]);
     rmSync(join(a, 'aside.md')); mkdirSync(join(a, 'aside.md'));
     expect(r.all()).toEqual([a]);
@@ -49,7 +48,6 @@ describe('InstanceRegistry', () => {
     r.activate(a);
     expect(r.activeInstance).toBe(a);
     expect(r.all()).toEqual([a, b]);
-    expect(r.others()).toEqual([b]);
   });
 
   it('tracks an instance encountered via --dir/pointer that was not discovered', () => {
@@ -57,7 +55,6 @@ describe('InstanceRegistry', () => {
     r.activate(elsewhere); // e.g. --dir outside the scanned tree
     expect(r.activeInstance).toBe(elsewhere);
     expect(r.all()).toEqual([a, elsewhere]);
-    expect(r.others()).toEqual([a]);
   });
 
   it('accumulates every instance selected via selectInstance across the session', () => {
@@ -67,7 +64,6 @@ describe('InstanceRegistry', () => {
     r.activate(b); // selectInstance to a discovered instance
     expect(r.activeInstance).toBe(b);
     expect(r.all()).toEqual([a, b, c]);
-    expect(r.others()).toEqual([a, c]);
   });
 
   it('switching back to a previously active instance keeps the set stable', () => {
@@ -77,6 +73,5 @@ describe('InstanceRegistry', () => {
     r.activate(a);
     expect(r.activeInstance).toBe(a);
     expect(r.all()).toEqual([a, b]);
-    expect(r.others()).toEqual([b]);
   });
 });

@@ -7,6 +7,15 @@ export function activeModal(): HTMLDialogElement | undefined {
   return [...stack].reverse().find(dialog => dialog.open);
 }
 
+// Take a surface out of, or return it to, sight, interaction, and the
+// accessibility tree in one step.
+export function setConcealed(node: HTMLElement, concealed: boolean): void {
+  node.hidden = concealed;
+  node.inert = concealed;
+  if (concealed) node.setAttribute('aria-hidden', 'true');
+  else node.removeAttribute('aria-hidden');
+}
+
 // Whether a node can take focus right now: connected, outside any hidden or
 // inert subtree, not disabled, rendered, and not folded inside a closed
 // details. Shared by every focus restoration in the app.
@@ -153,9 +162,7 @@ export function createModal(dialog: HTMLDialogElement, options: {
       launcher = document.activeElement instanceof HTMLElement ? document.activeElement : null;
       clearTimeout(hideTimer);
       const generation = ++revision;
-      dialog.hidden = false;
-      dialog.inert = false;
-      dialog.removeAttribute('aria-hidden');
+      setConcealed(dialog, false);
       stack.push(dialog);
       dialog.showModal();
       ensureFocus();

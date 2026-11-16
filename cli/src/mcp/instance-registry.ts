@@ -51,11 +51,6 @@ export class InstanceRegistry {
     return [...this.known];
   }
 
-  // Known instances other than the active one — candidates to switch to.
-  others(): string[] {
-    return [...this.known].filter((p) => p !== this.active);
-  }
-
   catalogue(daemonKnown: string[]): InstanceListing[] {
     const paths = new Set([...this.known, ...daemonKnown.map(path => resolve(path))]);
     return [...paths].map((path) => ({

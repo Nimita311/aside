@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { parseRoute, readInstanceLocation } from '../../src/route';
 import { FIXTURE_NAMES } from '../fixture-store';
-import { scenarios, scenarioById } from '../scenarios';
+import { scenarios } from '../scenarios';
+
+const byId = new Map(scenarios.map(item => [item.id, item]));
 
 describe('gallery scenario catalogue', () => {
   it('names every real page, overlay, reader, and operational state', () => {
@@ -18,10 +20,9 @@ describe('gallery scenario catalogue', () => {
       'image', 'pdf', 'audio', 'video', 'markdown-attachment', 'plain-text', 'binary',
       'dashboard', 'raw-asset', 'chooser-loading', 'chooser-error', 'instance-loading',
       'instance-error', 'empty-instance', 'empty-project', 'empty-action', 'diagnostics',
-      'missing-file', 'file-error', 'search-loading', 'search-incomplete', 'auth-checking',
-      'auth-required', 'auth-offline', 'reconnecting', 'recurring-action',
-    ]) expect(scenarioById(id), `${id} has a runnable scenario`).toBeDefined();
-    expect(scenarioById('not-a-scenario')).toBeUndefined();
+      'missing-file', 'file-error', 'search-loading', 'search-incomplete', 'access-loading',
+      'access-denied', 'access-offline', 'reconnecting', 'recurring-action',
+    ]) expect(byId.get(id), `${id} has a runnable scenario`).toBeDefined();
   });
 
   it('describes deterministic data and environment inputs for each preview', () => {
@@ -49,7 +50,7 @@ describe('gallery scenario catalogue', () => {
   });
 
   it('uses production route grammar for full details, filtered readers, and file readers', () => {
-    const state = (id: string) => parseRoute(readInstanceLocation(scenarioById(id)!.route).route);
+    const state = (id: string) => parseRoute(readInstanceLocation(byId.get(id)!.route).route);
     expect(state('instance-detail')).toMatchObject({ filter: null, doc: { kind: 'detail' } });
     expect(state('project-detail')).toMatchObject({ filter: { type: 'project' }, doc: { kind: 'detail' } });
     expect(state('action-detail')).toMatchObject({ filter: { type: 'action' }, doc: { kind: 'detail' } });
@@ -78,7 +79,7 @@ describe('gallery scenario catalogue', () => {
       expect(item.ready).not.toContain('#doc-body');
       for (const action of item.actions ?? []) expect(action.selector).not.toContain('#doc-body');
     }
-    expect(scenarioById('instance-summary')?.preferences?.contextPanelMode).not.toBe('expanded');
-    expect(scenarioById('panel-wide')?.preferences?.contextPanelMode).not.toBe('expanded');
+    expect(byId.get('instance-summary')?.preferences?.contextPanelMode).not.toBe('expanded');
+    expect(byId.get('panel-wide')?.preferences?.contextPanelMode).not.toBe('expanded');
   });
 });

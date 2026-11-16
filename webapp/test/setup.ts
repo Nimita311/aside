@@ -15,10 +15,6 @@ class MemoryStorage implements Storage {
   clear(): void { this.items.clear(); }
 }
 
-// Browser fixtures represent a connected tab unless a test explicitly exercises
-// missing or expired access. Production access is still checked by the server.
-beforeEach(() => localStorage.setItem('aside.webToken', 'fixture-browser-token'));
-
 for (const name of ['localStorage', 'sessionStorage'] as const) {
   const descriptor = Object.getOwnPropertyDescriptor(globalThis, name);
   if (descriptor && (globalThis as Record<string, unknown>)[name] === undefined) {

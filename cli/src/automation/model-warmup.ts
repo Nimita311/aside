@@ -1,4 +1,4 @@
-import { isBuiltinModelName, validateDefinition } from '../core/automation.js';
+import { isBuiltinModelName, namedModel, validateDefinition } from '../core/automation.js';
 import { catalogFor, type CatalogOptions, type ModelCatalogSnapshot } from './models.js';
 import type { AutomationSource } from './scheduler.js';
 import {resolveExecutionContext} from '../core/execution-context.js';
@@ -38,16 +38,16 @@ export class AutomationModelWarmup {
       const warn = (job: AutomationSource, message: string) => warnings.push({ root, key: job.key, definedIn: job.definedIn, message });
       const dependencies: Array<{ job: AutomationSource & { selection: string }; builtin: string }> = [];
       try {
-        for (const job of jobs) resolveExecutionContext(job.executionContext);
-        const { config } = resolveExecutionContext(jobs[0].executionContext);
+        const [{ config }] = jobs.map(job => resolveExecutionContext(job.executionContext));
         for (const job of jobs) {
-          const named = config.models && Object.hasOwn(config.models, job.selection) ? config.models[job.selection] : undefined;
+          const named = namedModel(config, job.selection);
           if (named && 'command' in named) continue;
           const builtin = named?.model ?? job.selection;
           if (isBuiltinModelName(builtin)) dependencies.push({ job, builtin });
           else warn(job, `Model ${JSON.stringify(job.selection)} is not defined in this instance's .aside`);
         }
       } catch (error) { for (const job of jobs) warn(job, (error as Error).message); }
+      // Published by reference: a lookup of this generation appends to the same list.
       this.messages.set(root, warnings);
       if (!dependencies.length) continue;
       const work = this.lookup(root, { signal: this.controller.signal, executionContext: jobs[0].executionContext! }).then(snapshot => {
@@ -63,11 +63,11 @@ export class AutomationModelWarmup {
         for (const diagnostic of snapshot.diagnostics.filter(message => message.includes('persist'))) {
           for (const { job } of dependencies) warn(job, diagnostic);
         }
-        this.messages.set(root, warnings); this.changed();
+        this.changed();
       }).catch(error => {
         if (this.controller.signal.aborted || this.generations.get(root) !== generation) return;
         for (const { job } of dependencies) warn(job, (error as Error).message);
-        this.messages.set(root, warnings); this.changed();
+        this.changed();
       });
       this.pending.add(work);
       void work.finally(() => this.pending.delete(work));

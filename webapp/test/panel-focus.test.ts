@@ -26,8 +26,10 @@ interface App {
   state: { store: Store | null; instanceId: string | null; filter: EntityRef | null };
   showSidePanel(view?: PanelView | null, userInitiated?: boolean): Promise<void>;
   panelSnapshot(): PanelView | null;
+  setupContextPanel(): void;
   setupModals(): void;
   dismissActionToast(): void;
+  contextPanel?: { open(): void; close(options?: { restoreFocus?: boolean; animate?: boolean }): void; destroy(): void };
   settingsModal: ModalController;
 }
 
@@ -38,31 +40,35 @@ function deferred<T>() {
   return { promise, resolve, reject };
 }
 
-const modals: ModalController[] = [];
-const dismissToasts: (() => void)[] = [];
-afterEach(() => { for (const dismiss of dismissToasts.splice(0)) dismiss(); for (const modal of modals.splice(0)) modal.close(0); vi.restoreAllMocks(); document.body.replaceChildren(); localStorage.clear(); });
+const cleanups: (() => void)[] = [];
+afterEach(() => { for (const cleanup of cleanups.splice(0)) cleanup(); vi.restoreAllMocks(); document.body.replaceChildren(); localStorage.clear(); });
 
 describe('panel content focus', () => {
   async function setup() {
     localStorage.clear();
     history.replaceState({}, '', '/work/');
     document.body.innerHTML = '<h1 class="app-title"><a href="/">Aside</a></h1><input id="other">' +
-      '<aside id="side-panel"><div id="side-panel-body"></div></aside>' +
+      '<aside id="side-panel"><button id="btn-context-expand">Expand</button><div id="side-panel-body"></div></aside>' +
       '<dialog id="modal-backdrop" hidden><button>Close settings</button></dialog>';
     const store = new Store(source); await store.init();
-    const api = await loadApp<App>('state, showSidePanel, panelSnapshot, setupModals, dismissActionToast, settingsModal');
+    const api = await loadApp<App>('state, showSidePanel, panelSnapshot, setupContextPanel, setupModals, dismissActionToast, contextPanel, settingsModal');
     api.state.store = store; api.state.instanceId = 'work';
-    dismissToasts.push(api.dismissActionToast); api.setupModals(); modals.push(api.settingsModal);
+    api.setupContextPanel(); api.setupModals();
+    cleanups.push(api.dismissActionToast, () => api.settingsModal.close(0), () => api.contextPanel?.destroy());
     await api.showSidePanel();
+    api.contextPanel!.open();
     const body = document.getElementById('side-panel-body')!;
-    const projectLink = () => body.querySelector<HTMLAnchorElement>('.tag-project')!;
+    // The panel also carries the instance's complete record; the summary's
+    // open projects are the rows on its timeline list.
+    const projectLinks = () => [...body.querySelectorAll<HTMLAnchorElement>('.timeline-list .ref-row-project')];
+    const projectLink = () => projectLinks()[0];
     async function delayRelations() {
       const relations = await store.getRelations();
       const pending = deferred<typeof relations>();
       vi.spyOn(store, 'getRelations').mockReturnValueOnce(pending.promise);
       return { finish: () => pending.resolve(relations), fail: () => pending.reject(new Error('Offline')) };
     }
-    return { api, store, body, projectLink, delayRelations };
+    return { api, store, body, projectLink, projectLinks, delayRelations };
   }
 
   it('keeps keyboard focus inside the loading panel, then moves to the new scope heading', async () => {
@@ -94,14 +100,14 @@ describe('panel content focus', () => {
   });
 
   it('restores expanded content before finding the equivalent focused link', async () => {
-    const { api, body } = await setup();
+    const { api, body, projectLinks } = await setup();
     body.querySelector<HTMLButtonElement>('.related-more')!.click();
-    const link = [...body.querySelectorAll<HTMLAnchorElement>('.tag-project')].at(-1)!;
+    const link = projectLinks().at(-1)!;
     link.focus();
     await api.showSidePanel(api.panelSnapshot());
     expect(document.activeElement?.getAttribute('href')).toBe(link.getAttribute('href'));
     expect(document.activeElement).not.toBe(link);
-    expect(body.querySelectorAll('.tag-project')).toHaveLength(12);
+    expect(projectLinks()).toHaveLength(12);
   });
 
   it('restores the section expansion button by its section identity', async () => {
@@ -114,16 +120,16 @@ describe('panel content focus', () => {
   });
 
   it('preserves expansion, scrolling and focus changes made while a refresh loads', async () => {
-    const { api, body, projectLink, delayRelations } = await setup();
+    const { api, body, projectLink, projectLinks, delayRelations } = await setup();
     const pending = await delayRelations();
     projectLink().focus();
     const refreshing = api.showSidePanel(api.panelSnapshot());
     body.querySelector<HTMLButtonElement>('.related-more')!.click();
-    const link = [...body.querySelectorAll<HTMLAnchorElement>('.tag-project')].at(-1)!;
+    const link = projectLinks().at(-1)!;
     link.focus(); body.scrollTop = 90;
     pending.finish(); await refreshing;
     expect(document.activeElement?.getAttribute('href')).toBe(link.getAttribute('href'));
-    expect(body.querySelectorAll('.tag-project')).toHaveLength(12);
+    expect(projectLinks()).toHaveLength(12);
     expect(body.scrollTop).toBe(90);
   });
 
@@ -139,13 +145,14 @@ describe('panel content focus', () => {
   });
 
   it('preserves the current control when focus moves within the panel during refresh', async () => {
-    const { api, body, projectLink, delayRelations } = await setup();
+    const { api, projectLink, projectLinks, delayRelations } = await setup();
     const pending = await delayRelations();
     projectLink().focus();
     const refreshing = api.showSidePanel(api.panelSnapshot());
-    const title = body.querySelector<HTMLAnchorElement>('.title-open')!; title.focus();
+    const other = projectLinks()[1], href = other.getAttribute('href'); other.focus();
     pending.finish(); await refreshing;
-    expect(document.activeElement).toBe(body.querySelector('.title-open'));
+    expect(document.activeElement).toBe(projectLinks()[1]);
+    expect(document.activeElement?.getAttribute('href')).toBe(href);
   });
 
   it('does not let an older same-scope refresh replace a newer focused summary', async () => {
@@ -208,8 +215,7 @@ describe('panel content focus', () => {
     api.state.filter = { type: 'project', id: ids[0] };
     const loading = api.showSidePanel();
     const panel = document.getElementById('side-panel')!;
-    panel.hidden = true;
-    panel.inert = true;
+    api.contextPanel!.close({ restoreFocus: false, animate: false });
     const summary = document.createElement('button');
     summary.textContent = 'Summary';
     document.body.append(summary);

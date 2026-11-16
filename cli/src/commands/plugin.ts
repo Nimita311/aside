@@ -1,4 +1,4 @@
-// aside plugin — register this source checkout with an agent (see cli/spec.md).
+// aside plugin — register this source checkout with an agent (see reference/cli.md).
 // Each agent's own CLI makes the changes; this command never edits an agent's
 // configuration files itself. It works on files and other programs directly
 // and needs no daemon.
@@ -10,6 +10,7 @@ import { publishReceipt, publishReport, type Report } from './output.js';
 import { parseCommand, type CommandInput } from './options.js';
 import { ownProgram } from '../daemon/client.js';
 import { formatScalar } from '../core/text.js';
+import { errorMessage } from '../core/error.js';
 
 const SKILL = 'aside';
 const PLUGIN_DIRECTORY = join('agent', 'graphql');
@@ -51,7 +52,7 @@ export interface PluginContext {
   // Alternate bounded reader for status consumers hosted inside a long-lived process.
   readTree?(directory: string): Map<string, Buffer>;
   out(line: string): void;
-  report?: { value: Report; section: string; events: string[]; states: Record<string, unknown>; operations: Array<{ command: string; args: string[]; cwd?: string; print: boolean; result?: RunResult }> };
+  report?: { value: Report; section: string; states: Record<string, unknown>; operations: Array<{ command: string; args: string[]; cwd?: string; print: boolean; result?: RunResult }> };
 }
 
 function onPath(name: string): string | null {
@@ -120,18 +121,9 @@ export interface PluginStatusSnapshot {
 /** Read the same status as the CLI without publishing a report or changing registration. */
 export async function inspectPluginStatus(original: PluginContext = defaultPluginContext()): Promise<PluginStatusSnapshot> {
   const report: Report = { title: 'Aside plugin status', data: {}, sections: [], checks: [] };
-  const ctx: PluginContext = { ...original,
-    report: { value: report, section: 'CLI', events: [], states: {}, operations: [] }, out: line => {
-      if (!line.trim()) return;
-      const check = [...report.checks].reverse().find(check => !check.passed);
-      if (check && /^\s/.test(line)) (check.problems ??= []).push(line.trim());
-    } };
+  const ctx = reportingContext(original, report);
   try { await status(ctx); }
-  catch (error) {
-    report.checks.push({ code: 'plugin_operation', label: 'Plugin status', passed: false,
-      problems: [error instanceof Error ? error.message : String(error)],
-      ...(error instanceof PluginRecoveryError ? { fixes: error.fixes } : {}) });
-  }
+  catch (error) { report.checks.push(operationCheck('status', error)); }
   return { checkout: ctx.root, information: report.sections,
     checks: report.checks, agents: ctx.report!.states as PluginStatusSnapshot['agents'] };
 }
@@ -179,7 +171,7 @@ class Changes {
 // Ask an agent's CLI for its state. A query that fails is an error, never
 // read as "nothing registered" — the plugin command would then act on a wrong picture.
 async function json<T>(ctx: PluginContext, command: string, args: string[]): Promise<T> {
-  const shown = [command, ...args].map(shellQuote).join(' ');
+  const shown = shownCommand(command, args);
   const result = await ctx.runner(command, args);
   if (result.code !== 0) throw new Error(`${shown} failed:\n${(result.stderr || result.stdout).trim()}`);
   try {
@@ -293,6 +285,16 @@ interface ClaudeInstallTarget extends ClaudeScope {
   file: string;
 }
 
+function installedAt(installations: ClaudeInstallation[], target: ClaudeScope): boolean {
+  return installations.some(p => p.scope === target.scope && (target.scope === 'user' || p.projectPath && samePath(p.projectPath, target.cwd!)));
+}
+
+// Installing at a scope enables the plugin there. Any other saved choice needs
+// its own enable/disable command.
+function needsExplicitSetting(installs: ClaudeInstallTarget[], setting: ClaudeSetting): boolean {
+  return !setting.enabled || !installs.some(target => target.scope === setting.scope && samePath(target.file, setting.file));
+}
+
 function scopedEnabled(file: string, id: string): boolean | undefined {
   let text: string;
   try { text = readFileSync(file, 'utf8'); }
@@ -357,7 +359,7 @@ async function claudeRestorePlan(ctx: PluginContext, names: PluginNames, state: 
   return { installs: installs.map(target => ({ ...target, file: filesByScope.get(scopeKey(target))! })), settings };
 }
 
-function claudeManual(ctx: PluginContext, names: PluginNames, remove: boolean): string[] {
+function claudeManual(names: PluginNames, remove: boolean): string[] {
   return remove
     ? [`claude plugin uninstall ${names.id} --scope user`, `claude plugin marketplace remove ${names.marketplace}`]
     : [`claude plugin marketplace add ${shellQuote(names.directory)}`, `claude plugin install ${names.id} --scope user`];
@@ -367,7 +369,7 @@ async function manageClaudePlugin(ctx: PluginContext, opts: Options): Promise<vo
   const names = pluginNames(ctx);
   const bin = ctx.find('claude');
   if (!bin) {
-    throw new Error(`The claude command was not found. Install Claude Code, or run these yourself:\n${claudeManual(ctx, names, opts.remove).map((c) => `  ${c}`).join('\n')}`);
+    throw new Error(`The claude command was not found. Install Claude Code, or run these yourself:\n${claudeManual(names, opts.remove).map((c) => `  ${c}`).join('\n')}`);
   }
   const state = await claudeState(ctx, bin, names);
   const changes = new Changes(ctx, opts.print);
@@ -388,7 +390,7 @@ async function manageClaudePlugin(ctx: PluginContext, opts: Options): Promise<vo
   const refreshing = state.marketplaceHere && state.needsRefresh;
   let restore: Awaited<ReturnType<typeof claudeRestorePlan>> | undefined;
   if (replacing || refreshing) {
-    if (replacing && !sameCheckoutPackage(ctx, state.marketplacePath!) && !opts.force) {
+    if (foreignMarketplace(ctx, state) && !opts.force) {
       throw new Error(`claude: marketplace ${names.marketplace} already points at ${state.marketplacePath}, not this checkout's agent directory (${names.directory}). Pass --force to replace it.`);
     }
     // Marketplace removal uninstalls its plugins. Build a complete restoration
@@ -402,20 +404,19 @@ async function manageClaudePlugin(ctx: PluginContext, opts: Options): Promise<vo
     const current = restore ? opts.print ? { installations: [] } : await claudeState(ctx, bin, names) : state;
     const installs: ClaudeScope[] = restore?.installs ?? [{ scope: 'user' }];
     for (const target of installs) {
-      if (!current.installations.some(p => p.scope === target.scope && (target.scope === 'user' || p.projectPath && samePath(p.projectPath, target.cwd!)))) {
+      if (!installedAt(current.installations, target)) {
         await changes.run(bin, ['plugin', 'install', names.id, '--scope', target.scope], `claude: installed ${names.id} at ${target.scope} scope${target.cwd ? ` in ${target.cwd}` : ''}`, target.cwd);
       }
     }
     for (const setting of restore?.settings ?? []) {
-      const installedByPlan = restore!.installs.some(target => target.scope === setting.scope && samePath(target.file, setting.file));
-      if (opts.print ? !setting.enabled || !installedByPlan : scopedEnabled(setting.file, names.id) !== setting.enabled) {
+      if (opts.print ? needsExplicitSetting(restore!.installs, setting) : scopedEnabled(setting.file, names.id) !== setting.enabled) {
         const operation = setting.enabled ? 'enable' : 'disable';
         await changes.run(bin, ['plugin', operation, names.id, '--scope', setting.scope], `claude: restored ${setting.scope} plugin ${operation}d state${setting.cwd ? ` in ${setting.cwd}` : ''}`, setting.cwd);
       }
     }
     if (restore && !opts.print) {
       const confirmed = await claudeState(ctx, bin, names);
-      if (!confirmed.marketplaceHere || confirmed.needsRefresh || installs.some(target => !confirmed.installations.some(p => p.scope === target.scope && (target.scope === 'user' || p.projectPath && samePath(p.projectPath, target.cwd!)))) || restore.settings.some(s => scopedEnabled(s.file, names.id) !== s.enabled)) {
+      if (!confirmed.marketplaceHere || confirmed.needsRefresh || installs.some(target => !installedAt(confirmed.installations, target)) || restore.settings.some(s => scopedEnabled(s.file, names.id) !== s.enabled)) {
         throw new Error('Claude did not confirm every restored installation and enabled setting.');
       }
     }
@@ -424,7 +425,7 @@ async function manageClaudePlugin(ctx: PluginContext, opts: Options): Promise<vo
     const commands = [
       shownCommand(bin, ['plugin', 'marketplace', 'add', names.directory]),
       ...restore.installs.map(s => shownCommand(bin, ['plugin', 'install', names.id, '--scope', s.scope], s.cwd)),
-      ...restore.settings.filter(s => !s.enabled || !restore!.installs.some(target => target.scope === s.scope && samePath(target.file, s.file))).map(s => shownCommand(bin, ['plugin', s.enabled ? 'enable' : 'disable', names.id, '--scope', s.scope], s.cwd)),
+      ...restore.settings.filter(s => needsExplicitSetting(restore!.installs, s)).map(s => shownCommand(bin, ['plugin', s.enabled ? 'enable' : 'disable', names.id, '--scope', s.scope], s.cwd)),
     ];
     throw new Error(`${(error as Error).message}\nMarketplace replacement or restoration is incomplete. After fixing the reported error, restore the previous scopes and choices with:\n${commands.map(c => `  ${c}`).join('\n')}`);
   }
@@ -539,7 +540,7 @@ async function codexState(ctx: PluginContext, bin: string, names: CodexNames, re
   };
 }
 
-function codexManual(ctx: PluginContext, names: CodexNames, remove: boolean): string[] {
+function codexManual(names: CodexNames, remove: boolean): string[] {
   return remove
     ? [`codex plugin remove ${names.id}`, `codex plugin marketplace remove ${names.marketplace}`]
     : [`codex plugin marketplace add ${shellQuote(names.directory)}`, `codex plugin add ${names.id}`];
@@ -549,7 +550,7 @@ async function manageCodexPlugin(ctx: PluginContext, opts: Options): Promise<voi
   const names = codexNames(ctx);
   const bin = ctx.find('codex');
   if (!bin) {
-    throw new Error(`The codex command was not found. Install Codex, or run these yourself:\n${codexManual(ctx, names, opts.remove).map((c) => `  ${c}`).join('\n')}`);
+    throw new Error(`The codex command was not found. Install Codex, or run these yourself:\n${codexManual(names, opts.remove).map((c) => `  ${c}`).join('\n')}`);
   }
   const state = await codexState(ctx, bin, names, opts.remove ? 'remove' : 'install');
   const changes = new Changes(ctx, opts.print);
@@ -565,7 +566,7 @@ async function manageCodexPlugin(ctx: PluginContext, opts: Options): Promise<voi
     return;
   }
 
-  if (state.marketplacePath !== null && !state.marketplaceHere && !sameCheckoutPackage(ctx, state.marketplacePath) && !opts.force) {
+  if (foreignMarketplace(ctx, state) && !opts.force) {
     throw new Error(`codex: marketplace ${names.marketplace} already points at ${state.marketplacePath}, not this checkout's agent directory (${names.directory}). Pass --force to replace it.`);
   }
   if (state.marketplacePath !== null && !state.marketplaceHere && state.otherMarketplacePlugins.length) {
@@ -599,6 +600,11 @@ async function manageCodexPlugin(ctx: PluginContext, opts: Options): Promise<voi
 }
 
 // --- status ---
+
+// The marketplace name is registered from another checkout; replacing it takes --force.
+function foreignMarketplace(ctx: PluginContext, state: { marketplacePath: string | null; marketplaceHere: boolean }): boolean {
+  return state.marketplacePath !== null && !state.marketplaceHere && !sameCheckoutPackage(ctx, state.marketplacePath);
+}
 
 function installCommand(ctx: PluginContext, agent: 'claude' | 'codex', force = false): string {
   return pluginCommand(ctx, agent, 'install', force);
@@ -636,9 +642,28 @@ function reportCheck(ctx: PluginContext, passed: boolean, label: string, detail:
     label, group: section.section, passed, ...(!passed ? { problems: [detail] } : {}) });
 }
 
+const lastFailedCheck = (report: Report) => [...report.checks].reverse().find(check => !check.passed);
+
 function reportFix(ctx: PluginContext, instruction: string): void {
-  const check = [...ctx.report!.value.checks].reverse().find(check => !check.passed);
+  const check = lastFailedCheck(ctx.report!.value);
   if (check) (check.fixes ??= []).push(instruction);
+}
+
+// Indented lines elaborate the latest failed check; any other line is an event.
+function reportingContext(original: PluginContext, report: Report, events: string[] = []): PluginContext {
+  return { ...original, report: { value: report, section: 'CLI', states: {}, operations: [] }, out: line => {
+    if (!line.trim()) return;
+    if (/^\s/.test(line)) {
+      const check = lastFailedCheck(report);
+      if (check) { (check.problems ??= []).push(line.trim()); return; }
+    }
+    events.push(line);
+  } };
+}
+
+function operationCheck(operation: string, error: unknown): Report['checks'][number] {
+  return { code: 'plugin_operation', label: `Plugin ${operation}`, passed: false, problems: [errorMessage(error)],
+    ...(error instanceof PluginRecoveryError ? { fixes: error.fixes } : {}) };
 }
 
 function reportAgent(ctx: PluginContext, name: string, bin: string | null): void {
@@ -706,7 +731,7 @@ function reportClaude(ctx: PluginContext, names: PluginNames, state: ClaudeState
     for (const source of sources) reportFix(ctx, shownCommand('claude', ['plugin', 'validate', source]));
     reportFix(ctx, `fix the reported plugin error, then run /reload-plugins in an open Claude session or start a new session. Recheck with ${shownCommand(ctx.node, [ctx.script, 'plugin', 'status'])}.`);
   }
-  if (!state.marketplaceHere || !state.userInstalled || state.needsRefresh) reportFix(ctx, installCommand(ctx, 'claude', state.marketplacePath !== null && !state.marketplaceHere && !sameCheckoutPackage(ctx, state.marketplacePath)));
+  if (!state.marketplaceHere || !state.userInstalled || state.needsRefresh) reportFix(ctx, installCommand(ctx, 'claude', foreignMarketplace(ctx, state)));
   if (state.userDisabled) reportFix(ctx, `claude plugin enable ${names.id}`);
 }
 
@@ -717,39 +742,26 @@ function reportCodex(ctx: PluginContext, names: CodexNames, state: CodexState): 
   if (state.installed) reportCheck(ctx, state.current, 'Plugin files', state.current ? 'match CLI checkout' : 'differ from CLI checkout');
   const needsInstall = !state.marketplaceHere || !state.installed || !state.current;
   if (state.disabled) reportFix(ctx, needsInstall ? 'enable the plugin in Codex before running aside plugin install; you can disable it again afterwards.' : 'enable the plugin in Codex, then start a new session.');
-  if (needsInstall) reportFix(ctx, installCommand(ctx, 'codex', state.marketplacePath !== null && !state.marketplaceHere && !sameCheckoutPackage(ctx, state.marketplacePath)));
+  if (needsInstall) reportFix(ctx, installCommand(ctx, 'codex', foreignMarketplace(ctx, state)));
 }
 
 async function status(ctx: PluginContext): Promise<void> {
   reportBuilds(ctx);
   const failures: string[] = [];
-  const claude = ctx.find('claude');
-  reportAgent(ctx, 'Claude Code', claude);
-  if (!claude) {
-    reportFix(ctx, `install Claude Code, then run ${installCommand(ctx, 'claude')}`);
-  } else {
-    try {
-      const names = pluginNames(ctx);
-      reportClaude(ctx, names, await claudeState(ctx, claude, names));
-    } catch (error) {
-      const message = (error as Error).message;
-      reportCheck(ctx, false, 'Registration', `inspection failed — ${message}`);
-      failures.push(`claude: ${message}`);
-    }
-  }
-  const codex = ctx.find('codex');
-  reportAgent(ctx, 'Codex', codex);
-  if (!codex) {
-    reportFix(ctx, `install Codex, then run ${installCommand(ctx, 'codex')}`);
-  } else {
-    try {
-      const names = codexNames(ctx);
-      reportCodex(ctx, names, await codexState(ctx, codex, names));
-    } catch (error) {
+  const agents = [
+    ['claude', 'Claude Code', async (bin: string) => { const names = pluginNames(ctx); reportClaude(ctx, names, await claudeState(ctx, bin, names)); }],
+    ['codex', 'Codex', async (bin: string) => { const names = codexNames(ctx); reportCodex(ctx, names, await codexState(ctx, bin, names)); }],
+  ] as const;
+  for (const [agent, title, inspect] of agents) {
+    const bin = ctx.find(agent);
+    reportAgent(ctx, title, bin);
+    if (!bin) { reportFix(ctx, `install ${title}, then run ${installCommand(ctx, agent)}`); continue; }
+    try { await inspect(bin); }
+    catch (error) {
       const message = (error as Error).message;
       reportCheck(ctx, false, 'Registration', `inspection failed — ${message}`);
       if (error instanceof PluginRecoveryError) for (const fix of error.fixes) reportFix(ctx, fix);
-      failures.push(`codex: ${message}`);
+      failures.push(`${agent}: ${message}`);
     }
   }
   if (failures.length) throw new Error(`Plugin inspection failed:\n${failures.join('\n')}`);
@@ -769,14 +781,7 @@ export async function runPlugin(args: CommandInput, context?: PluginContext): Pr
   const original = context ?? defaultPluginContext();
   const report: Report = { title: `Aside plugin ${operation}`, data: {}, sections: [], checks: [] };
   const events: string[] = [];
-  const ctx: PluginContext = { ...original, report: { value: report, section: 'CLI', events, states: {}, operations: [] }, out: line => {
-    if (!line.trim()) return;
-    if (/^\s/.test(line)) {
-      const check = [...report.checks].reverse().find(check => !check.passed);
-      if (check) { (check.problems ??= []).push(line.trim()); return; }
-    }
-    events.push(line);
-  } };
+  const ctx = reportingContext(original, report, events);
   let failure: unknown;
   try {
     if (operation === 'status') { await status(ctx); return; }
@@ -796,8 +801,7 @@ export async function runPlugin(args: CommandInput, context?: PluginContext): Pr
   }
   finally {
     if (events.length) report.sections.push({ name: options.has('--print') ? 'Commands' : 'Results', entries: events.map(name => ({ name })) });
-    if (failure) report.checks.push({ code: 'plugin_operation', label: `Plugin ${operation}`, passed: false, problems: [failure instanceof Error ? failure.message : String(failure)],
-      ...(failure instanceof PluginRecoveryError ? { fixes: failure.fixes } : {}) });
+    if (failure) report.checks.push(operationCheck(operation, failure));
     report.data = { checkout: ctx.root, information: report.sections, agents: ctx.report!.states, operations: ctx.report!.operations, events };
     const out = options.has('--json') ? original.out : (text: string) => text.split('\n').forEach(original.out);
     if (operation === 'status') publishReport(report, `plugin ${operation}`, options.has('--json'), out);

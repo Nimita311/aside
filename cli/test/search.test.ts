@@ -1,4 +1,3 @@
-import { WebAuth } from '../src/web/auth.js';
 import { afterEach, describe, expect, it } from 'vitest';
 import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -11,7 +10,7 @@ import { handleQueryArtifacts } from '../src/mcp/tools/query.js';
 import { executeGraphQL, type GraphQLResult } from '../src/graphql/schema.js';
 import { handleCapture } from '../src/mcp/tools/capture.js';
 import { handleUpdateAction, handleUpdateProject, handleUpdateEntry } from '../src/mcp/tools/update.js';
-import { handleCreateArtifact, handleUpdateArtifact } from '../src/mcp/tools/artifact.js';
+import { createArtifact, handleUpdateArtifact } from '../src/mcp/tools/artifact.js';
 import { init } from '../src/source/bootstrap.js';
 import { Daemon } from '../src/daemon/daemon.js';
 import { DaemonClient } from '../src/daemon/client.js';
@@ -100,7 +99,7 @@ describe('query snapshot coherence', () => {
     const dir = temporary(); init(dir, { name: 'Warnings', description: 'Warnings' }); const store = new Store(dir);
     try {
       handleCapture(store, { content: 'Before entry', description: 'Before summary' }, new Date(2026, 9, 4, 10));
-      handleCreateArtifact(store, { name: 'Before artifact', description: 'Before artifact summary', body: 'Before artifact body' }, new Date(2026, 9, 4, 10));
+      createArtifact(store, { name: 'Before artifact', description: 'Before artifact summary', body: 'Before artifact body' }, new Date(2026, 9, 4, 10));
       const manifest = readFileSync(join(dir, 'aside.md'), 'utf8');
       writeFileSync(join(dir, 'aside.md'), manifest.replace(/^id: .+$/m, 'id: INVALID')); store.rebuild();
       const issue = store.getIssues()[0]; expect(issue).toBeDefined();
@@ -121,8 +120,8 @@ describe('query snapshot coherence', () => {
     const dir = temporary(); init(dir, { name: 'Snapshot', description: 'Snapshot' }); const store = new Store(dir);
     try {
       const captured = handleCapture(store, { content: 'Before entry', description: 'Before entry summary', projects: [{ name: 'Before project', description: 'Before project summary' }], actions: [{ name: 'Before action', description: 'Before action summary' }] }, new Date(2026, 9, 4, 10));
-      handleCreateArtifact(store, { name: 'Before artifact', description: 'Before artifact summary', body: 'Before artifact body' }, new Date(2026, 9, 4, 10));
-      const entry = store.getEntries()[0].meta.created, action = captured.createdActionIds[0], project = captured.createdProjectIds[0], artifact = store.getArtifactIds()[0];
+      createArtifact(store, { name: 'Before artifact', description: 'Before artifact summary', body: 'Before artifact body' }, new Date(2026, 9, 4, 10));
+      const entry = store.getEntries()[0].meta.created, action = captured.createdActionIds[0], project = captured.createdProjectIds[0], artifact = [...store.getArtifacts().keys()][0];
       const held = heldMatcher(fields => expect(fields.flat().join(' ')).toContain('Before'));
       const graphql = async (root: 'entries' | 'actions' | 'projects' | 'artifacts', id: string, fields: string) => {
         const { data, errors } = await executeGraphQL(store, 'query', { document: `query($id: ID!) { ${root}(where: {ids: [$id], regex: "Before"}) { count totalCount nodes { ${fields} } } }`, variables: { id } }, held);
@@ -170,8 +169,8 @@ describe('search lifecycle and shipping artifacts', () => {
       const slow = query(first, catastrophic).catch(error => error);
       const started = Date.now();
       expect(await query(second, undefined, { read: true })).toMatch(/^1 of 1/);
-      const { port } = await second.request<{ port: number }>('serve', { navigate: false });
-      expect((await fetch(`http://127.0.0.1:${port}/-/api/instances`, { headers: { Authorization: `Bearer ${new WebAuth(paths.state).issue().token}` } })).ok).toBe(true);
+      const { port } = await second.request<{ port: number }>('serve', {});
+      expect((await fetch(`http://127.0.0.1:${port}/-/api/instances`)).ok).toBe(true);
       expect(Date.now() - started).toBeLessThan(1500);
       first.close(); expect(await slow).toBeInstanceOf(Error);
       expect(await query(second, 'Slow target', { read: true })).toMatch(/^1 of 1/);

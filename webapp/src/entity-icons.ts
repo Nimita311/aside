@@ -10,6 +10,7 @@ import type { LocationReference } from './location-reference';
 import type { RefStatus } from './instance';
 
 export { ICON_SIZE, iconMarkup, iconStates, setEntityIcon, type IconKind } from './entity-icon-drawings';
+export { setReferenceIcon, setupEntityIconSizing } from './entity-icon-sizing';
 
 // The icon state of an entity, from the marks its chips wear.
 export function actionIconState(marks: RefStatus[]): string {

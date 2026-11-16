@@ -9,6 +9,7 @@ import { loadApp } from './app-harness';
 import type { DateTimePreferences } from '../src/preferences';
 import { createSearchUi } from '../src/search-ui';
 import { createDatePicker } from '../src/datepicker';
+import { currentFlowDate } from '../src/latch';
 import type { StoreView } from '../lib/store';
 import { createWeekView } from '../src/week-view';
 import { refreshTimelineGutter } from '../src/date-time-settings';
@@ -156,11 +157,11 @@ describe('locale date and time display', () => {
   });
 
   it('updates calendar date labels and month headings without replacing focused days', () => {
-    document.body.innerHTML = '<div id="date-latch" data-date="2026-10-15"><button class="date-latch-chip">Date</button></div>';
+    document.body.innerHTML = '<div id="date-latch" data-date="2026-10-15"></div><div id="calendar-host"></div>';
     let prefs: DateTimePreferences = { timeFormat: '24h', dateFormat: 'long' };
-    const picker = createDatePicker({ displayPreferences: () => prefs, jumpToDate: vi.fn(), jumpNear: vi.fn(async () => true) });
+    const picker = createDatePicker({ getCalendarContext: () => ({ key: 'timeline', current: currentFlowDate() }), displayPreferences: () => prefs, jumpToDate: vi.fn() });
     try {
-      picker.toggle();
+      picker.mountInline(document.getElementById('calendar-host')!);
       const day = document.querySelector<HTMLButtonElement>('.cal-day[data-date="2026-10-15"]')!;
       expect(day.getAttribute('aria-label')).toContain('October 15, 2026');
       day.focus(); prefs = { ...prefs, dateFormat: 'iso' }; picker.refresh();
@@ -168,7 +169,7 @@ describe('locale date and time display', () => {
       expect(document.querySelector('.cal-title')?.textContent).toBe('2026-10');
       expect(document.querySelector('.cal-day[data-date="2026-10-01"]')?.textContent).toBe('01');
       expect(document.activeElement).toBe(day);
-    } finally { picker.close(); }
+    } finally { picker.dispose(); }
   });
 
   it('converts offset timestamps consistently in generic date, clock and date-time labels', () => {

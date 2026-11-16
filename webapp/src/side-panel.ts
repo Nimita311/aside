@@ -1,10 +1,8 @@
-import type { StoreView as Store } from '../../cli/src/core/data-snapshot';
 import type { EntityRef } from '../lib/types';
 import { activeModal, usable } from './modal';
 
-// The summary's availability and retained reading state. The responsive frame
-// owns its placement: the same body lives in the docked Context panel or the
-// pill's own Summary surface. What the summary shows is app.ts's showSidePanel.
+// The summary's availability and retained reading state. Its body lives in the
+// Context panel; what the summary shows is app.ts's showSidePanel.
 
 // The side panel's last-seen state: its body scroll offset and the related
 // sections the user expanded past their fold, so back/forward restores the
@@ -21,7 +19,6 @@ export interface PanelView {
 // The current summary scope; availability never changes the browsing state.
 export interface SidePanelState {
   filter: EntityRef | null;
-  store: Store | null;
 }
 
 export interface SidePanelDeps {
@@ -38,21 +35,17 @@ export function createSidePanel({ state, setAvailable, focusFallback }: SidePane
   // (whose event is async) would otherwise stamp over the state being restored.
   let panelRestoring = false;
 
-  function hidePanelElement(): void {
-    setAvailable(false);
-  }
-
   function showPanelElement(): void {
     $('#side-panel')?.classList.toggle('is-instance', !state.filter);
     setAvailable(true);
   }
 
   function closeSidePanel(): void {
-    hidePanelElement();
+    setAvailable(false);
   }
 
-  // Read the mounted body regardless of whether the frame currently docks it
-  // or exposes it through the pill. Responsive retraction is not navigation.
+  // Read the mounted body whether or not the panel is currently shown.
+  // Responsive retraction is not navigation.
   function panelSnapshot(): PanelView | null {
     const body = $('#side-panel-body');
     if (!body) return null;
@@ -138,7 +131,7 @@ export function createSidePanel({ state, setAvailable, focusFallback }: SidePane
   }
 
   return {
-    hidePanelElement, showPanelElement, closeSidePanel,
+    showPanelElement, closeSidePanel,
     panelSnapshot, stampPanel, restorePanelView, holdPanelFocus, restorePanelFocus,
     isPanelRestoring: () => panelRestoring,
   };

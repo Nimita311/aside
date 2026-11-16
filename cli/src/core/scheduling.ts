@@ -9,7 +9,7 @@ export interface SchedulingFields {
   duration?: string;
 }
 
-// The event length an action without `duration` gets (design/calendar.md).
+// The event length an action without `duration` gets (reference/configuration.md#behavior-defaults).
 export const DEFAULT_DURATION_MIN = 30;
 
 export function isSchedulingDate(value: string): boolean {
@@ -108,21 +108,23 @@ export function schedulingIssues(fields: SchedulingFields): string[] {
       issues.push(`${field}: "${value}" must be a real date YYYY-MM-DD or local time YYYY-MM-DDTHH:mm (00:00–23:59).`);
     }
   }
+  // An untyped caller's null is reported above, not read as a clock here.
+  const timed = typeof fields.scheduled === 'string' && isWallMinute(fields.scheduled) ? fields.scheduled : undefined;
   if (fields.timezone !== undefined) {
     let valid = !!fields.timezone && !/^[+-]/.test(fields.timezone);
     try { new Intl.DateTimeFormat('en', { timeZone: fields.timezone }); } catch { valid = false; }
-    if (valid && fields.scheduled?.includes('T') && isSchedulingDate(fields.scheduled) && scheduleInstant(fields.scheduled, fields.timezone) === undefined) {
-      issues.push(`scheduled: "${fields.scheduled}" does not exist in ${fields.timezone} because of a time-zone clock transition.`);
+    if (valid && timed && scheduleInstant(timed, fields.timezone) === undefined) {
+      issues.push(`scheduled: "${timed}" does not exist in ${fields.timezone} because of a time-zone clock transition.`);
     }
     if (!valid) issues.push(`timezone: "${fields.timezone}" must be a recognized IANA time zone, such as Asia/Tokyo.`);
   }
   if (fields.duration !== undefined && parseDurationMinutes(fields.duration) === undefined) {
     issues.push(`duration: "${fields.duration}" must be a positive fixed ISO duration in whole minutes (e.g. PT30M, PT1H30M, P1D). Days are 24 elapsed hours; years, months, weeks, and sub-minute lengths are unsupported.`);
   }
-  if (fields.scheduled?.includes('T') && isSchedulingDate(fields.scheduled)) {
+  if (timed) {
     const length = fields.duration === undefined ? DEFAULT_DURATION_MIN : parseDurationMinutes(fields.duration);
     if (length !== undefined) {
-      const end = new Date(new Date(fields.scheduled + ':00Z').getTime() + length * 60000);
+      const end = new Date(new Date(timed + ':00Z').getTime() + length * 60000);
       if (!Number.isFinite(end.getTime()) || end.getUTCFullYear() > 9999) issues.push('duration: event end exceeds the supported year range 0001–9999.');
     }
   }

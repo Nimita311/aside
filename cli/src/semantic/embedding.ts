@@ -1,4 +1,5 @@
 import type { SemanticAvailabilityReason } from './availability.js';
+import { errorMessage } from '../core/error.js';
 
 export interface EmbeddingOptions { signal?: AbortSignal }
 
@@ -26,6 +27,11 @@ const modelDigest = (value: unknown): string | undefined => {
   const digest = value.replace(/^sha256:/, '').toLowerCase();
   return /^[0-9a-f]{64}$/.test(digest) ? digest : undefined;
 };
+
+// The embedding endpoint in effect when a caller names none. Read at call time:
+// tests and the daemon environment may set these after load.
+export const configuredEmbeddingModel = (): string => process.env.ASIDE_EMBEDDING_MODEL ?? 'qwen3-embedding:0.6b';
+export const configuredEmbeddingUrl = (): string => process.env.ASIDE_EMBEDDING_URL ?? 'http://127.0.0.1:11434';
 
 export class SemanticSetupError extends Error {
   readonly reason: Exclude<SemanticAvailabilityReason, 'AVAILABLE'>;
@@ -73,14 +79,13 @@ export class OllamaEmbedder implements SemanticEmbedder {
   private readonly fetcher: typeof globalThis.fetch;
 
   constructor(options: { model?: string; url?: string; timeoutMs?: number; fetch?: typeof globalThis.fetch } = {}) {
-    this.model = options.model ?? process.env.ASIDE_EMBEDDING_MODEL ?? 'qwen3-embedding:0.6b';
-    this.url = (options.url ?? process.env.ASIDE_EMBEDDING_URL ?? 'http://127.0.0.1:11434').replace(/\/$/, '');
+    this.model = options.model ?? configuredEmbeddingModel();
+    this.url = (options.url ?? configuredEmbeddingUrl()).replace(/\/$/, '');
     this.timeoutMs = options.timeoutMs ?? 30_000;
     this.fetcher = options.fetch ?? ((...args) => globalThis.fetch(...args));
-    let parsed: URL;
-    try { parsed = new URL(this.url); }
-    catch { throw this.failure('ASIDE_EMBEDDING_URL must be an HTTP(S) URL without embedded credentials.', 'CONFIGURATION_ERROR', 'Correct ASIDE_EMBEDDING_URL in the daemon environment and restart the daemon.'); }
-    if (!['http:', 'https:'].includes(parsed.protocol) || parsed.username || parsed.password) throw this.failure('ASIDE_EMBEDDING_URL must be an HTTP(S) URL without embedded credentials.', 'CONFIGURATION_ERROR', 'Correct ASIDE_EMBEDDING_URL in the daemon environment and restart the daemon.');
+    let parsed: URL | undefined;
+    try { parsed = new URL(this.url); } catch { /* An unparseable URL is the same defect as a disallowed one. */ }
+    if (!parsed || !['http:', 'https:'].includes(parsed.protocol) || parsed.username || parsed.password) throw this.failure('ASIDE_EMBEDDING_URL must be an HTTP(S) URL without embedded credentials.', 'CONFIGURATION_ERROR', 'Correct ASIDE_EMBEDDING_URL in the daemon environment and restart the daemon.');
     if (!this.model.trim() || this.model.length > 256) throw this.failure('Embedding model must be a nonempty model name of at most 256 characters.', 'CONFIGURATION_ERROR', 'Correct ASIDE_EMBEDDING_MODEL in the daemon environment and restart the daemon.');
   }
 
@@ -125,7 +130,7 @@ export class OllamaEmbedder implements SemanticEmbedder {
       if (error instanceof SemanticSetupError) throw error;
       if (signal.aborted) throw this.failure(`Ollama embedding request timed out after ${this.timeoutMs} ms. Retry, or use a smaller model.`, 'OLLAMA_ERROR', 'Check that Ollama is responding, then retry.');
       if (error instanceof TypeError) throw this.failure(`Cannot reach Ollama at ${this.url}. Install Ollama from https://ollama.com if needed. Start Ollama explicitly, then install the model with: ollama pull ${this.model}`, 'OLLAMA_UNREACHABLE', `Install Ollama from https://ollama.com if needed, start it, and run: ollama pull ${this.model}`);
-      throw this.failure(`Ollama returned an invalid response: ${error instanceof Error ? error.message : String(error)}`, 'OLLAMA_ERROR', 'Check that the configured endpoint serves the Ollama API and returns valid JSON.');
+      throw this.failure(`Ollama returned an invalid response: ${errorMessage(error)}`, 'OLLAMA_ERROR', 'Check that the configured endpoint serves the Ollama API and returns valid JSON.');
     }
   }
 
@@ -188,7 +193,7 @@ export class OllamaEmbedder implements SemanticEmbedder {
     try { return validateVectors(data?.embeddings, texts.length); }
     catch (error) {
       options.signal?.throwIfAborted();
-      throw this.failure(error instanceof Error ? error.message : String(error), 'OLLAMA_ERROR', 'Check that the configured embedding model returns valid, nonzero vectors of a consistent dimension.');
+      throw this.failure(errorMessage(error), 'OLLAMA_ERROR', 'Check that the configured embedding model returns valid, nonzero vectors of a consistent dimension.');
     }
   }
 

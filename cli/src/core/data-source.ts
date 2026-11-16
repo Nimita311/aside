@@ -54,18 +54,29 @@ function fnv1a(text: string): string {
 // The strongest version this response supports: ETag, else Last-Modified,
 // else a content hash. Cross-origin, unexposed validator headers read as
 // absent, which lands in the hash tier — still correct, just full-GET checks.
-function versionOf(response: Response, text: string): string {
+export function versionOf(response: Response, text: string): string {
+  return validatorVersion(response) ?? `hash:${fnv1a(text)}`;
+}
+
+// The validator a response carries, strongest first; none when it has neither.
+export function validatorVersion(response: Response): string | undefined {
   const etag = response.headers.get('ETag');
   if (etag) return `etag:${etag}`;
   const lastModified = response.headers.get('Last-Modified');
-  if (lastModified) return `lm:${lastModified}`;
-  return `hash:${fnv1a(text)}`;
+  return lastModified ? `lm:${lastModified}` : undefined;
+}
+
+// The conditional request a version allows; a content hash allows none.
+export function conditionalHeaders(version: string): Record<string, string> {
+  if (version.startsWith('etag:')) return { 'If-None-Match': version.slice(5) };
+  if (version.startsWith('lm:')) return { 'If-Modified-Since': version.slice(3) };
+  return {};
 }
 
 // Percent-encode a root-relative path per segment, keeping the slashes: a
 // data-derived name containing '#', '?', or a stray '%' must address the same
 // resource, not truncate the URL. Both servers decode before resolving.
-function encodePath(path: string): string {
+export function encodePath(path: string): string {
   return path.split('/').map(encodeURIComponent).join('/');
 }
 
@@ -93,9 +104,7 @@ export class UrlDataSource implements DataSource {
 
   async revalidate(path: string, version: string): Promise<FileRead | 'unchanged' | null> {
     const url = `${this.baseUrl}/${encodePath(path)}`;
-    const headers: Record<string, string> = {};
-    if (version.startsWith('etag:')) headers['If-None-Match'] = version.slice(5);
-    else if (version.startsWith('lm:')) headers['If-Modified-Since'] = version.slice(3);
+    const headers = conditionalHeaders(version);
 
     let response: Response;
     try {
@@ -129,10 +138,7 @@ export class UrlDataSource implements DataSource {
     if (response.status === 404) return null;
     if (response.status === 405 || response.status === 501) return undefined;
     if (!response.ok) throw new Error(`Failed to check ${this.assetUrl(path)}: ${response.status} ${response.statusText}`);
-    const etag = response.headers.get('ETag');
-    if (etag) return `etag:${etag}`;
-    const lastModified = response.headers.get('Last-Modified');
-    return lastModified ? `lm:${lastModified}` : 'available';
+    return validatorVersion(response) ?? 'available';
   }
 
   // The server's change stream: SSE at `<data root>/.watch` publishing

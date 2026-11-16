@@ -5,7 +5,7 @@ import { assertCalendarName } from '../../core/calendar-name.js';
 import {assertLocationHandle} from '../../core/location-reference.js';
 import { assertRecurrence, CompiledRecurrence, occurrenceKey, projectedAction, type OccurrenceIdentity } from '../../core/recurrence.js';
 import { resolveMarkdownSource } from './content-source.js';
-import { handleUpdateAction, type UpdateActionArgs } from './update.js';
+import { ACTION_PATCH_FIELDS, handleUpdateAction, type UpdateActionArgs } from './update.js';
 import type { Store } from '../../source/store.js';
 import type { ActionFrontMatter } from '../../core/types.js';
 import { assertDelegation } from '../../core/delegation.js';
@@ -35,7 +35,7 @@ function updateOccurrence(store: Store, args: UpdateOccurrenceArgs, now: Date): 
   if (!occurrence) throw new Error('Original occurrence does not exist in this template schedule. Query actions for its exact occurrence identity.');
   const draft = projectedAction(template, occurrence.identity, occurrence.scheduled);
   const fm: ActionFrontMatter = { ...draft.frontMatter, created: formatTimestamp(now) };
-  for (const key of ['name', 'scheduled', 'deadline', 'resolution', 'calendar', 'calendar_account', 'duration', 'timezone', 'location', 'delegation'] as const) {
+  for (const key of ACTION_PATCH_FIELDS) {
     const value = args[key];
     if (value === null) delete fm[key];
     else if (value !== undefined) (fm as unknown as Record<string, unknown>)[key] = value;

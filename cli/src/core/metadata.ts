@@ -1,6 +1,10 @@
 import { isDeepStrictEqual } from 'node:util';
 import { isAlias, isMap, isNode, isPair, isSeq, parseDocument, visit, type Alias, type Document, type Node, type Pair, type YAMLMap } from 'yaml';
 
+// A record split for an in-place metadata edit: opening fence, YAML, closing
+// fence, and the rest, each kept byte for byte.
+export const RECORD_FRONT_MATTER = /^(\uFEFF?\s*---[ \t\r]*\n)(?:([\s\S]*?)\n)?(---[ \t\r]*)(\n[\s\S]*)?$/;
+
 // Updates own the declared fields, not the rest of a user's YAML document.
 // Parse before any write, including recurrence-history or newly linked records.
 export function parseMetadata(source: string, context: string): Document {
@@ -14,6 +18,12 @@ export function parseMetadata(source: string, context: string): Document {
     throw new Error(`Cannot update ${context}: existing YAML aliases cannot be resolved. Repair them before retrying.`);
   }
   return document;
+}
+
+// A node's value as the reader resolves it: aliases followed, and mappings kept
+// as Maps so a collection key is compared rather than stringified.
+export function metadataValue(node: unknown, document: Document): unknown {
+  return isNode(node) ? node.toJS(document, { mapAsMap: true }) : node;
 }
 
 // Clone YAML nodes rather than converting through JS, which loses explicit
@@ -64,7 +74,7 @@ export function mergeMetadata(source: string, canonical: string, fields: readonl
     for (let index = 0; index < path.length; index++) {
       if (!isMap(parent)) throw new Error(`Cannot update ${context}: existing ${path.slice(0, index).join('.')} must be a YAML mapping. Repair it before retrying.`);
       ancestors.push(parent);
-      const pairs = parent.items.filter(pair => (isNode(pair.key) ? pair.key.toJS(document, { mapAsMap: true }) : pair.key) === path[index]);
+      const pairs = parent.items.filter(pair => metadataValue(pair.key, document) === path[index]);
       if (pairs.length > 1) throw new Error(`Cannot update ${context}: existing metadata repeats ${path.slice(0, index + 1).join('.')} after resolving YAML aliases. Repair the duplicate field before retrying.`);
       if (index === path.length - 1) return {parent, pair: pairs[0], ancestors};
       if (!pairs[0]) return {parent: undefined, pair: undefined, ancestors};
@@ -77,8 +87,8 @@ export function mergeMetadata(source: string, canonical: string, fields: readonl
     const located = locate(path);
     const exists = desired.hasIn(path);
     const replacement = desired.getIn(path, true);
-    const before = isNode(located.pair?.value) ? located.pair.value.toJS(document, {mapAsMap: true}) : located.pair?.value;
-    const after = isNode(replacement) ? replacement.toJS(desired, {mapAsMap: true}) : replacement;
+    const before = metadataValue(located.pair?.value, document);
+    const after = metadataValue(replacement, desired);
     return {path, ...located, exists, replacement, changed: !!located.pair !== exists || !isDeepStrictEqual(before, after)};
   });
   const changed = edits.filter(edit => edit.changed);

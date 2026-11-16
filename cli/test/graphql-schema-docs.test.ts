@@ -14,7 +14,7 @@ function introspection() {
 }
 
 describe('GraphQL agent schema documentation', () => {
-  it('explains default-browser opening and caller-managed private authorization URLs', () => {
+  it('explains default-browser opening and client-managed HTTP URLs', () => {
     const data = introspection();
     const schema = buildClientSchema(data);
     const mutation = schema.getMutationType()!.getFields();
@@ -28,14 +28,12 @@ describe('GraphQL agent schema documentation', () => {
     for (const name of ['show', 'showUrl']) {
       expect(mutationDocs.fields.find(field => field.name === name)!.args[0].defaultValue).toMatch(/^\{\s*\}$/);
     }
-    expect(mutation.show.description).toContain('system default browser');
-    expect(mutation.show.description).toContain('showUrl');
-    for (const text of ['file://', 'private temporary HTML file', 'without opening or navigating any browser',
-      'one-use code', 'automatically installs valid authorization', 'redirects to the target', 'two minutes',
-      'request a new URL for each opening', 'No token handling or separate authentication call']) {
+    expect(mutation.show.description).toContain('host default browser');
+    expect(mutation.show.description).toContain('RETURNED');
+    for (const text of ['without opening or navigating a browser', 'public request origin', 'localhost']) {
       expect(mutation.showUrl.description).toContain(text);
     }
-    expect((schema.getType('ShowOutcome') as any).getValues().map((value: any) => value.name)).toEqual(['OPENED', 'UNAVAILABLE']);
+    expect((schema.getType('ShowOutcome') as any).getValues().map((value: any) => value.name)).toEqual(['OPENED', 'RETURNED', 'UNAVAILABLE']);
     const source = (schema.getType('ShowInput') as any).getFields().source;
     expect(source.type.toString()).toBe('String');
     expect(source.description).toContain('attachment handle');

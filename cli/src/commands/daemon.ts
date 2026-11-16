@@ -1,9 +1,9 @@
 import type { AutomationInspection } from '../automation/controller.js';
 import { DAEMON_COMMAND_LOCK_TIMEOUT_MS, DAEMON_INSTALL_START_TIMEOUT_MS, DAEMON_INSTALL_POLL_INTERVAL_MS } from '../core/system-config.js';
 // aside daemon — manage the background daemon and its login job (see
-// design/daemon.md, Lifecycle).
-import { parseCommand, type CommandInput } from './options.js';
-import { jsonResult, writeOutput } from './output.js';
+// design/runtime.md, Process lifetime).
+import { parseCommand, type CommandInput, type ParsedCommand } from './options.js';
+import { publishResult, writeOutput } from './output.js';
 import { formatDaemonStatus, readOfflineDaemonInstances } from './daemon-status.js';
 import { existsSync } from 'node:fs';
 import { Daemon, collectKnownFile } from '../daemon/daemon.js';
@@ -13,18 +13,12 @@ import { FileLock, isLocked } from '../daemon/filelock.js';
 import { loadJob, readJob, removeJob, writeJob } from '../daemon/launchd.js';
 import { ownHello, type Status, type StopResult } from '../daemon/protocol.js';
 
-interface Parsed {
-  flags: Set<string>;
-}
-
-function reportStart(parsed: Parsed, status: Status, startup: DaemonStartup): void {
+function reportStart(options: ParsedCommand, status: Status, startup: DaemonStartup): void {
   const outcome = startup.action === 'started' ? `Started new daemon (pid ${status.pid}).`
     : startup.action === 'replaced' ? `Replaced daemon (pid ${startup.previousPid}) with newer build (pid ${status.pid}).`
     : `Reused running daemon (pid ${status.pid}); no replacement.`;
-  const json = parsed.flags.has('--json');
   const { build, pid, connections, tabs, known, loaded, sessions } = status;
-  writeOutput(json ? jsonResult('daemon start', { build, pid, connections, tabs, known, loaded, sessions, ...startup })
-    : outcome, json);
+  publishResult('daemon start', { build, pid, connections, tabs, known, loaded, sessions, ...startup }, outcome, options.has('--json'));
 }
 
 // Run the daemon in this process until it exits. Returns false at once when
@@ -59,15 +53,15 @@ async function run(): Promise<void> {
   await serveHere(daemonPaths());
 }
 
-async function start(parsed: Parsed): Promise<void> {
+async function start(options: ParsedCommand): Promise<void> {
   const paths = daemonPaths();
   // In the foreground this command is the daemon — unless another process
   // already is, in which case that daemon is reused below.
-  if (parsed.flags.has('--foreground')) {
+  if (options.has('--foreground')) {
     const reportReady = (startup: DaemonStartup) => async () => {
       const running = await tryConnect(paths);
       if (!running) throw new Error(`The aside daemon is not responding. See its log: ${paths.log}`);
-      try { reportStart(parsed, await running.peer.request<Status>('status'), startup); }
+      try { reportStart(options, await running.peer.request<Status>('status'), startup); }
       finally { running.peer.close(); }
     };
     await serveHere(paths, reportReady({ action: 'started' }));
@@ -85,13 +79,13 @@ async function start(parsed: Parsed): Promise<void> {
   const client = new DaemonClient({ paths });
   try {
     const status = await client.request<Status>('status', undefined, { read: true });
-    reportStart(parsed, status, client.startup!);
+    reportStart(options, status, client.startup!);
   } finally {
     client.close();
   }
 }
 
-async function install(parsed: Parsed): Promise<void> {
+async function install(options: ParsedCommand): Promise<void> {
   const paths = daemonPaths();
   if (!paths.job) throw new Error('The login job needs launchd, which is only available on macOS.');
   ensureDirs(paths);
@@ -119,20 +113,20 @@ async function install(parsed: Parsed): Promise<void> {
   }
   if (!running) throw new Error(`The login job did not start the daemon. See its log: ${paths.log}`);
   running.peer.close();
-  writeOutput(parsed.flags.has('--json') ? jsonResult('daemon install', { job: paths.job, daemon: { build: running.hello.build, pid: running.hello.pid } })
-    : `Installed the login job: ${paths.job}\nDaemon is running (pid ${running.hello.pid}).`, parsed.flags.has('--json'));
+  publishResult('daemon install', { job: paths.job, daemon: { build: running.hello.build, pid: running.hello.pid } },
+    `Installed the login job: ${paths.job}\nDaemon is running (pid ${running.hello.pid}).`, options.has('--json'));
 }
 
-function uninstall(parsed: Parsed): void {
+function uninstall(options: ParsedCommand): void {
   const paths = daemonPaths();
   const removed = removeJob(paths);
   const text = [removed ? `Removed the saved login job for future logins: ${paths.job}` : 'No saved login job is installed.',
     'The running shared daemon is unchanged. Use aside daemon stop, or aside daemon stop --force to disconnect active clients and tabs.',
     ...(paths.job ? ['Any job already loaded in launchd remains until logout and may restart the daemon after a crash.'] : [])].join('\n');
-  writeOutput(parsed.flags.has('--json') ? jsonResult('daemon uninstall', { removed, job: paths.job }) : text, parsed.flags.has('--json'));
+  publishResult('daemon uninstall', { removed, job: paths.job }, text, options.has('--json'));
 }
 
-async function status(parsed: Parsed): Promise<void> {
+async function status(options: ParsedCommand): Promise<void> {
   const paths = daemonPaths();
   const running = await tryConnect(paths);
   const job = readJob(paths);
@@ -155,8 +149,8 @@ async function status(parsed: Parsed): Promise<void> {
     instances = readOfflineDaemonInstances(known);
   }
   const report = formatDaemonStatus({ paths, running: snapshot, instances, unavailable: !!unavailable, known, job,
-    jobFileExists: !!paths.job && existsSync(paths.job) }, parsed.flags.has('--json'));
-  writeOutput(report.output, parsed.flags.has('--json'));
+    jobFileExists: !!paths.job && existsSync(paths.job) }, options.has('--json'));
+  writeOutput(report.output, options.has('--json'));
   if (unavailable) throw unavailable;
   if (report.errors) throw new Error('Daemon status found errors. See the [ERROR] items above.');
 }
@@ -168,13 +162,13 @@ function unavailableDaemon(paths: DaemonPaths, operation: 'inspect' | 'stop'): E
   return new Error(`Cannot ${operation} the shared daemon: its lifetime lock is held but its socket did not answer. It may be starting, stopping, or unavailable.\nSee its log: ${paths.log}\nRetry aside daemon ${operation === 'inspect' ? 'status' : 'stop'} when it is reachable or has exited.`);
 }
 
-async function stop(parsed: Parsed): Promise<void> {
+async function stop(options: ParsedCommand): Promise<void> {
   const paths = daemonPaths();
   const running = await tryConnect(paths);
   if (!running) {
     const unavailable = unavailableDaemon(paths, 'stop');
     if (unavailable) throw unavailable;
-    writeOutput(parsed.flags.has('--json') ? jsonResult('daemon stop', { stopped: true, was_running: false }) : 'The daemon is not running.', parsed.flags.has('--json'));
+    publishResult('daemon stop', { stopped: true, was_running: false }, 'The daemon is not running.', options.has('--json'));
     return;
   }
   let result: StopResult;
@@ -184,7 +178,7 @@ async function stop(parsed: Parsed): Promise<void> {
     running.peer.close();
     throw e;
   }
-  if (!result.stopped && !parsed.flags.has('--force')) {
+  if (!result.stopped && !options.has('--force')) {
     running.peer.close();
     const users = [
       result.connections > 0 ? `${result.connections} connection${result.connections === 1 ? '' : 's'}` : '',
@@ -198,37 +192,33 @@ async function stop(parsed: Parsed): Promise<void> {
   const { exited } = await shutdownDaemon(paths, running);
   if (!exited) throw new Error('The daemon did not exit in time.');
   result = { ...result, stopped: true };
-  writeOutput(parsed.flags.has('--json') ? jsonResult('daemon stop', { ...result, was_running: true }) : 'Daemon stopped.\n' + (readJob(paths)
+  publishResult('daemon stop', { ...result, was_running: true }, () => 'Daemon stopped.\n' + (readJob(paths)
     ? 'The login job is still installed. A new Aside client or the next login can restart the shared daemon.'
-    : 'A new Aside client can start the shared daemon again.'), parsed.flags.has('--json'));
+    : 'A new Aside client can start the shared daemon again.'), options.has('--json'));
 }
 
 export async function runDaemon(args: CommandInput): Promise<void> {
   const options = parseCommand('daemon', args);
   if (options.helpText) { console.log(options.helpText); return; }
   const operation = options.operation!;
-  const parsed: Parsed = {
-    flags: new Set(['--foreground', '--json', '--force'].filter(name => options.has(name))),
-  };
   switch (operation) {
     case 'run': return run();
-    case 'start': return start(parsed);
-    case 'install': return install(parsed);
-    case 'uninstall': return uninstall(parsed);
-    case 'status': return status(parsed);
-    case 'automations': return automations(parsed);
-    case 'stop': return stop(parsed);
+    case 'start': return start(options);
+    case 'install': return install(options);
+    case 'uninstall': return uninstall(options);
+    case 'status': return status(options);
+    case 'automations': return automations(options);
+    case 'stop': return stop(options);
     default: options.fail(`unknown daemon operation ${operation}`);
   }
 }
 
-async function automations(parsed: Parsed): Promise<void> {
+async function automations(options: ParsedCommand): Promise<void> {
   const running = await tryConnect(daemonPaths());
   if (!running) throw new Error('The daemon is not running. Start it with aside daemon start to observe future schedules.');
   let inspection: AutomationInspection;
   try { inspection = await running.peer.request('automation.status'); }
   finally { running.peer.close(); }
-  const json = parsed.flags.has('--json');
   const text = [
     ...(inspection.warning ? [inspection.warning] : []),
     ...inspection.jobs.map(job => [
@@ -238,5 +228,5 @@ async function automations(parsed: Parsed): Promise<void> {
     `${inspection.jobs.length} automation(s).`,
     ...inspection.runs.slice(0, 10).map(run => `${run.occurrence} ${run.status} ${run.definedIn}\n  ${run.directory}${run.error ? `\n  ${run.error}` : ''}`),
   ].join('\n');
-  writeOutput(json ? jsonResult('daemon automations', inspection) : text, json);
+  publishResult('daemon automations', inspection, text, options.has('--json'));
 }

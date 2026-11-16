@@ -1,17 +1,20 @@
 // @vitest-environment happy-dom
+import { readFileSync } from 'node:fs';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { Store } from '../lib/store';
 import type { DataSource, FileRead } from '../lib/io';
 import type { DocRef, ViewState } from '../src/route';
 import type { EntityRef } from '../lib/types';
 import type { ModalController } from '../src/modal';
+import type { PanelView } from '../src/side-panel';
+import type { createContextPanel } from '../src/context-panel';
 import type { HotSet, PendingUpdate } from '../../cli/src/core/data-snapshot';
 import { loadApp } from './app-harness';
 
 const artifact = '2026-10-04-report', project = '2026-10-04-review';
 const attachment = `artifacts/2026/${artifact}/report.md`;
 
-function expectReaderFocus(body: HTMLElement): void {
+function expectPanelFocus(body: HTMLElement): void {
   const active = document.activeElement as HTMLElement;
   expect(body.contains(active)).toBe(true);
   expect(active.closest('[hidden], [inert]')).toBeNull();
@@ -55,25 +58,26 @@ class MediaSource extends Source {
 }
 
 interface App {
-  state: { store: Store | null; instanceId: string | null; filter: EntityRef | null; doc: DocRef | null; panelCollapsed: boolean };
+  state: { store: Store | null; instanceId: string | null; filter: EntityRef | null; doc: DocRef | null };
+  setupContextPanel(): void;
   setupModals(): void;
   dismissActionToast(): void;
   applyView(view: ViewState): Promise<void>;
-  updateDoc(preserveScroll?: boolean, userInitiated?: boolean): Promise<void>;
+  showSidePanel(view?: PanelView | null): Promise<void>;
+  panelSnapshot(): PanelView | null;
   retryReadableFile(store: Store, path: string): Promise<void>;
   currentHotSet(): HotSet;
   applyDataUpdate(update: PendingUpdate): Promise<void>;
-  readerModal: ModalController;
+  contextPanel?: ReturnType<typeof createContextPanel>;
   settingsModal: ModalController;
 }
-const modals: ModalController[] = [];
-const dismissToasts: (() => void)[] = [];
-afterEach(() => { for (const dismiss of dismissToasts.splice(0)) dismiss(); for (const modal of modals.splice(0)) modal.close(0); vi.restoreAllMocks(); document.body.replaceChildren(); localStorage.clear(); });
+const cleanups: (() => void)[] = [];
+afterEach(() => { for (const cleanup of cleanups.splice(0)) cleanup(); vi.restoreAllMocks(); document.body.replaceChildren(); localStorage.clear(); });
 
-describe('reader failure recovery', () => {
+describe('document failure recovery in the context panel', () => {
   async function setup(source = new Source()) {
     // Keep the embedded PDF fixture local; its production src and metadata
-    // still exercise the reader, while native decoding belongs to browser QA.
+    // still exercise the panel, while native decoding belongs to browser QA.
     const create = document.createElement.bind(document);
     vi.spyOn(document, 'createElement').mockImplementation((tag, options) => {
       const node = create(tag, options);
@@ -81,67 +85,68 @@ describe('reader failure recovery', () => {
       return node;
     });
     history.replaceState({}, '', '/work/');
-    document.body.innerHTML = '<h1 class="app-title"><a href="/">Aside</a></h1><button id="workspace-control">Views</button><div id="flow-scroll"></div>' +
-      '<section id="doc-backdrop" hidden aria-label="Document"><main id="doc-body"></main></section>' +
-      '<dialog id="modal-backdrop" hidden><button>Close settings</button></dialog>';
+    document.body.innerHTML = readFileSync('index.html', 'utf8').replace(/<link\b[^>]*>|<script\b[^>]*>[\s\S]*?<\/script>/gi, '');
     const store = new Store(source); await store.init();
-    const api = await loadApp<App>('state, setupModals, dismissActionToast, applyView, updateDoc, retryReadableFile, readerModal, settingsModal, currentHotSet, applyDataUpdate');
-    api.state.store = store; api.state.instanceId = 'work'; api.state.panelCollapsed = true;
-    dismissToasts.push(api.dismissActionToast); api.setupModals(); modals.push(api.readerModal, api.settingsModal);
-    const body = document.getElementById('doc-body')!, reader = document.getElementById('doc-backdrop')!;
-    const control = document.getElementById('workspace-control')!;
-    return { source, store, api, body, reader, control };
+    const api = await loadApp<App>('state, setupContextPanel, setupModals, dismissActionToast, applyView, showSidePanel, panelSnapshot, retryReadableFile, contextPanel, settingsModal, currentHotSet, applyDataUpdate');
+    api.state.store = store; api.state.instanceId = 'work';
+    api.setupContextPanel(); api.setupModals();
+    cleanups.push(api.dismissActionToast, () => api.settingsModal.close(0), () => api.contextPanel?.destroy());
+    const body = document.getElementById('side-panel-body')!, panel = document.getElementById('side-panel')!;
+    const control = document.getElementById('btn-workspace-views')!;
+    // What a catch-up refresh of the still-inspected document does.
+    const refresh = () => api.showSidePanel(api.panelSnapshot());
+    return { source, store, api, body, panel, control, refresh };
   }
 
-  it('exposes the failed URL/reason and recovers the current asset without changing route, scroll or Reader focus', async () => {
-    const { source, store, api, body, reader } = await setup();
+  it('exposes the failed URL/reason and recovers the current asset without changing route or panel focus', async () => {
+    const { source, store, api, body, panel } = await setup();
     source.failures.add('assets/failed.md');
     await api.applyView({ filter: null, doc: { kind: 'asset', path: 'assets/failed.md' } });
     const route = location.pathname;
     expect(body.textContent).toContain('/-/api/instances/work/files/assets/failed.md: 500 Internal Server Error');
     expect(body.querySelector('[role="alert"]')).toBeNull();
     expect(document.querySelector('#action-toast')?.getAttribute('role')).toBe('status');
-    expect(document.querySelector('#action-toast')?.textContent).toBe('Could not load this document. Try again.');
     const retry = body.querySelector<HTMLButtonElement>('.history-retry')!;
     expect(retry.getAttribute('aria-label')).toBe('Retry assets/failed.md');
-    body.scrollTop = 80; retry.focus(); source.failures.clear(); retry.click();
+    retry.focus(); source.failures.clear(); retry.click();
     await vi.waitFor(() => expect(body.textContent).toContain('Repaired readable document.'));
     expect(store.diagnosticsFor('assets/failed.md')).toBeUndefined();
     expect(body.querySelector('.data-file-notice')).toBeNull();
     expect(location.pathname).toBe(route);
-    expect(body.scrollTop).toBe(80);
-    expectReaderFocus(body);
-    expect(reader.hidden).toBe(false);
+    expectPanelFocus(body);
+    expect(panel.hidden).toBe(false);
     expect(body.hasAttribute('aria-live')).toBe(false);
     expect(body.querySelector('.detail-body')?.hasAttribute('aria-live')).toBe(false);
     expect(body.querySelector('[role="alert"], [role="status"]')).toBeNull();
   });
 
-  it('retains readable content without a toast when a background reader refresh fails', async () => {
-    const { api, store, body } = await setup();
+  it('retains readable content without a toast when a background refresh fails', async () => {
+    const { api, store, body, refresh } = await setup();
     await api.applyView({ filter: null, doc: { kind: 'asset', path: 'assets/later.md' } });
     vi.spyOn(store, 'getAsset').mockRejectedValueOnce(new Error('Offline'));
     const content = body.firstElementChild;
-    await api.updateDoc(true);
+    await refresh();
     expect(body.firstElementChild).toBe(content);
     expect(body.textContent).toContain('Newer document wins.');
     expect(document.querySelector('#action-toast')).toBeNull();
   });
 
-  it('keeps the retained Retry usable after a failed background reader refresh', async () => {
-    const { api, source, body } = await setup();
+  // The panel reloads a failed document on refresh, so its notice and Retry
+  // are rendered again rather than retained in place.
+  it('keeps a usable Retry without a toast after a failed background refresh', async () => {
+    const { api, source, body, refresh } = await setup();
     source.failures.add('assets/failed.md');
     await api.applyView({ filter: null, doc: { kind: 'asset', path: 'assets/failed.md' } });
     api.dismissActionToast();
+    await refresh();
     const retry = body.querySelector<HTMLButtonElement>('.history-retry')!;
-    await api.updateDoc(true);
-    expect(body.querySelector('.history-retry')).toBe(retry);
+    expect(retry.disabled).toBe(false);
     expect(document.getElementById('action-toast')?.hidden).toBe(true);
     source.failures.clear(); retry.click();
     await vi.waitFor(() => expect(body.textContent).toContain('Repaired readable document.'));
   });
 
-  it('exposes a delayed reader load as a status without moving focus or making the recovered document live', async () => {
+  it('exposes a delayed load as a status without making the recovered document live', async () => {
     const source = new Source(), path = 'assets/delayed.md';
     let finish!: (file: FileRead) => void;
     source.deferred.set(path, new Promise(resolve => { finish = resolve; }));
@@ -150,23 +155,27 @@ describe('reader failure recovery', () => {
     await vi.waitFor(() => expect(body.querySelector('.loading')).not.toBeNull());
     const line = body.querySelector('.loading')!;
     expect(line.getAttribute('role')).toBe('status'); expect(line.getAttribute('aria-atomic')).toBe('true');
-    expect(line.textContent).toBe('Loading document…'); expect(document.activeElement).toBe(body);
+    expect(document.activeElement).toBe(body);
     finish({ text: 'Authored content remains an ordinary document.', version: 'ready' }); await opening;
     expect(body.textContent).toContain('Authored content remains an ordinary document.');
     expect(body.querySelector('[role="status"], [role="alert"], [aria-live]')).toBeNull();
-    expect(document.activeElement).toBe(body);
+    expectPanelFocus(body);
   });
 
   it('keeps a failed retry usable with the current reason and another Retry', async () => {
     const { source, api, body } = await setup(); source.failures.add('assets/failed.md');
     await api.applyView({ filter: null, doc: { kind: 'asset', path: 'assets/failed.md' } });
+    const failed = body.querySelector<HTMLButtonElement>('.history-retry')!;
+    failed.focus(); failed.click();
+    // A browser drops focus from the Retry it just disabled; the panel takes
+    // it first, then hands it to the replacement.
+    expect(failed.disabled).toBe(true); expect(document.activeElement).toBe(body);
+    await vi.waitFor(() => expect(body.querySelector('.history-retry')).not.toBe(failed));
     const retry = body.querySelector<HTMLButtonElement>('.history-retry')!;
-    retry.focus(); retry.click();
-    await vi.waitFor(() => expect(retry.disabled).toBe(false));
-    expect(retry.isConnected).toBe(true);
+    expect(retry.disabled).toBe(false);
     expect(body.querySelector<HTMLDetailsElement>('details')!.open).toBe(false);
     expect(body.textContent).toContain('500 Internal Server Error');
-    expectReaderFocus(body);
+    expect(document.activeElement).toBe(retry);
   });
 
   it.each([undefined, 'report.md'])('retries the selected artifact attachment rather than the parent record (explicit=%s)', async filename => {
@@ -179,7 +188,7 @@ describe('reader failure recovery', () => {
     expect(source.reads).toEqual([attachment]);
   });
 
-  it('discards a delayed retry after a newer reader navigation', async () => {
+  it('discards a delayed retry after a newer document navigation', async () => {
     const { source, store, api, body } = await setup(); source.failures.add('assets/failed.md');
     await api.applyView({ filter: null, doc: { kind: 'asset', path: 'assets/failed.md' } });
     let finish!: (read: FileRead) => void;
@@ -193,7 +202,7 @@ describe('reader failure recovery', () => {
     expect(body.textContent).toContain('Newer document wins.');
     expect(body.textContent).not.toContain('Obsolete recovered document.');
     expect(location.pathname).toBe('/work/asset/assets/later.md');
-    expect(document.activeElement).toBe(body);
+    expectPanelFocus(body);
   });
 
   it('retains recovered record content when a diagnostic retry cannot read the file', async () => {
@@ -206,8 +215,9 @@ describe('reader failure recovery', () => {
     await api.applyView({ filter: { type: 'project', id: project }, doc: { kind: 'detail' } });
     const retry = body.querySelector<HTMLButtonElement>('.history-retry')!;
     expect(retry).not.toBeNull();
-    source.failures.add(path); retry.click();
+    source.failures.add(path); retry.focus(); retry.click();
     await vi.waitFor(() => expect(retry.disabled).toBe(false));
+    expect(document.activeElement).toBe(retry);
     expect(body.textContent).toContain('Useful recovered project.');
     expect(body.textContent).toContain('500 Internal Server Error');
   });
@@ -227,20 +237,20 @@ describe('reader failure recovery', () => {
     { extension: 'html', tag: 'iframe' }, { extension: 'htm', tag: 'iframe' },
   ])('recovers missing $extension media through metadata without reading binary bytes as text', async ({ extension, tag }) => {
     const source = new MediaSource(), path = `assets/missing.${extension}`;
-    const { api, body, store } = await setup(source);
+    const { api, body, store, refresh } = await setup(source);
     await api.applyView({ filter: null, doc: { kind: 'asset', path } });
     const route = location.pathname;
     expect(body.textContent).toContain(`${source.assetUrl(path)}: 404 Not Found`);
     const retry = body.querySelector<HTMLButtonElement>('.history-retry')!;
     expect(retry.getAttribute('aria-label')).toBe(`Retry ${path}`);
-    body.scrollTop = 70; retry.focus(); source.metadata.set(path, 'etag:repaired'); retry.click();
+    retry.focus(); source.metadata.set(path, 'etag:repaired'); retry.click();
     await vi.waitFor(() => expect(body.querySelector(tag)).not.toBeNull());
     expect(body.querySelector(tag)?.getAttribute('src')).toContain('aside_revision=1');
     expect(store.diagnosticsFor(path)).toBeUndefined(); expect(source.reads).not.toContain(path);
     expect(source.checks).toEqual([path, path]);
-    expect(location.pathname).toBe(route); expect(body.scrollTop).toBe(70);
-    expectReaderFocus(body);
-    await api.updateDoc(true); expect(source.checks).toEqual([path, path]);
+    expect(location.pathname).toBe(route);
+    expectPanelFocus(body);
+    await refresh(); expect(source.checks).toEqual([path, path]);
   });
 
   it('retains failed media metadata reason and retries the exact selected artifact attachment', async () => {
@@ -250,9 +260,11 @@ describe('reader failure recovery', () => {
     const { api, body } = await setup(source);
     await api.applyView({ filter: null, doc: { kind: 'artifact', id: artifact, filename } });
     expect(body.textContent).toContain(`${source.assetUrl(path)}: 500 Internal Server Error`);
-    const retry = body.querySelector<HTMLButtonElement>('.history-retry')!; retry.click();
-    await vi.waitFor(() => expect(retry.disabled).toBe(false));
-    expect(retry.isConnected).toBe(true); expect(body.querySelector('details')?.open).toBe(false);
+    const failed = body.querySelector<HTMLButtonElement>('.history-retry')!; failed.click();
+    await vi.waitFor(() => expect(body.querySelector('.history-retry')).not.toBe(failed));
+    const retry = body.querySelector<HTMLButtonElement>('.history-retry')!;
+    expect(retry.disabled).toBe(false); expect(body.querySelector('details')?.open).toBe(false);
+    expect(body.textContent).toContain(`${source.assetUrl(path)}: 500 Internal Server Error`);
     source.metadataFailures.clear(); source.metadata.set(path, 'etag:repaired'); retry.click();
     await vi.waitFor(() => expect(body.querySelector('img')).not.toBeNull());
     expect(source.checks.every(file => file === path)).toBe(true); expect(source.reads).not.toContain(path);
@@ -298,7 +310,6 @@ describe('reader failure recovery', () => {
     const oldUrl = media.getAttribute('src'); media.dispatchEvent(new Event('error'));
     expect(media.isConnected).toBe(false); expect(body.textContent).toContain(path);
     expect(body.textContent).toContain('decoded'); expect(body.querySelector('.data-file-notice')?.getAttribute('role')).toBeNull();
-    expect(document.querySelector('#action-toast')?.textContent).toBe('Could not load this media. Try again.');
     const retry = body.querySelector<HTMLButtonElement>('.history-retry')!; retry.focus(); retry.click();
     await vi.waitFor(() => expect(body.querySelector('.asset-media')).not.toBeNull());
     expect(body.querySelector('.asset-media')?.getAttribute('src')).not.toBe(oldUrl);
@@ -306,7 +317,7 @@ describe('reader failure recovery', () => {
     expect(source.reads).not.toContain(path);
   });
 
-  it('discards native errors and delayed media Retry after a newer reader navigation', async () => {
+  it('discards native errors and delayed media Retry after a newer document navigation', async () => {
     const source = new MediaSource(), path = 'assets/previous.png'; source.metadata.set(path, 'etag:old');
     const { api, body, store } = await setup(source);
     await api.applyView({ filter: null, doc: { kind: 'asset', path } });
@@ -318,6 +329,24 @@ describe('reader failure recovery', () => {
     await vi.waitFor(() => expect(store.diagnosticsFor(path)).toBeUndefined());
     expect(body.textContent).toContain('Newer document wins.'); expect(body.querySelector('img')).toBeNull();
     expect(location.pathname).toBe('/work/asset/assets/later.md');
+  });
+
+  it('names the document in its failure toast', async () => {
+    const { source, api } = await setup(); source.failures.add('assets/failed.md');
+    await api.applyView({ filter: null, doc: { kind: 'asset', path: 'assets/failed.md' } });
+    expect(document.querySelector('#action-toast')?.textContent).toBe('Could not load this document. Try again.');
+  });
+
+  it('names the document in its delayed loading status', async () => {
+    const source = new Source(), path = 'assets/delayed.md';
+    let finish!: (file: FileRead) => void;
+    source.deferred.set(path, new Promise(resolve => { finish = resolve; }));
+    const { api, body } = await setup(source);
+    const opening = api.applyView({ filter: null, doc: { kind: 'asset', path } });
+    await vi.waitFor(() => expect(body.querySelector('.loading')).not.toBeNull());
+    const status = body.querySelector('.loading')!.textContent;
+    finish({ text: 'Loaded.', version: 'ready' }); await opening;
+    expect(status).toBe('Loading document…');
   });
 
   it('uses metadata for global diagnostic Retry and ignores an older metadata failure after repair', async () => {

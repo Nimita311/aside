@@ -95,7 +95,7 @@ describe('update_action / update_project', () => {
     expect(store.getEntries()[0].meta.actions).toContain(actionId);
     expect(store.getEntries()[0].meta.projects).toContain(projectId);
     expect(store.getActionIds()).toEqual([actionId]);
-    expect(store.getProjectIds()).toContain(projectId);
+    expect([...store.getProjects().keys()]).toContain(projectId);
   });
 
   it.each(['', '  '])('rejects blank names before changing either record', name => {

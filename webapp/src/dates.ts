@@ -84,36 +84,6 @@ export function parseLooseDate(raw: string): string | null {
   return null;
 }
 
-// Shift a YYYY-MM-DD by whole months then days. The day is clamped to the
-// target month's length so a month-end date lands on the month end, not spilled
-// into the next month (May 31 − 1 month is April 30, not May 1).
-export function shiftDate(dateStr: string, months: number, days: number): string {
-  const d = new Date(dateStr + 'T00:00:00');
-  if (months) {
-    const day = d.getDate();
-    d.setDate(1);
-    d.setMonth(d.getMonth() + months);
-    const lastDay = new Date(d.getFullYear(), d.getMonth() + 1, 0).getDate();
-    d.setDate(Math.min(day, lastDay));
-  }
-  d.setDate(d.getDate() + days);
-  return toDateStr(d);
-}
-
-// The period the quick navigator steps by.
-export type JumpUnit = 'week' | 'month' | 'quarter';
-export const JUMP_UNITS: { key: JumpUnit; label: string; months: number; days: number }[] = [
-  { key: 'week', label: 'Week', months: 0, days: 7 },
-  { key: 'month', label: 'Month', months: 1, days: 0 },
-  { key: 'quarter', label: 'Quarter', months: 3, days: 0 },
-];
-
-// Shift a date by one period in `dir` (+1 newer / −1 older).
-export function shiftByUnit(dateStr: string, unit: JumpUnit, dir: number): string {
-  const u = JUMP_UNITS.find((j) => j.key === unit)!;
-  return shiftDate(dateStr, u.months * dir, u.days * dir);
-}
-
 // The first of a date's month. Stepping from here never overflows a short
 // month (April has no 31st, so "May 31 − 1 month" must not roll forward).
 export function monthStart(dateStr: string): Date {

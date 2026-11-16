@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { renderEntry, type RenderOptions } from '../src/render';
+import { renderEntry, renderEntryDetail, type RenderOptions } from '../src/render';
 import { actionMarks, type RefStatus } from '../src/instance';
 import { refreshDisplay } from '../src/display';
 import { referenceLabel } from './reference-label';
@@ -68,5 +68,77 @@ describe('reference type and lifecycle descriptions', () => {
     const opts = options(); opts.refMarks = () => [...marks]; const card = mount(opts, `#action/${action}`);
     const chip = card.querySelector<HTMLElement>('a.inline-tag-action')!;
     expect(description(chip).textContent).toBe(expected);
+  });
+});
+
+describe('reference forms', () => {
+  it('keeps authored entity, artifact and file labels intact inside the shared inline form', () => {
+    const opts = options();
+    const artifact = '2026-10-04-checklist';
+    const openArtifact = vi.fn();
+    opts.resolveArtifactName = () => 'Checklist';
+    opts.artifactHref = id => `/work/artifact/${id}`;
+    opts.onArtifactClick = openArtifact;
+    const card = mount(opts, `[**Program**](#project/${project}) [*Document*](#artifact/${artifact}) #artifact/${artifact} [**Notes**](../../assets/notes.md) #date/2026-10-04 #location/?postal=Office/`);
+    const prose = card.querySelector('.rendered-content')!;
+    expect(prose.querySelector('.tag')).toBeNull();
+    expect(card.querySelectorAll('.entry-tag-row .tag')).toHaveLength(2);
+    const program = prose.querySelector<HTMLAnchorElement>('.inline-tag-project')!;
+    const document = prose.querySelector<HTMLAnchorElement>('.inline-tag-artifact')!;
+    const file = prose.querySelector<HTMLAnchorElement>('.inline-tag-asset')!;
+    for (const link of [program, document, file]) {
+      expect(link.querySelectorAll(':scope > svg.entity-icon')).toHaveLength(1);
+      expect(link.querySelector(':scope > .tag-text')).not.toBeNull();
+    }
+    expect(program.querySelector('.tag-text strong')?.textContent).toBe('Program');
+    expect(document.querySelector('.tag-text em')?.textContent).toBe('Document');
+    expect(file.querySelector('.tag-text strong')?.textContent).toBe('Notes');
+    expect(Array.from(prose.querySelectorAll<HTMLAnchorElement>('.inline-tag-artifact'), link => link.dataset.refHover)).toEqual([
+      `artifact:#artifact/${artifact}`, `artifact:#artifact/${artifact}`,
+    ]);
+    expect(file.dataset.refHover).toBe('asset:assets/notes.md');
+    expect(prose.querySelector<HTMLElement>('.inline-tag-date')?.dataset.refHover).toBe('date:#date/2026-10-04');
+    const postal = prose.querySelector<HTMLElement>('.inline-tag-location')!;
+    expect(postal.tagName).toBe('SPAN');
+    expect(postal.hasAttribute('href')).toBe(false);
+    expect(postal.dataset.refHover).toBeUndefined();
+    expect(postal.querySelector<HTMLElement>('.ref-explanation')?.hidden).toBe(false);
+    expect(postal.querySelector('.ref-explanation')?.textContent).toContain('Coordinates unavailable');
+    document.click();
+    expect(openArtifact).toHaveBeenCalledWith(artifact, undefined);
+    file.click();
+    expect(opts.onAssetClick).toHaveBeenCalledWith('assets/notes.md');
+  });
+
+  it('keeps row destinations, selection, labels and clock-driven descriptions stable', () => {
+    const opts = options();
+    opts.activeFilter = { type: 'action', id: action };
+    const clicked = vi.fn();
+    opts.onTagClick = clicked;
+    const view = renderEntryDetail({ meta: { created: stamp }, content: '', weekFile: '2026-09-28' }, opts, {
+      projects: [project], actions: [action], assets: [{ path: 'assets/notes.md', title: 'Notes' }],
+    });
+    document.body.append(view);
+    expect(view.querySelector('.tag')).toBeNull();
+    expect(view.querySelectorAll('a.ref-row')).toHaveLength(3);
+    const row = view.querySelector<HTMLAnchorElement>('.ref-row-action')!;
+    const label = row.querySelector('.tag-text')!, text = label.firstChild!;
+    const described = description(row);
+    expect(row.classList.contains('is-active')).toBe(true);
+    expect(row.getAttribute('href')).toBe(`/work/action/${action}`);
+    row.focus();
+    window.getSelection()!.setBaseAndExtent(text, 0, text, 7);
+    refreshDisplay(view, { ...options('2026-10-04T10:01'), activeFilter: opts.activeFilter });
+    expect(description(row)).toBe(described);
+    expect(described.textContent).toBe('Action; deadline overdue; schedule lapsed');
+    expect(row.querySelector('.tag-text')).toBe(label);
+    expect(window.getSelection()!.anchorNode).toBe(text);
+    expect(document.activeElement).toBe(row);
+    expect(row.querySelector<SVGElement>('svg')?.dataset.state).toBe('slipped');
+    row.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, button: 0, ctrlKey: true }));
+    expect(clicked).not.toHaveBeenCalled();
+    row.click();
+    expect(clicked).toHaveBeenCalledWith({ type: 'action', id: action }, row);
+    expect(view.querySelector<HTMLElement>('.ref-row-asset')?.dataset.refHover).toBe('asset:assets/notes.md');
   });
 });

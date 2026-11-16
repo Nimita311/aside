@@ -7,6 +7,7 @@ import { prepareCreateArtifact, type PreparedArtifactCreate } from '../mcp/tools
 import type { Store } from '../source/store.js';
 import { authoredAutomationPrompts } from './inputs.js';
 import type { Artifact } from '../core/types.js';
+import { errorMessage } from '../core/error.js';
 
 function inlinePrompt(plan: PreparedArtifactCreate): string {
   if (!plan.contentFile) return plan.artifact.body;
@@ -53,7 +54,7 @@ export function prepareAutomationPrompts(store: Store, args: Record<string, any>
       if (Buffer.byteLength(content) > AUTOMATION_PROMPT_MAX_BYTES) throw new Error(`Prompt artifact "${request.id}" exceeds the ${AUTOMATION_PROMPT_MAX_BYTES}-byte prompt limit.`);
     }
   } catch (error) {
-    throw new GraphQLError(`Invalid automation prompt: ${error instanceof Error ? error.message : String(error)}`);
+    throw new GraphQLError(`Invalid automation prompt: ${errorMessage(error)}`);
   }
   if (!plans.size) return;
   let committed = false;

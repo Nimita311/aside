@@ -1,4 +1,3 @@
-import { getMondayOfWeek } from '../lib/types';
 import { updateLatch } from './latch';
 
 // Reading and moving the rendered flow: the anchors that hold an entry card at
@@ -172,8 +171,8 @@ export function viewportGapBelow(scroller: HTMLElement): number {
 }
 
 // The cards already belong to the current filtered view. A
-// calendar-date jump stays chronological; exact-ID and quick-near jumps use
-// their separate matching rules.
+// calendar-date jump stays chronological; an exact-ID jump uses its own
+// matching rule.
 export function dateJumpCard(flow: HTMLElement, target: string, allowOldestClamp = true): HTMLElement | null {
   let before: HTMLElement | null = null, oldest: HTMLElement | null = null;
   for (const card of flow.querySelectorAll<HTMLElement>('[data-entry-id]')) {
@@ -182,27 +181,6 @@ export function dateJumpCard(flow: HTMLElement, target: string, allowOldestClamp
     if (!oldest || id < oldest.dataset.entryId!) oldest = card;
   }
   return before ?? (allowOldestClamp ? oldest : null);
-}
-
-// A period step must advance to another date in the arrow's direction even
-// when the current day would be closest to the target in a sparse timeline.
-export function quickJumpCard(flow: HTMLElement, target: string, baseDate: string, dir: number): HTMLElement | null {
-  const time = new Date(target).getTime();
-  let best: HTMLElement | null = null;
-  let bestGap = Infinity;
-  for (const card of flow.querySelectorAll<HTMLElement>('[data-entry-id]')) {
-    const id = card.dataset.entryId!;
-    const date = id.slice(0, 10);
-    if (dir > 0 ? date <= baseDate : date >= baseDate) continue;
-    const gap = Math.abs(new Date(id).getTime() - time);
-    if (gap < bestGap) { bestGap = gap; best = card; }
-  }
-  return best;
-}
-
-// The weekly file an entry id (a creation timestamp) falls in.
-export function entryWeek(entryId: string): string {
-  return getMondayOfWeek(new Date(entryId.slice(0, 10) + 'T00:00:00'));
 }
 
 // How long a jumped-to card keeps its highlight after landing.

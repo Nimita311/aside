@@ -12,10 +12,11 @@ import type { createContextPanel } from '../src/context-panel';
 type DiagramOptions = { current?: () => boolean; commit?: (paint: () => void) => void };
 type DiagramRenderer = (root: HTMLElement, options?: DiagramOptions) => Promise<void>;
 interface App {
-  state: { store: Store | null; instanceId: string | null; filter: EntityRef | null; doc: DocRef | null; panelCollapsed: boolean; loadedWeeks: number };
+  state: { store: Store | null; instanceId: string | null; filter: EntityRef | null; doc: DocRef | null; loadedWeeks: number };
   renderFlow(): Promise<void>;
-  updateDoc(preserveScroll?: boolean): Promise<void>;
+  updateDoc(refresh?: boolean): Promise<void>;
   showSidePanel(view?: PanelView): Promise<void>;
+  inspectContext(target: { ref: EntityRef | null; doc: DocRef | null }, options?: { view?: PanelView }): Promise<void>;
   refreshDiagramTheme(): Promise<void>;
   setupContextPanel(): void;
   contextPanel?: ReturnType<typeof createContextPanel>;
@@ -29,7 +30,7 @@ async function loadApp(renderer: DiagramRenderer): Promise<App> {
     .replace("document.addEventListener('DOMContentLoaded', init);", '')
     .replace("import { renderDiagrams } from './diagrams';", '');
   const bundled = await build({
-    stdin: { contents: `${source}\nexport { state, renderFlow, updateDoc, showSidePanel, refreshDiagramTheme, setupContextPanel, contextPanel };`, resolveDir: dirname(path), loader: 'ts' },
+    stdin: { contents: `${source}\nexport { state, renderFlow, updateDoc, showSidePanel, inspectContext, refreshDiagramTheme, setupContextPanel, contextPanel };`, resolveDir: dirname(path), loader: 'ts' },
     bundle: true, platform: 'browser', format: 'iife', globalName: 'TestApp', write: false,
     external: ['mermaid'],
   });
@@ -58,13 +59,12 @@ function diagramReflow(container: HTMLElement, root: HTMLElement): () => void {
 
 const entry: Entry = { meta: { created: '2026-10-04T12:00' }, weekFile: '2026-09-28', content: 'Entry content' };
 const disposePanels: (() => void)[] = [];
-async function setup(renderer: DiagramRenderer, context = false) {
+async function setup(renderer: DiagramRenderer) {
   document.body.innerHTML = '<div id="flow-scroll"><div id="flow"></div></div>' +
-    '<aside id="side-panel">' + (context ? '<button id="btn-context-expand">Expand</button>' +
-      '<div id="context-panel-view" role="tablist" hidden><button id="btn-context-content" role="tab">Content</button>' +
-      '<button id="btn-context-overview" role="tab">Overview</button></div>' : '') +
-    '<div id="side-panel-body"></div></aside>' +
-    '<dialog id="doc-backdrop"><div id="doc-body"></div></dialog><button id="outside">Outside</button>';
+    '<aside id="side-panel"><button id="btn-context-expand">Expand</button>' +
+    '<div id="context-panel-view" role="tablist" hidden><button id="btn-context-content" role="tab">Content</button>' +
+    '<button id="btn-context-overview" role="tab">Overview</button></div>' +
+    '<div id="side-panel-body"></div></aside><button id="outside">Outside</button>';
   const api = await loadApp(renderer);
   api.state.store = {
     getWeeklyDates: () => [entry.weekFile], getWeekEntries: async () => [entry],
@@ -73,12 +73,9 @@ async function setup(renderer: DiagramRenderer, context = false) {
     getNoteIndex: () => [], getInstance: () => null, diagnosticsFor: () => undefined,
   } as unknown as Store;
   api.state.instanceId = 'work'; api.state.filter = null; api.state.doc = null;
-  api.state.panelCollapsed = false;
-  if (context) {
-    api.setupContextPanel();
-    disposePanels.push(() => api.contextPanel?.destroy());
-  }
-  return { api, body: document.getElementById('doc-body')!, panel: document.getElementById('side-panel-body')! };
+  api.setupContextPanel();
+  disposePanels.push(() => api.contextPanel?.destroy());
+  return { api, panel: document.getElementById('side-panel-body')! };
 }
 
 afterEach(() => { for (const dispose of disposePanels.splice(0)) dispose(); vi.restoreAllMocks(); document.body.replaceChildren(); localStorage.clear(); });
@@ -104,33 +101,39 @@ describe('mounted diagram lifecycle', () => {
     expect(renderer.mock.calls.some(([root]) => root.id === 'flow')).toBe(true);
   });
 
-  it('does not restore an old reader scroll position after delayed diagrams lose a navigation race', async () => {
+  it('does not restore an old document scroll position after delayed diagrams lose a navigation race', async () => {
     const delayed = deferred();
+    // The panel reports a rejected renderer as a failed load, so the guard's
+    // answer is recorded here and asserted by the test itself.
+    let mounted: boolean | undefined, currentAfterRace: boolean | undefined;
     const renderer = vi.fn<DiagramRenderer>(async (root, options) => {
       if (!root.textContent?.includes('first.md')) return;
-      expect(root.isConnected).toBe(true);
+      mounted = root.isConnected;
       await delayed.promise;
-      expect(options?.current?.()).toBe(false);
+      currentAfterRace = options?.current?.();
     });
-    const { api, body } = await setup(renderer);
-    api.state.doc = { kind: 'asset', path: 'first.md' }; body.scrollTop = 120;
+    const { api, panel } = await setup(renderer);
+    api.state.doc = { kind: 'asset', path: 'first.md' }; panel.scrollTop = 120;
     const first = api.updateDoc(true);
     await vi.waitFor(() => expect(renderer).toHaveBeenCalledOnce());
+    expect(mounted).toBe(true);
+    expect(panel.textContent).toContain('first.md');
     api.state.doc = { kind: 'asset', path: 'second.md' };
-    await api.updateDoc(); body.scrollTop = 35;
+    await api.updateDoc(); panel.scrollTop = 35;
     const outside = document.getElementById('outside')!; outside.focus();
     delayed.finish(); await first;
-    expect(body.textContent).toContain('second.md'); expect(body.textContent).not.toContain('first.md');
-    expect(body.scrollTop).toBe(35); expect(document.activeElement).toBe(outside);
+    expect(currentAfterRace).toBe(false);
+    expect(panel.textContent).toContain('second.md'); expect(panel.textContent).not.toContain('first.md');
+    expect(panel.scrollTop).toBe(35); expect(document.activeElement).toBe(outside);
   });
 
   it('waits for panel diagrams before restoring its stored scroll position', async () => {
     const delayed = deferred();
     const renderer = vi.fn<DiagramRenderer>(async root => { expect(root.isConnected).toBe(true); await delayed.promise; });
     const { api, panel } = await setup(renderer);
-    api.state.filter = { type: 'entry', id: entry.meta.created };
-    const showing = api.showSidePanel({ scrollTop: 90, expanded: [] });
+    const showing = api.inspectContext({ ref: { type: 'entry', id: entry.meta.created }, doc: null }, { view: { scrollTop: 90, expanded: [] } });
     await vi.waitFor(() => expect(renderer).toHaveBeenCalledOnce());
+    expect(api.contextPanel!.getState().open).toBe(true);
     expect(panel.scrollTop).toBe(0);
     delayed.finish(); await showing;
     expect(panel.scrollTop).toBe(90);
@@ -143,7 +146,7 @@ describe('mounted diagram lifecycle', () => {
   ] as const)('keeps tab changes made during delayed panel hydration (restoring %s, selecting %j)', async (saved, selections) => {
     const delayed = deferred();
     const renderer = vi.fn<DiagramRenderer>(() => delayed.promise);
-    const { api, panel } = await setup(renderer, true);
+    const { api, panel } = await setup(renderer);
     api.state.filter = { type: 'entry', id: entry.meta.created };
     api.contextPanel!.setMode('expanded');
     const showing = api.showSidePanel({ scrollTop: 90, expanded: [], contextView: saved });
@@ -166,24 +169,26 @@ describe('mounted diagram lifecycle', () => {
   it('keeps reading and focus changes made while a current document is rendering', async () => {
     const delayed = deferred();
     const renderer = vi.fn<DiagramRenderer>(() => delayed.promise);
-    const { api, body } = await setup(renderer);
-    api.state.doc = { kind: 'asset', path: 'first.md' }; body.scrollTop = 120;
+    const { api, panel } = await setup(renderer);
+    api.state.doc = { kind: 'asset', path: 'first.md' }; panel.scrollTop = 120;
     const loading = api.updateDoc(true);
     await vi.waitFor(() => expect(renderer).toHaveBeenCalledOnce());
-    body.scrollTop = 250;
+    expect(panel.textContent).toContain('first.md');
+    panel.scrollTop = 250;
     const outside = document.getElementById('outside')!; outside.focus();
     delayed.finish(); await loading;
-    expect(body.scrollTop).toBe(250); expect(document.activeElement).toBe(outside);
+    expect(panel.scrollTop).toBe(250); expect(document.activeElement).toBe(outside);
   });
 
-  it('restores stored reader scroll despite renderer-owned scroll corrections', async () => {
+  it('restores stored document scroll despite renderer-owned scroll corrections', async () => {
     const renderer = vi.fn<DiagramRenderer>(async (root, options) => {
-      options?.commit?.(diagramReflow(document.getElementById('doc-body')!, root));
+      options?.commit?.(diagramReflow(document.getElementById('side-panel-body')!, root));
     });
-    const { api, body } = await setup(renderer);
-    api.state.doc = { kind: 'asset', path: 'first.md' }; body.scrollTop = 120;
+    const { api, panel } = await setup(renderer);
+    api.state.doc = { kind: 'asset', path: 'first.md' }; panel.scrollTop = 120;
     await api.updateDoc(true);
-    expect(body.scrollTop).toBe(120);
+    expect(renderer).toHaveBeenCalledOnce();
+    expect(panel.scrollTop).toBe(120);
   });
 
   it('restores stored panel scroll despite renderer-owned scroll corrections', async () => {
@@ -191,37 +196,37 @@ describe('mounted diagram lifecycle', () => {
       options?.commit?.(diagramReflow(document.getElementById('side-panel-body')!, root));
     });
     const { api, panel } = await setup(renderer);
-    api.state.filter = { type: 'entry', id: entry.meta.created };
-    await api.showSidePanel({ scrollTop: 90, expanded: [] });
+    await api.inspectContext({ ref: { type: 'entry', id: entry.meta.created }, doc: null }, { view: { scrollTop: 90, expanded: [] } });
+    expect(renderer).toHaveBeenCalledOnce();
     expect(panel.scrollTop).toBe(90);
   });
 
   it('retains user reading movement followed by diagram scroll corrections', async () => {
     const delayed = deferred();
     const renderer = vi.fn<DiagramRenderer>(async (root, options) => {
-      const paint = diagramReflow(document.getElementById('doc-body')!, root);
+      const paint = diagramReflow(document.getElementById('side-panel-body')!, root);
       await delayed.promise;
       options?.commit?.(paint);
     });
-    const { api, body } = await setup(renderer);
-    api.state.doc = { kind: 'asset', path: 'first.md' }; body.scrollTop = 120;
+    const { api, panel } = await setup(renderer);
+    api.state.doc = { kind: 'asset', path: 'first.md' }; panel.scrollTop = 120;
     const loading = api.updateDoc(true);
     await vi.waitFor(() => expect(renderer).toHaveBeenCalledOnce());
-    body.scrollTop = 250;
+    panel.scrollTop = 250;
     delayed.finish(); await loading;
-    expect(body.scrollTop).toBe(280);
+    expect(panel.scrollTop).toBe(280);
   });
 
   it('preserves the reading anchor when a themed diagram changes height', async () => {
     const renderer = vi.fn<DiagramRenderer>(async (root, options) => {
-      if (root.id === 'doc-body') {
-        const detail = document.createElement('article'); root.append(detail);
-        options?.commit?.(diagramReflow(root, detail));
-      }
+      if (root.id === 'side-panel-body') options?.commit?.(diagramReflow(root, root.querySelector<HTMLElement>('.context-content')!));
     });
-    const { api, body } = await setup(renderer);
-    body.scrollTop = 60;
+    const { api, panel } = await setup(renderer);
+    api.state.doc = { kind: 'asset', path: 'first.md' };
+    await api.updateDoc();
+    expect(panel.textContent).toContain('first.md');
+    panel.scrollTop = 60;
     await api.refreshDiagramTheme();
-    expect(body.scrollTop).toBe(90);
+    expect(panel.scrollTop).toBe(90);
   });
 });

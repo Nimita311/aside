@@ -56,10 +56,10 @@ Use `Query.systemInfo` for system status without selecting an instance.
 Its `search.semantic` field checks semantic-search prerequisites. If semantic ranking is unavailable, explain its reason and recovery;
 the check does not install software, start Ollama, or download models.
 
-Use `Mutation.show` to open a view in the default browser, or `Mutation.showUrl`
-to get a fresh private `file://` handoff URL for a chosen local browser. Opening
-the file automatically authorizes that browser and redirects to the requested
-view. Open it immediately as returned; see the Records guide for examples.
+Use `Mutation.show` to open a view in the host default browser for local CLI/stdio,
+or `Mutation.showUrl` to get its HTTP URL for a chosen browser. HTTP MCP returns
+public URLs for the client to open and never opens the host browser. See the
+Records guide for examples.
 
 For record work, check `Query.activeInstance`. Discover alternatives with
 `Query.instances` and select with `Mutation.selectInstance` as needed. Read

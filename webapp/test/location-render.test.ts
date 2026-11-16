@@ -81,6 +81,14 @@ describe('location content elements', () => {
     expect(new URL((chips[0] as HTMLAnchorElement).href).searchParams.get('coordinate')).toBe('51.5034,-0.1276');
   });
 
+  it('matches equivalent location values for hover without rewriting authored handles', () => {
+    const first = '#location/?geo=1.0,2.00', second = '#location/?geo=1,2';
+    const card = mount(`${first} and ${second}`);
+    const links = [...card.querySelectorAll<HTMLElement>('.inline-tag-location')];
+    expect(links.map(link => link.dataset.locationHandle)).toEqual([first, second]);
+    expect(links[0].dataset.refHover).toBe(links[1].dataset.refHover);
+  });
+
   it('preserves postal periods and leaves punctuation after a canonical trailing slash outside the chip', () => {
     const abbreviated = '#location/?postal=St.';
     const canonical = '#location/?postal=Office/';

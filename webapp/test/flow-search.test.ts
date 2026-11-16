@@ -4,28 +4,32 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { EntityRef } from '../lib/types';
 import { RemoteStore } from '../lib/remote-store';
 import type { DocRef, ViewState } from '../src/route';
+import type { createContextPanel } from '../src/context-panel';
 import { matchesFlowSearch } from '../src/flow-search';
 import { snapshotFixture } from './snapshot-fixture';
 import { loadApp } from './app-harness';
 
 interface App {
   state: { store: RemoteStore | null; instanceId: string | null; instance: unknown; filter: EntityRef | null; search: string; doc: DocRef | null };
+  setupContextPanel(): void;
   applyView(view: ViewState, options?: { forceFlow?: boolean; push?: boolean }): Promise<void>;
   applyFlowSearch(term: string): Promise<void>;
   loadMoreWeeks(count: number): Promise<void>;
   setupSearch(): void;
   handleSearch(term: string): void;
   handleTagClick(ref: EntityRef, source?: HTMLElement): void;
+  toggleContextFilter(ref: EntityRef): Promise<void>;
   handleLocationChange(event?: Event): Promise<void>;
   openDetail(): void;
   closeDoc(): void;
   clearFilter(): void;
   jumpToEntry(id: string): Promise<void>;
   clearInstanceView(): void;
+  contextPanel?: ReturnType<typeof createContextPanel>;
 }
 let app: App | undefined;
 afterEach(() => {
-  app?.clearInstanceView(); app = undefined;
+  app?.clearInstanceView(); app?.contextPanel?.destroy(); app = undefined;
   vi.restoreAllMocks(); vi.unstubAllGlobals();
   document.body.replaceChildren(); localStorage.clear(); history.replaceState(null, '', '/');
 });
@@ -49,6 +53,7 @@ async function setup() {
   data.indexes.notes = dates.map(date => ({ id: `${date}T10:00`, description: date === '2026-09-28' ? 'Index-only evidence' : 'A note' }));
   data.projects.push([otherProject, { frontMatter: { name: 'Other program', created: '2026-10-04T09:00' }, body: '' }]);
   data.indexes.projects.push({ id: otherProject, description: 'Other program' });
+  data.relations.actionsByProject.push([project, [action]]);
   data.weeksByEntity = [
     [`#project/${project}`, dates.filter((_, i) => i !== 1)],
     [`#project/${otherProject}`, [dates[1]]],
@@ -59,10 +64,10 @@ async function setup() {
     read: async () => null, revalidate: async () => 'unchanged', assetUrl: () => null,
   });
   await store.init();
-  app = await loadApp<App>('state, applyView, applyFlowSearch, loadMoreWeeks, setupSearch, handleSearch, handleTagClick, handleLocationChange, openDetail, closeDoc, clearFilter, jumpToEntry, clearInstanceView');
+  app = await loadApp<App>('state, setupContextPanel, applyView, applyFlowSearch, loadMoreWeeks, setupSearch, handleSearch, handleTagClick, toggleContextFilter, handleLocationChange, openDetail, closeDoc, clearFilter, jumpToEntry, clearInstanceView, contextPanel');
   app.state.store = store; app.state.instanceId = 'work';
   app.state.instance = { id: 'work', name: 'Work', path: '/fixture/work' };
-  app.setupSearch();
+  app.setupContextPanel(); app.setupSearch();
   await app.applyView({ filter: null, doc: null }, { forceFlow: true });
   const ids = () => [...document.querySelectorAll<HTMLElement>('#flow [data-entry-id]')].map(card => card.dataset.entryId);
   return { api: app, store, ids };
@@ -147,13 +152,17 @@ describe('literal entry-flow search', () => {
     await api.applyFlowSearch('retry + rollback');
     await api.applyView({ filter: { type: 'project', id: otherProject }, search: api.state.search, doc: null });
     expect(ids()).toEqual([]); expect(api.state.search).toBe('retry + rollback');
+    // A reference is inspected first; its Filter timeline command then
+    // replaces the pill, and toggles it off again.
     api.handleTagClick({ type: 'action', id: action });
+    expect(api.state.filter).toEqual({ type: 'project', id: otherProject });
+    await api.toggleContextFilter({ type: 'action', id: action });
     await vi.waitFor(() => expect(document.querySelector('#scroll-sentinel')).not.toBeNull());
     await api.loadMoreWeeks(20);
     expect(ids()).toContain('2026-08-31T10:00');
     expect(api.state.filter).toEqual({ type: 'action', id: action });
-    api.handleTagClick({ type: 'action', id: action }, document.createElement('a'));
-    await vi.waitFor(() => expect(api.state.filter).toBeNull());
+    await api.toggleContextFilter({ type: 'action', id: action });
+    expect(api.state.filter).toBeNull();
     expect(api.state.search).toBe('retry + rollback');
     await api.applyView({ filter: { type: 'project', id: project }, search: api.state.search, doc: null });
     document.querySelector<HTMLButtonElement>('#btn-clear-flow-search')!.focus();
@@ -179,30 +188,33 @@ describe('literal entry-flow search', () => {
   it('keeps summary links in sync when the quoted search filter changes', async () => {
     const { api } = await setup();
     await api.applyView({ filter: { type: 'project', id: project }, search: 'retry', doc: null });
-    const detailLink = () => document.querySelector<HTMLAnchorElement>('#side-panel-body a[href*="/detail"]');
-    expect(detailLink()?.search).toBe('?search=retry');
+    // The context panel has no title link to the record; its related action
+    // row carries the same flow state.
+    const summaryLink = () => document.querySelector<HTMLAnchorElement>('#side-panel-body a.ref-row-action');
+    expect(summaryLink()?.search).toBe('?search=retry');
     await api.applyFlowSearch('');
-    expect(detailLink()?.search).toBe('');
+    expect(summaryLink()?.search).toBe('');
     expect(document.querySelector('#side-panel-body')!.textContent).toContain('Good program');
   });
 
-  it('restores term and pill from Back/Forward and preserves search in reader links', async () => {
+  it('restores term and pill from Back/Forward and keeps search while the record is expanded', async () => {
     const { api, ids } = await setup();
     await api.applyView({ filter: { type: 'project', id: project }, search: 'retry', doc: null });
     const chip = document.querySelector<HTMLElement>('#flow-search')!;
     expect(chip.hidden).toBe(false);
     expect(document.querySelector<HTMLAnchorElement>('#flow .tag-action')?.search).toBe('?search=retry');
-    api.openDetail(); await vi.waitFor(() => expect(api.state.doc).toEqual({ kind: 'detail' }));
+    api.contextPanel!.open(); api.openDetail();
+    expect(api.contextPanel!.getState()).toMatchObject({ open: true, mode: 'expanded' });
     expect(location.search).toBe('?search=retry');
     expect(api.state.search).toBe('retry'); expect(chip.hidden).toBe(false);
-    api.closeDoc(); await vi.waitFor(() => expect(api.state.doc).toBeNull());
+    api.closeDoc(); expect(api.contextPanel!.getState().open).toBe(false);
     expect(api.state.search).toBe('retry');
     expect(chip.hidden).toBe(false);
     expect(chip.textContent).toContain('“retry”');
-    api.openDetail(); await vi.waitFor(() => expect(api.state.doc).toEqual({ kind: 'detail' }));
+    api.contextPanel!.open(); api.openDetail();
     expect(chip.hidden).toBe(false);
     await api.jumpToEntry('2026-10-12T10:00');
-    expect(api.state.doc).toBeNull(); expect(api.state.search).toBe('retry');
+    expect(api.contextPanel!.getState().open).toBe(false); expect(api.state.search).toBe('retry');
     expect(chip.hidden).toBe(false);
     history.replaceState(null, '', `/work/project/${otherProject}?search=Ordinary`);
     await api.handleLocationChange(new PopStateEvent('popstate'));

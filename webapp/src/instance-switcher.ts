@@ -1,5 +1,6 @@
 import { daemonRequest, instanceLink, type AvailableInstance } from './backend';
-import { catalogueRows, instanceIdentity, instanceGroup, calendarTooltip, duplicateTooltip, setInstanceTooltip, CALENDAR_OFF_ICON, WARNING_ICON } from './instance-catalogue';
+import { isModifiedClick } from './render';
+import { catalogueRows, hasDuplicateId, instanceIdentity, instanceGroup, instanceLine, calendarTooltip, duplicateTooltip, setInstanceTooltip, CALENDAR_OFF_ICON, WARNING_ICON } from './instance-catalogue';
 
 export class InstanceSwitcher {
   private readonly trigger: HTMLButtonElement;
@@ -87,24 +88,22 @@ export class InstanceSwitcher {
       const check = document.createElement('span'); check.className = 'instance-menu-check'; check.setAttribute('aria-hidden', 'true');
       if (instance.path === this.active?.path) check.textContent = '✓';
       const body = document.createElement('span'); body.className = 'instance-menu-body'; body.append(instanceIdentity(instance, this.instances, compact, instance.path === this.active?.path));
-      if (!compact && instance.description) {
-        const description = document.createElement('span'); description.className = 'instance-description'; description.textContent = instance.description; body.append(description);
-      }
-      if (!compact && instance.duplicatePaths?.length) {
+      if (!compact && instance.description) body.append(instanceLine('instance-description', instance.description));
+      if (!compact && hasDuplicateId(instance)) {
         const marker = document.createElement('span'); marker.className = 'instance-duplicate-error'; marker.innerHTML = WARNING_ICON;
         const id = document.createElement('code'); id.textContent = instance.id; marker.append(id);
         setInstanceTooltip(marker, duplicateTooltip(instance, this.instances)); body.append(marker);
       }
-      if (instance.error) { const error = document.createElement('span'); error.className = 'instance-error'; error.textContent = instance.error; body.append(error); }
+      if (instance.error) body.append(instanceLine('instance-error', instance.error));
       const status = document.createElement('span'); status.className = 'instance-menu-calendar';
       const calendar = calendarTooltip(instance);
       if (calendar) { status.innerHTML = CALENDAR_OFF_ICON; setInstanceTooltip(status, calendar); }
-      const explanation = [instance.duplicatePaths?.length ? duplicateTooltip(instance, this.instances) : '', calendar].filter(Boolean).join(' ');
+      const explanation = [hasDuplicateId(instance) ? duplicateTooltip(instance, this.instances) : '', calendar].filter(Boolean).join(' ');
       if (explanation) setInstanceTooltip(row, explanation);
       row.append(check, body, status);
       row.addEventListener('click', event => {
         if (instance.error) { event.preventDefault(); return; }
-        if (event.button || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+        if (isModifiedClick(event)) return;
         event.preventDefault(); this.close(); this.select(instance);
       });
       return row;

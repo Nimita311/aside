@@ -3,7 +3,6 @@ import { context } from 'esbuild';
 import { mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { grantUrl } from '../../src/file-grants.ts';
 import { entryOutputPaths } from '../../build-config.mjs';
 import { browserBuildOptions, createMockServer, readJson } from '../server.mjs';
 import { parseEntrySource, sourceRequest, parseSourcePage } from '../../src/entry-source.ts';
@@ -11,7 +10,7 @@ import { parseEntrySource, sourceRequest, parseSourcePage } from '../../src/entr
 let server;
 const request = (path, init = {}, session) => fetch(new URL(path, server.url), {
   ...init,
-  headers: { ...(session ? { Authorization: `Bearer mock:${session.id}` } : {}), ...init.headers },
+  headers: { ...(session ? { 'X-Aside-Mock-Session': session.id } : {}), ...init.headers },
   signal: init.signal ?? AbortSignal.timeout(10_000),
 });
 async function json(path, init = {}, session) {
@@ -38,14 +37,14 @@ describe('mock HTTP server', () => {
       { items: [{ label: 'Calmer notes', timeline: 'calmer' }] },
       { title: 'Launch', items: [{ entity: '#project/2026-10-12-aurora' }] },
     ];
-    const write = { ...post({ sidebar, expectedSidebar: original.webapp?.sidebar ?? [] }), headers: { 'Content-Type': 'application/json', 'X-Aside-Control': '1' } };
+    const write = post({ sidebar, expectedSidebar: original.webapp?.sidebar ?? [] });
     expect(await json(`${instancePath}/sidebar`, write, first)).toEqual({ sidebar });
     const updated = (await json(`${instancePath}/data`, {}, first)).instance.manifest.config;
     expect(updated.webapp.sidebar).toEqual(sidebar); expect(updated.recurrenceLookaheadDays).toBe(original.recurrenceLookaheadDays);
     expect((await json(`${instancePath}/data`, {}, second)).instance.manifest.config).toEqual(original);
     expect(await readFile(fixture, 'utf8')).toBe(before);
     expect((await request(`${instancePath}/sidebar`, {}, first)).status).toBe(405);
-    expect((await request(`${instancePath}/sidebar`, post({ sidebar: [] }), first)).status).toBe(403);
+    expect((await request(`${instancePath}/sidebar`, { ...write, headers: { 'Content-Type': 'text/plain' } }, first)).status).toBe(403);
     for (const body of [{ sidebar: [] }, { sidebar: [], expectedSidebar: sidebar, extra: true }, { sidebar: [{ items: [{ entity: 'one', timeline: 'two' }] }], expectedSidebar: sidebar }]) {
       expect((await request(`${instancePath}/sidebar`, { ...write, body: JSON.stringify(body) }, first)).status).toBe(400);
     }
@@ -57,7 +56,7 @@ describe('mock HTTP server', () => {
     const session = await sessionFor();
     const expectedSidebar = (await json(`${instancePath}/data`, {}, session)).instance.manifest.config.webapp.sidebar;
     const first = [{ items: [{ timeline: 'first pin' }] }], second = [{ items: [{ timeline: 'second pin' }] }];
-    const write = sidebar => ({ ...post({ sidebar, expectedSidebar }), headers: { 'Content-Type': 'application/json', 'X-Aside-Control': '1' } });
+    const write = sidebar => post({ sidebar, expectedSidebar });
     const replies = await Promise.all([request(`${instancePath}/sidebar`, write(first), session), request(`${instancePath}/sidebar`, write(second), session)]);
     expect(replies.map(reply => reply.status).sort()).toEqual([200, 409]);
     expect((await json(`${instancePath}/data`, {}, session)).instance.manifest.config.webapp.sidebar)
@@ -136,11 +135,11 @@ describe('mock HTTP server', () => {
     expect(await invalid.json()).toMatchObject({ error: expect.any(String) });
   });
 
-  it('requires a known session and rejects credentials from a different preview', async () => {
+  it('requires a known fixture session and keeps explicit preview selection independent', async () => {
     expect((await request('/-/api/instances')).status).toBe(401);
     expect((await request('/-/api/instances', {}, { id: 'unknown' })).status).toBe(401);
     const first = await sessionFor(), second = await sessionFor();
-    expect((await request('/-/api/instances', { headers: { 'X-Aside-Mock-Session': second.id } }, first)).status).toBe(401);
+    expect((await request('/-/api/instances', { headers: { 'X-Aside-Mock-Session': second.id } }, first)).status).toBe(200);
     const response = await request('/-/api/instances', { headers: { 'X-Aside-Mock-Session': first.id } });
     expect(response.status).toBe(200);
   });
@@ -170,10 +169,8 @@ describe('mock HTTP server', () => {
     expect((await request(`/__mock/elements/?mockSession=${appSession.id}`)).status).toBe(404);
   });
 
-  it('exposes daemon-compatible catalogue, auth, access, and parsed snapshot shapes', async () => {
+  it('exposes daemon-compatible catalogue and parsed snapshot shapes', async () => {
     const session = await sessionFor();
-    const auth = await json('/-/api/auth', {}, session);
-    expect(auth.expiresAt).toBeGreaterThan(Date.parse(session.scenario.now));
     const instances = await json('/-/api/instances', {}, session);
     expect(instances.map(item => item.id)).toEqual(expect.arrayContaining(['showcase', 'empty', 'malformed']));
     const instance = await json(instancePath, {}, session);
@@ -186,8 +183,6 @@ describe('mock HTTP server', () => {
     expect(snapshot.artifacts.length).toBeGreaterThan(0);
     expect(snapshot.searchProgress.complete).toBe(true);
     expect(instance.summary.entries).toBe(snapshot.weeks.reduce((count, [, entries]) => count + entries.length, 0));
-    const access = await json(`${instancePath}/access`, {}, session);
-    expect(access).toMatchObject({ fileBase: `/-/files/${session.id}/showcase`, fileKey: expect.any(String) });
     expect(await json(`${instancePath}/years`, {}, session)).toContain('2026');
   });
 
@@ -253,12 +248,12 @@ describe('mock HTTP server', () => {
     expect(invalid.status).toBe(400);
   });
 
-  it('preserves recovered authentication state in the config used by a same-session reload', async () => {
-    const session = await sessionFor('auth-required');
-    expect((await request('/-/api/auth', {}, session)).status).toBe(401);
+  it('preserves recovered deployment access in the config used by a same-session reload', async () => {
+    const session = await sessionFor('access-denied');
+    expect((await request('/-/api/instances', {}, session)).status).toBe(401);
     await json(`/__mock/session/${session.id}/recover`, post({}));
     expect((await json(`/__mock/session/${session.id}`)).scenario.faults).toEqual({});
-    expect((await request('/-/api/auth', {}, session)).status).toBe(200);
+    expect((await request('/-/api/instances', {}, session)).status).toBe(200);
   });
 
   it('releases held requests when Recover changes the environment', async () => {
@@ -282,7 +277,7 @@ describe('mock HTTP server', () => {
     const reader = response.body.getReader();
     try {
       const first = await reader.read();
-      expect(new TextDecoder().decode(first.value)).toContain('event: auth');
+      expect(new TextDecoder().decode(first.value)).toContain(': connected');
     } finally { await reader.cancel(); controller.abort(); }
   });
 
@@ -312,7 +307,7 @@ describe('mock HTTP server', () => {
     expect(discovery.errors.some(error => error.message === 'Query.activeInstance is unavailable to webpages.')).toBe(true);
   });
 
-  it('serves byte-identical files with HEAD, validators, ranges, and signed grants', async () => {
+  it('serves byte-identical files with HEAD, validators, ranges, and instance-scoped URLs', async () => {
     const session = await sessionFor();
     const path = `${instancePath}/files/${mediaPath}`;
     const response = await request(path, {}, session);
@@ -341,13 +336,12 @@ describe('mock HTTP server', () => {
     expect(invalid.status).toBe(416);
     expect(invalid.headers.get('Content-Range')).toBe(`bytes */${bytes.length}`);
 
-    const { fileBase, fileKey } = await json(`${instancePath}/access`, {}, session);
-    const signed = grantUrl(fileBase, fileKey, mediaPath);
-    const publicFile = await request(signed);
-    expect(publicFile.status).toBe(200);
-    expect(new Uint8Array(await publicFile.arrayBuffer())).toEqual(bytes);
-    expect((await request(signed.replace(/notes\.md$/, 'other.md'))).status).toBe(401);
-    expect((await request(signed.replace('/files/', '/files/missing-'))).status).toBe(401);
+    const instance = await json(instancePath, {}, session);
+    const scoped = `/-/api/instances/${instance.alias}/files/${mediaPath}`;
+    const nativeFile = await request(scoped);
+    expect(nativeFile.status).toBe(200);
+    expect(new Uint8Array(await nativeFile.arrayBuffer())).toEqual(bytes);
+    expect((await request(`${instancePath}/files/${mediaPath}`)).status).toBe(401);
   });
 
   it('confines files to their fixture root and preserves an opaque origin for HTML and SVG', async () => {

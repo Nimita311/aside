@@ -125,21 +125,10 @@ export const SOURCE_ACCESS_EXCEPTIONS: SourceAccessException[] = [
     'GraphQLUsageLog.prune': {'fs/promises.readdir': 1, 'fs/promises.lstat': 1, 'fs/promises.unlink': 2},
     'GraphQLUsageLog.append': {'fs/promises.mkdir': 2, 'fs/promises.chmod': 2, 'fs/promises.open': 2},
   }),
-  ...permit('web/auth.ts', 'Maintain private browser authentication state with descriptor and directory checks.', {
-    'WebAuth.constructor': {'fs.mkdirSync': 1, 'fs.lstatSync': 1},
-    'WebAuth.validateDirectory': {'fs.lstatSync': 1},
-    'WebAuth.fileMetadata': {'fs.lstatSync': 1},
-    'WebAuth.read': {'fs.openSync': 1, 'fs.fstatSync': 1, 'fs.readFileSync': 1, 'fs.closeSync': 1},
-    'WebAuth.write': {'fs.openSync': 2, 'fs.fstatSync': 1, 'fs.writeFileSync': 1, 'fs.fsyncSync': 2, 'fs.closeSync': 3, 'fs.renameSync': 1, 'fs.unlinkSync': 1},
-  }),
-  ...permit('web/handoff.ts', 'Create and remove a private browser authorization handoff file.', {
-    createWebHandoff: {'fs/promises.mkdir': 1, 'fs/promises.lstat': 1, 'fs/promises.writeFile': 1, 'fs/promises.unlink': 1},
-    'createWebHandoff.cleanup': {'fs/promises.unlink': 1},
-  }),
   ...permit('web/locate.ts', 'Locate installed static app assets.', {
     resolveAppDir: {'fs.existsSync': 2},
   }),
-  ...permit('web/server.ts', 'Serve explicitly requested static/attachment bytes and verify raw-file grants; authored JSON uses published Store state.', {
+  ...permit('web/server.ts', 'Serve explicitly requested static/attachment bytes; authored JSON uses published Store state.', {
     tryFile: {'fs/promises.readFile': 1, 'core/managed-path.assertManagedPath': 1, 'fs/promises.open': 1},
     'AsideWebServer.handle': {'fs/promises.realpath': 1},
   }),
@@ -165,7 +154,6 @@ export const SOURCE_ACCESS_EXCEPTIONS: SourceAccessException[] = [
     'SemanticSearchService.synchronized.finish': {'storage/atomic-file.writeFileCrashSafe': 1},
   }),
   ...permit('mcp/calendar/client.ts', 'Discover the external Calendar helper executable.', {
-    resolveCalBin: {'fs.existsSync': 1},
     'CalClient.constructor': {'fs.existsSync': 1},
   }),
   ...permit('mcp/geocoding.ts', 'Check the external native geocoding executable before a bounded subprocess request; no authored instance source is inspected.', {
@@ -189,7 +177,6 @@ export const SOURCE_ACCESS_EXCEPTIONS: SourceAccessException[] = [
     'CalSync.writeAction.write': {'source.saveAction': 1},
   }),
   ...permit('mcp/tools/artifact.ts', 'Request a prepared source mutation from Store and persist confirmed artifact effects through lifecycle.', {
-    handleCreateArtifact: {'mcp/tools/artifact.createArtifact': 1},
     createArtifact: {'mcp/tools/artifact.prepareCreateArtifact': 1},
     prepareCreateArtifact: {'source.prepareArtifactSource': 1},
     'prepareCreateArtifact.commit': {'source.saveArtifact': 1, 'source.addIndexEntry': 1},

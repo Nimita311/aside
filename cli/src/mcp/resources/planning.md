@@ -212,7 +212,7 @@ use the resulting saved action handle for durable links.
 To display a plan, use `Mutation.show` for the default browser or
 `Mutation.showUrl` for a browser chosen by the agent. See
 [Records](aside://docs/records), “Open a browsing view,” for the automatic
-authorization handoff and examples.
+browser navigation and examples.
 
 Edit Aside actions; their Calendar-bound writes start synchronization without a
 separate sync call.

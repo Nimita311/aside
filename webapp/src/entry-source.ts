@@ -190,15 +190,14 @@ function values(def: SourceDefinition, names: Set<string>, overrides?: Record<st
   return Object.assign(Object.create(null), result.variableValues.coerced);
 }
 export function effectiveSourceOrder(def: SourceDefinition, override?: SourceOrder, variables?: Record<string, unknown>): SourceOrder {
-  if (override !== undefined) {
-    if (override !== 'CREATED_ASC' && override !== 'CREATED_DESC') throw new Error('Unsupported entry ordering.');
-    return override;
+  let value: unknown = override;
+  if (value === undefined) {
+    const source = compile(def), node = source.selected.fields[0];
+    const argument = node.arguments?.find(argument => argument.name.value === 'orderBy');
+    const defaultValue = source.selected.definition.args.find(argument => argument.name === 'orderBy')?.astNode?.defaultValue;
+    value = (argument ? valueFromASTUntyped(argument.value, values(def, references(argument.value), variables))
+      : defaultValue ? valueFromASTUntyped(defaultValue) : undefined) ?? 'CREATED_DESC';
   }
-  const source = compile(def), node = source.selected.fields[0];
-  const argument = node.arguments?.find(argument => argument.name.value === 'orderBy');
-  const defaultValue = source.selected.definition.args.find(argument => argument.name === 'orderBy')?.astNode?.defaultValue;
-  const value = (argument ? valueFromASTUntyped(argument.value, values(def, references(argument.value), variables))
-    : defaultValue ? valueFromASTUntyped(defaultValue) : undefined) ?? 'CREATED_DESC';
   if (value !== 'CREATED_ASC' && value !== 'CREATED_DESC') throw new Error('Unsupported entry ordering.');
   return value;
 }
@@ -229,9 +228,11 @@ export function sourceRequest(def: SourceDefinition, options: SourceRequestOptio
   const where = selected.arguments?.find(argument => argument.name.value === 'where');
   const whereNames = references(where?.value);
   const targetFields = new Set(source.selected.fields);
+  // The app owns the selected collection's predicate, page and overridden order.
+  const retainedArgument = (argument: { readonly name: { readonly value: string } }) =>
+    !['where', 'limit', 'offset'].includes(argument.name.value) && !(options.order !== undefined && argument.name.value === 'orderBy');
   const retained = visit(source.operation.selectionSet, { Field(node) {
-    if (targetFields.has(node)) return { ...node, arguments: node.arguments?.filter(argument => !['where', 'limit', 'offset'].includes(argument.name.value)
-      && !(options.order !== undefined && argument.name.value === 'orderBy')) };
+    if (targetFields.has(node)) return { ...node, arguments: node.arguments?.filter(retainedArgument) };
   } });
   const retainedNames = references(retained);
   // Resolve the authored predicate without changing its grouped conditions.
@@ -253,8 +254,7 @@ export function sourceRequest(def: SourceDefinition, options: SourceRequestOptio
   const variable: VariableNode = { kind: Kind.VARIABLE, name: { kind: Kind.NAME, value: whereVariable } };
   const operation = visit(source.operation, { Field(node) {
     if (!targetFields.has(node)) return;
-    const arguments_ = (node.arguments ?? []).filter(argument => !['where', 'limit', 'offset'].includes(argument.name.value)
-      && !(options.order !== undefined && argument.name.value === 'orderBy'));
+    const arguments_ = (node.arguments ?? []).filter(retainedArgument);
     arguments_.push({ kind: Kind.ARGUMENT, name: { kind: Kind.NAME, value: 'where' }, value: variable },
       { kind: Kind.ARGUMENT, name: { kind: Kind.NAME, value: 'offset' }, value: { kind: Kind.INT, value: String(options.offset) } },
       { kind: Kind.ARGUMENT, name: { kind: Kind.NAME, value: 'limit' }, value: { kind: Kind.INT, value: String(options.limit) } });

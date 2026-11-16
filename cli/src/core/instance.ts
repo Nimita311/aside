@@ -1,9 +1,10 @@
 import { readFileSync } from 'node:fs';
 import { join, resolve, isAbsolute } from 'node:path';
 import { homedir } from 'node:os';
-import { parseManifest, parseConfig, splitFrontMatter } from './parser.js';
+import { parseConfig, parseInstanceRecord } from './parser.js';
 import { readManagedText } from './managed-path.js';
 import type { Manifest, AsideConfig, ParseResult, ParseIssue, InstanceRecord } from './types.js';
+import { errorMessage } from './error.js';
 
 // The manifest file marks a directory as an aside instance and describes it.
 export const MANIFEST_FILE = 'aside.md';
@@ -42,14 +43,12 @@ export function emptyManifest(): Manifest {
 export function readInstanceRecordResult(dir: string): ParseResult<InstanceRecord> {
   const path = resolve(dir, MANIFEST_FILE);
   try {
-    const content = readManagedText(dir, path);
-    const parsed = parseManifest(content);
-    return { value: { manifest: parsed.value, body: splitFrontMatter(content).body.trim() }, issues: parsed.issues };
+    return parseInstanceRecord(readManagedText(dir, path));
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') return { value: { manifest: emptyManifest(), body: '' }, issues: [] };
     return { value: { manifest: emptyManifest(), body: '' }, issues: [{
       severity: 'error', code: 'read_error', file: MANIFEST_FILE,
-      message: `Could not read ${path}: ${error instanceof Error ? error.message : String(error)}. Restore this manifest file or its read permissions, preserving its existing id, then retry. Calendar sync is disabled until it can be read.`,
+      message: `Could not read ${path}: ${errorMessage(error)}. Restore this manifest file or its read permissions, preserving its existing id, then retry. Calendar sync is disabled until it can be read.`,
     }] };
   }
 }
@@ -69,6 +68,14 @@ export function readManifest(dir: string): Manifest {
 // non-instance is removed from the persistent registry.
 export function shouldRetainKnownInstance(dir: string): boolean {
   return isAsideDir(dir) || readManifestResult(dir).issues.some(issue => issue.code === 'read_error');
+}
+
+// Why a directory that failed `isAsideDir` cannot be used: its manifest's read
+// failure when there is one, otherwise that it is not an instance. Reads the
+// manifest now, so a caller can build this before its own cleanup and throw after.
+export function instancePathError(dir: string): Error {
+  const issue = readManifestResult(dir).issues.find(issue => issue.code === 'read_error');
+  return issue ? new Error(issue.message) : new InstancePathError(`Not an aside instance (no aside.md manifest): ${dir}`);
 }
 
 // Resolve a config path to absolute: expand a leading `~`, otherwise resolve
@@ -93,7 +100,7 @@ export function readConfig(dir: string): ParseResult<AsideConfig> {
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') return { value: {}, issues: [] };
     return { value: {}, issues: [{
       severity: 'error', code: 'read_error', file: CONFIG_FILE,
-      message: `Could not read .aside: ${error instanceof Error ? error.message : String(error)}. Configuration was not applied. Repair the file or its permissions, then restart this agent session.`,
+      message: `Could not read .aside: ${errorMessage(error)}. Configuration was not applied. Repair the file or its permissions, then restart this agent session.`,
     }] };
   }
   const issues: ParseIssue[] = parsed.issues.map((i) => ({ ...i, file: CONFIG_FILE }));

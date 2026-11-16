@@ -54,7 +54,7 @@
     </div>
     <section class="doc-backdrop" id="doc-backdrop" aria-label="Document" tabindex="-1" hidden>
       <button id="btn-doc-close" type="button" hidden aria-label="Return to flow"></button>
-      <div class="doc-window"><main class="doc-body" id="doc-body" aria-label="Document content" tabindex="-1"></main></div>
+      <main class="doc-body" id="doc-body" aria-label="Document content" tabindex="-1"></main>
     </section>
     <aside class="side-panel" id="side-panel" aria-label="Context panel" data-extent="summary" data-detail="summary" hidden inert>
       <div class="context-panel-navigation" role="group" aria-label="Context navigation">
@@ -83,7 +83,6 @@
         <button id="btn-workspace-calendar" class="btn-icon" type="button" aria-label="Timeline calendar" aria-haspopup="dialog" aria-expanded="false" aria-controls="workspace-popover"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M16 3v4M8 3v4M3 11h18"/></svg></button>
         <button id="btn-pill-more" class="btn-icon" type="button" aria-label="More options" aria-haspopup="dialog" aria-expanded="false" aria-controls="workspace-popover">•••</button>
       </div>
-      <div id="pill-filter-slot"></div>
     </div>
     <button id="workspace-popover-dismiss" class="workspace-popover-dismiss" type="button" tabindex="-1" aria-hidden="true" hidden></button>
     <section id="workspace-popover" class="workspace-popover" role="region" aria-labelledby="workspace-popover-title" tabindex="-1" hidden>
@@ -104,7 +103,7 @@
           </div>
         </div>
         <p class="workspace-current-label" id="workspace-current-label">Entries</p>
-        <div id="workspace-navigation-list" class="workspace-navigation-list"><nav id="workspace-core-views" aria-label="Views">
+        <div class="workspace-navigation-list"><nav id="workspace-core-views" aria-label="Views">
           <a id="nav-entries" class="navigation-link" href="/"><span class="navigation-entry-icon" aria-hidden="true"></span><span>Entries</span></a>
           <a id="nav-overview" class="navigation-link" href="/"><span>Overview</span></a>
         </nav>
@@ -169,10 +168,10 @@
   </div>
 
   <dialog class="modal-backdrop" id="modal-backdrop" aria-labelledby="modal-datasource-title" tabindex="-1" hidden>
-    <div class="modal" id="modal-datasource">
+    <div class="modal">
       <header class="modal-header">
         <h2 class="modal-title" id="modal-datasource-title">Settings</h2>
-        <button class="btn-icon modal-close" id="btn-modal-close" aria-label="Close modal">
+        <button class="btn-icon" id="btn-modal-close" aria-label="Close modal">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg>
         </button>
       </header>

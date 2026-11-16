@@ -163,7 +163,7 @@ describe('recurrence identity and history', () => {
   });
   it('includes first-fold future occurrences before a horizon ending in the second fold', () => {
     const schedule = { dtstart: '2026-10-25T01:30', timezone: 'America/Los_Angeles', rrule: 'FREQ=DAILY' };
-    const page = planningActions(new Map([['t', { frontMatter: { name: 'Repeat', created: '2026-10-25T09:00', recurrence: [schedule] }, body: '' }]]), { now: new Date('2026-10-25T09:15:00Z'), lookaheadDays: 7 });
+    const page = planningActions(new Map([['t', { frontMatter: { name: 'Repeat', created: '2026-10-25T09:00', recurrence: [schedule] }, body: '' }]]), { now: new Date('2026-10-25T09:15:00Z') });
     expect(page.nodes.some(row => row.occurrence?.original === '2026-11-01T08:30:00Z')).toBe(true);
     expect(page.nodes.some(row => row.occurrence?.original === '2026-11-02T09:30:00Z')).toBe(false);
   });
@@ -176,7 +176,7 @@ describe('recurrence identity and history', () => {
     vi.stubEnv('TZ', 'America/Los_Angeles');
     try {
       const schedule = { dtstart: '2026-10-25T01:00', timezone, rrule: 'FREQ=DAILY;BYHOUR=1,2;BYMINUTE=0,30' };
-      const page = planningActions(new Map([['t', { frontMatter: { name: 'Repeat', created: '2026-10-25T09:00', recurrence: [schedule] }, body: '' }]]), { now: new Date('2026-10-25T09:15:00Z'), lookaheadDays: 7 });
+      const page = planningActions(new Map([['t', { frontMatter: { name: 'Repeat', created: '2026-10-25T09:00', recurrence: [schedule] }, body: '' }]]), { now: new Date('2026-10-25T09:15:00Z') });
       expect(page.issues).toEqual([]);
       expect(page.nodes.some(row => row.action.frontMatter.scheduled === '2026-11-01T01:30')).toBe(true);
       expect(page.nodes.some(row => row.action.frontMatter.scheduled === '2026-11-01T02:00')).toBe(false);
@@ -193,7 +193,7 @@ describe('recurrence identity and history', () => {
         ['floating', { frontMatter: { name: 'Past', created: '2026-10-31T09:00', recurrence: [schedule] }, body: '' }],
         ['future', { frontMatter: { name: 'Future', created: '2026-10-31T09:00', recurrence: [{ dtstart: '2026-11-01T02:00', rrule: 'FREQ=DAILY;COUNT=1' }] }, body: '' }],
       ]);
-      const page = planningActions(actions, { now: repeatedNow, lookaheadDays: 0 });
+      const page = planningActions(actions, { now: repeatedNow });
       expect(page.issues).toEqual([]);
       expect(page.nodes.map(row => [row.occurrence?.template, row.occurrence?.original])).toEqual([
         ['future', '2026-11-01T02:00'], ['floating', '2026-11-01T01:30'], ['floating', '2026-10-31T01:30'],
@@ -214,15 +214,14 @@ describe('recurrence identity and history', () => {
     expect(() => serializeAction(projection.frontMatter, projection.body)).toThrow('Saved actions require created.');
     expect(parseActionFile('---\nname: Unsaved\n---\n\nBody').issues)
       .toEqual(expect.arrayContaining([expect.objectContaining({code: 'missing_field', field: 'created'})]));
-    expect(planningActions(new Map([['t', template]]), { now }).nodes.filter(row => row.projected)
-      .every(row => row.action.frontMatter.created === undefined)).toBe(true);
+    expect(planningActions(new Map([['t', template]]), { now }).nodes.map(row => row.action.frontMatter.created)).toEqual([undefined, undefined, undefined]);
   });
   it('suppresses only exact materialized identities, even outside lookahead', () => {
     const occurrence = { template: 't', original: '2026-10-09T16:00:00Z', timezone: weekly.timezone };
     const actions = new Map([['t', { frontMatter: { name: 'Review', created: '2026-10-01T09:00', recurrence: [weekly] }, body: '' }], ['saved', { frontMatter: { name: 'Moved', created: '2026-10-09T09:00', scheduled: '2027-01-01T09:00', occurrence }, body: '' }]]);
     const page = planningActions(actions, { now });
-    expect(page.nodes.find(r => r.id === 'saved')).toBeTruthy();
-    expect(page.nodes.filter(r => r.projected).some(r => occurrenceKey(r.occurrence!) === occurrenceKey(occurrence))).toBe(false);
+    expect(page.nodes.some(r => occurrenceKey(r.occurrence) === occurrenceKey(occurrence))).toBe(false);
+    expect(page.nodes.map(r => r.occurrence.original)).toEqual(['2026-10-16T16:00:00Z', '2026-10-02T16:00:00Z']);
     expect(actions.size).toBe(2);
   });
   it('stops resolving a projection handle when its exact occurrence is materialized', () => {
@@ -238,6 +237,10 @@ describe('recurrence identity and history', () => {
 
 describe('planning projection boundaries and pages', () => {
   const action = (recurrence: { dtstart: string; rrule: string; timezone?: string }[]) => ({ frontMatter: { name: 'Repeat', created: '2026-01-01T09:00', recurrence }, body: '' });
+  // A page holds 100 projections. Later filler history fills the first page
+  // up to a chosen row, so the page break can follow each row under test.
+  const pageSize = 100;
+  const filler = (dtstart: string, kept: number) => action([{ dtstart, rrule: `FREQ=MINUTELY;COUNT=${pageSize - kept}` }]);
   it('keeps a floating gap clock as its original identity while projecting history', () => {
     vi.stubEnv('TZ', 'America/Los_Angeles');
     try {
@@ -251,14 +254,14 @@ describe('planning projection boundaries and pages', () => {
   it('ends an all-day lookahead on the configured date', () => {
     vi.stubEnv('TZ', 'America/Los_Angeles');
     try {
-      const page = planningActions(new Map([['t', action([{ dtstart: '2026-10-09', rrule: 'FREQ=DAILY' }])]]), { now: new Date('2026-10-09T18:00:00Z'), lookaheadDays: 7 });
+      const page = planningActions(new Map([['t', action([{ dtstart: '2026-10-09', rrule: 'FREQ=DAILY' }])]]), { now: new Date('2026-10-09T18:00:00Z') });
       expect(page.nodes.map(n => n.occurrence?.original).sort()).toEqual(['2026-10-09', '2026-10-10', '2026-10-11', '2026-10-12', '2026-10-13', '2026-10-14', '2026-10-15', '2026-10-16']);
     } finally { vi.unstubAllEnvs(); }
   });
   it('adds all-day lookahead as calendar days across spring-forward', () => {
     vi.stubEnv('TZ', 'America/Los_Angeles');
     try {
-      const page = planningActions(new Map([['t', action([{ dtstart: '2026-03-07', rrule: 'FREQ=DAILY' }])]]), { now: new Date('2026-03-08T07:30:00Z'), lookaheadDays: 7 });
+      const page = planningActions(new Map([['t', action([{ dtstart: '2026-03-07', rrule: 'FREQ=DAILY' }])]]), { now: new Date('2026-03-08T07:30:00Z') });
       expect(page.nodes.map(n => n.occurrence?.original).sort().at(-1)).toBe('2026-03-14');
     } finally { vi.unstubAllEnvs(); }
   });
@@ -271,12 +274,12 @@ describe('planning projection boundaries and pages', () => {
       ['a', action([{ dtstart: '2026-10-10', rrule: 'FREQ=DAILY;COUNT=2' }])],
       ['z', action([{ dtstart: '2026-01-01', rrule: 'FREQ=DAILY;UNTIL=20261008' }])],
     ]);
-    const first = planningActions(actions, { now, limit: 2 });
-    expect(first.nodes.map(n => n.occurrence?.template)).toEqual(['a', 'a']);
+    const first = planningActions(actions, { now });
+    expect(first.nodes.map(n => n.occurrence.template)).toEqual(['a', 'a', ...Array(pageSize - 2).fill('z')]);
     const ids = new Set(first.nodes.map(n => n.id));
     let after = first.next;
     while (after) {
-      const page = planningActions(actions, { now: new Date('2028-01-01T00:00:00Z'), after, limit: 17 });
+      const page = planningActions(actions, { now: new Date('2028-01-01T00:00:00Z'), after });
       expect(page.issues).toEqual([]);
       for (const row of page.nodes) { expect(ids.has(row.id)).toBe(false); ids.add(row.id); }
       after = page.next;
@@ -287,32 +290,39 @@ describe('planning projection boundaries and pages', () => {
     vi.stubEnv('TZ', 'Pacific/Honolulu');
     try {
       const schedule = { dtstart: '2026-10-01T09:00', timezone: 'Pacific/Kiritimati', rrule: 'FREQ=DAILY;BYHOUR=9,18;COUNT=20' };
-      const actions = new Map([['t', action([schedule])]]), expected = [...new CompiledRecurrence(schedule).occurrences('t')].map(n => n.identity.original).sort();
-      const originals: string[] = []; let after: string | undefined;
-      do {
-        const page = planningActions(actions, { now: new Date('2026-10-12T00:00:00Z'), after, limit: 2 });
-        expect(page.issues).toEqual([]); originals.push(...page.nodes.map(n => n.occurrence!.original)); after = page.next ?? undefined;
-      } while (after);
-      expect(originals.sort()).toEqual(expected);
+      const expected = [...new CompiledRecurrence(schedule).occurrences('t')].map(n => n.identity.original).sort();
+      for (let kept = 1; kept < expected.length; kept++) {
+        const actions = new Map([['t', action([schedule])], ['filler', filler('2026-10-10T00:00', kept)]]);
+        const pages: string[][] = []; let after: string | undefined;
+        do {
+          const page = planningActions(actions, { now: new Date('2026-10-12T00:00:00Z'), after });
+          expect(page.issues).toEqual([]); pages.push(page.nodes.filter(n => n.occurrence.template === 't').map(n => n.occurrence.original)); after = page.next ?? undefined;
+        } while (after);
+        expect(pages.map(page => page.length)).toEqual([kept, expected.length - kept]);
+        expect(pages.flat().sort()).toEqual(expected);
+      }
     } finally { vi.unstubAllEnvs(); }
   });
   it('pages complete history across zones without changing floating or named identities', () => {
     vi.stubEnv('TZ', 'America/Los_Angeles');
     try {
-      const actions = new Map([
+      const templates: [string, ReturnType<typeof action>][] = [
         ['floating', action([{ dtstart: '2026-03-06T02:30', rrule: 'FREQ=DAILY;COUNT=5' }])],
         ['zoned', action([{ dtstart: '2026-03-06T02:30', timezone: 'America/Los_Angeles', rrule: 'FREQ=DAILY;COUNT=5' }])],
         ['tokyo', action([{ dtstart: '2026-03-06T02:30', timezone: 'Asia/Tokyo', rrule: 'FREQ=DAILY;COUNT=5' }])],
-      ]);
-      const ids = new Set<string>(); let after: string | undefined;
-      do {
-        const page = planningActions(actions, { now: new Date('2026-03-12T18:00:00Z'), after, limit: 2 });
-        expect(page.issues).toEqual([]);
-        for (const row of page.nodes) { expect(ids.has(row.id)).toBe(false); ids.add(row.id); }
-        after = page.next ?? undefined;
-      } while (after);
-      expect(ids.size).toBe(15);
-      expect([...ids].some(id => id.includes(encodeURIComponent('2026-03-08T02:30')))).toBe(true);
+      ];
+      for (let kept = 1; kept < 15; kept++) {
+        const actions = new Map([...templates, ['filler', filler('2026-03-11T12:00', kept)]]);
+        const ids = new Set<string>(), pages: number[] = []; let after: string | undefined;
+        do {
+          const page = planningActions(actions, { now: new Date('2026-03-12T18:00:00Z'), after });
+          expect(page.issues).toEqual([]);
+          for (const row of page.nodes) { expect(ids.has(row.id)).toBe(false); ids.add(row.id); }
+          pages.push(page.nodes.filter(row => row.occurrence.template !== 'filler').length); after = page.next ?? undefined;
+        } while (after);
+        expect(pages).toEqual([kept, 15 - kept]);
+        expect([...ids].some(id => id.includes(encodeURIComponent('2026-03-08T02:30')))).toBe(true);
+      }
     } finally { vi.unstubAllEnvs(); }
   });
 });

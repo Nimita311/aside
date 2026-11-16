@@ -30,15 +30,16 @@ import { validate as validateInstance } from '../core/validator.js';
 import type { CalendarSystemInfo, CalendarSyncInfo } from '../mcp/calendar/info.js';
 import { systemInfoView, calendarSystemPayload, calendarSyncPayload, type SystemInfoOptions } from './system-info.js';
 import type { ShowArgs, ShowPayload } from '../mcp/tools/show.js';
-import type { InstanceRecord, ParseIssue, ParseResult } from '../core/types.js';
+import { eventTitlePrefixes, type InstanceRecord, type ParseIssue, type ParseResult } from '../core/types.js';
 import type { AutomationRuntimeSnapshot, AutomationLogPage, AutomationLogStream } from './automation-runtime.js';
-import { normalizeMutationArguments, normalizeActionStatus, authoredAutomationModels } from './inputs.js';
+import { mutationOperations, type MutationField, normalizeMutationArguments, normalizeActionStatus, authoredAutomationModels } from './inputs.js';
 import { summarizeMutationError, deriveMutationPayloadIds, isFullMutationFailure } from './results.js';
 import { MutationWriteError, type MutationResult } from '../source/mutation-result.js';
 import type { GraphQLUsageLog, UsageRequest } from './usage.js';
 import { normalizeGeocodeAddressInput, type GeocodeAddressInput, type GeocodeAddressResult } from '../mcp/geocoding.js';
 import { missingLocationGeoNotices, type LocationWriteNotice } from './location-notices.js';
 import type {ExecutionContextSnapshot} from '../core/execution-context.js';
+import { errorMessage } from '../core/error.js';
 
 export interface GraphQLArgs { document: string; variables?: Record<string, unknown>; operationName?: string }
 export interface MutationOutcome {
@@ -73,10 +74,9 @@ export function buildGraphQLSchema(): GraphQLSchema {
   const schema = buildSchema(graphQLSDL());
 
   // Reuse domain values while exposing familiar GraphQL enum spellings.
-  for (const type of ['ActionStatus', 'ProjectStatus', 'ProjectRelationDirection', 'AutomationOverlap', 'AutomationRunStatus', 'AutomationLogStream', 'SearchRecordKind']) {
+  for (const type of ['ActionStatus', 'ProjectStatus', 'ProjectRelationDirection', 'AutomationOverlap', 'AutomationRunStatus', 'AutomationLogStream', 'SearchRecordKind', 'CalendarSyncState']) {
     for (const value of (schema.getType(type) as GraphQLEnumType).getValues()) value.value = value.name.toLowerCase();
   }
-  for (const value of (schema.getType('CalendarSyncState') as GraphQLEnumType).getValues()) value.value = value.name.toLowerCase();
   const calendarAuthorization = { NOT_DETERMINED: 'notDetermined', WRITE_ONLY: 'writeOnly', FULL_ACCESS: 'fullAccess' };
   for (const value of (schema.getType('CalendarAuthorization') as GraphQLEnumType).getValues()) {
     value.value = calendarAuthorization[value.name as keyof typeof calendarAuthorization] ?? value.name.toLowerCase();
@@ -146,16 +146,17 @@ function checkSelections(document: DocumentNode): void {
   }
 }
 
-const mutations: Record<string, { operation: string; kind: Kind | 'instance' }> = {
-  updateInstance: { operation: 'update_instance', kind: 'instance' },
-  capture: { operation: 'capture', kind: 'entry' },
-  updateEntry: { operation: 'update_entry', kind: 'entry' },
-  updateProject: { operation: 'update_project', kind: 'project' },
-  updateOccurrence: { operation: 'update_occurrence', kind: 'action' },
-  updateAction: { operation: 'update_action', kind: 'action' },
-  createArtifact: { operation: 'create_artifact', kind: 'artifact' },
-  updateArtifact: { operation: 'update_artifact', kind: 'artifact' },
+// The record kind each mutation field in mutationOperations writes.
+const mutationKinds: Record<MutationField, Kind | 'instance'> = {
+  updateInstance: 'instance', capture: 'entry', updateEntry: 'entry', updateProject: 'project',
+  updateOccurrence: 'action', updateAction: 'action', createArtifact: 'artifact', updateArtifact: 'artifact',
 };
+
+function assertSelectableModels(names: readonly string[], choices: ModelCatalogSnapshot): void {
+  for (const name of names) if (!choices.models.some(model => model.name === name)) {
+    throw new GraphQLError(`Model ${name} is not selectable in the execution's instance.`);
+  }
+}
 
 function needsRecordNodes(info: GraphQLResolveInfo): boolean {
   // Fragments may select nodes; keep their normal execution path.
@@ -187,22 +188,28 @@ function needsSearchRanking(info: GraphQLResolveInfo): boolean {
   return info.fieldNodes.some(node => node.selectionSet?.selections.some(selected));
 }
 
+// Request limits and operation selection, stated once for preflight and execution.
+function parseOperation(mode: 'query' | 'mutation', args: GraphQLArgs) {
+  if (args.document.length > 64_000 || JSON.stringify(args.variables ?? {}).length > 256_000) throw new GraphQLError('GraphQL request is too large. Supply long content through contentFile or bodyFile.');
+  checkVariables(args.variables);
+  const document = parse(args.document, { maxTokens: 5_000 });
+  checkSelections(document);
+  const operation = getOperationAST(document, args.operationName);
+  if (!operation) throw new GraphQLError('Specify operationName for a document with multiple operations, or select an existing operation.');
+  if (operation.operation !== mode) throw new GraphQLError(`This tool accepts only ${mode} operations.`);
+  return { document, operation };
+}
+
 // CLI and daemon share document validation. The CLI can reject invalid source
 // and operation modes before starting or connecting to the daemon.
 export function prepareGraphQL(mode: 'query' | 'mutation', args: GraphQLArgs): { document?: DocumentNode; errors?: readonly unknown[] } {
   try {
-    if (args.document.length > 64_000 || JSON.stringify(args.variables ?? {}).length > 256_000) throw new GraphQLError('GraphQL request is too large. Supply long content through contentFile or bodyFile.');
-    checkVariables(args.variables);
-    const document = parse(args.document, { maxTokens: 5_000 });
-    checkSelections(document);
-    const operation = getOperationAST(document, args.operationName);
-    if (!operation) throw new GraphQLError('Specify operationName for a document with multiple operations, or select an existing operation.');
-    if (operation.operation !== mode) throw new GraphQLError(`This tool accepts only ${mode} operations.`);
+    const { document } = parseOperation(mode, args);
     const errors = validate(GRAPHQL_SCHEMA, document);
     if (errors.length) return { errors: errors.map(error => error.toJSON()) };
     return { document };
   } catch (error) {
-    return { errors: [error instanceof GraphQLError ? error.toJSON() : { message: error instanceof Error ? error.message : String(error) }] };
+    return { errors: [error instanceof GraphQLError ? error.toJSON() : { message: errorMessage(error) }] };
   }
 }
 
@@ -295,7 +302,13 @@ async function executeGraphQLImpl(
   const nodePaths = new WeakMap<RecordNode, string>();
   const referenceGraphs = new WeakMap<QueryView, {actions: number; graph: ReferenceGraph}>();
   const referenceIssues: ParseIssue[] = [];
-  const rememberView = (path: string, snapshot: QueryView, identity: string) => {
+  const openView = (path: string, source: Store) => {
+    // Portable read-only adapters expose records without execution settings.
+    // A managed owner supplies the additional configuration capability.
+    const context = options.executionContext?.(path) ?? source.getExecutionContext?.();
+    if (context) executionSnapshots.set(path, structuredClone(context));
+    const snapshot = new QueryView(source, options.matcher, options.signal, budget.exceed);
+    const identity = source.getInstance()?.manifest.id ?? '';
     usage?.touch(path, identity);
     scopedViews.set(path, snapshot);
     for (const collection of Object.values(snapshot.records)) for (const node of collection.values()) nodePaths.set(node, path);
@@ -332,16 +345,16 @@ async function executeGraphQLImpl(
     }
     return snapshot;
   };
+  const touchActive = () => {
+    const active = options.instances?.registry.activeInstance;
+    if (active) usage?.touch(active, metadata(active).value.manifest.id);
+  };
   const metadataInstance = <T extends {path: string}>(info: T) => {
     const record = metadata(info.path).value;
     return {...info, ...record, id: record.manifest.id, name: record.manifest.name, description: record.manifest.description};
   };
   const refreshView = () => {
-    // Portable read-only adapters expose records without execution settings.
-    // A managed owner supplies the additional configuration capability.
-    const context = options.executionContext?.(store!.getDataDir()) ?? store!.getExecutionContext?.();
-    if (context) executionSnapshots.set(store!.getDataDir(), structuredClone(context));
-    view = rememberView(store!.getDataDir(), new QueryView(store!, options.matcher, options.signal, budget.exceed), store!.getInstance()?.manifest.id ?? '');
+    view = openView(store!.getDataDir(), store!);
     viewSourceVersion = undefined;
     instanceRecord = structuredClone(store!.getInstance());
     return view;
@@ -359,9 +372,7 @@ async function executeGraphQLImpl(
     if (!snapshot) {
       const managed = options.resolveStore?.(path);
       if (!managed) throw unavailable('records', path);
-      const context = options.executionContext?.(path) ?? managed.getExecutionContext?.();
-      if (context) executionSnapshots.set(path, structuredClone(context));
-      snapshot = rememberView(path, new QueryView(managed, options.matcher, options.signal, budget.exceed), managed.getInstance()?.manifest.id ?? '');
+      snapshot = openView(path, managed);
     }
     return snapshot;
   };
@@ -398,13 +409,7 @@ async function executeGraphQLImpl(
   try {
     budget.check();
     if (mode === 'query' && typeof source !== 'function') records();
-    if (args.document.length > 64_000 || JSON.stringify(args.variables ?? {}).length > 256_000) throw new GraphQLError('GraphQL request is too large. Supply long content through contentFile or bodyFile.');
-    checkVariables(args.variables);
-    const document = parse(args.document, { maxTokens: 5_000 });
-    checkSelections(document);
-    const operation = getOperationAST(document, args.operationName);
-    if (!operation) throw new GraphQLError('Specify operationName for a document with multiple operations, or select an existing operation.');
-    if (operation.operation !== mode) throw new GraphQLError(`This tool accepts only ${mode} operations.`);
+    const { document, operation } = parseOperation(mode, args);
     usage?.describe(document, args.operationName);
     const root = options.instances?.registry.activeInstance ?? store?.getDataDir();
     const rawVariables = { ...Object.fromEntries((operation.variableDefinitions ?? []).filter(value => value.defaultValue)
@@ -454,7 +459,7 @@ async function executeGraphQLImpl(
       let scope = root;
       for (const selection of rootFields) {
         scope = selectedPath(selection, variableResult.variableValues.coerced) ?? scope;
-        if (mutations[selection.name.value]) {
+        if (selection.name.value in mutationKinds) {
           const field = schema.getMutationType()!.getFields()[selection.name.value];
           const input = normalizeMutationArguments(selection.name.value, getArgumentValues(field, selection, variableResult.variableValues));
           const names = authoredAutomationModels(input);
@@ -464,9 +469,7 @@ async function executeGraphQLImpl(
               : scope === store?.getDataDir() || options.loadedInstance?.(scope) !== undefined;
             if (admitted) choices = await catalogForContext(scope);
           }
-          for (const name of names) if (choices && !choices.models.some(model => model.name === name)) {
-            throw new GraphQLError(`Model ${name} is not selectable in the execution's instance.`);
-          }
+          if (choices) assertSelectableModels(names, choices);
           prepared.set(selection, input);
         }
       }
@@ -507,9 +510,9 @@ async function executeGraphQLImpl(
       effectAllowed();
       if (!options.show) throw new Error('Show operations require an MCP session.');
       const result = await options.show(input);
-      if (options.instances?.registry.activeInstance) usage?.touch(options.instances.registry.activeInstance, metadata(options.instances.registry.activeInstance).value.manifest.id);
+      touchActive();
       const error = result.outcome === 'UNAVAILABLE'
-        ? 'Could not open the default browser. Call showUrl with the same input and open its file:// URL in another local browser; authorization and redirection are automatic.'
+        ? 'Could not open the default browser. Open the returned URL manually, or call showUrl with the same input.'
         : null;
       results.push({operation: 'show', error, changes: []});
       return {...result, error};
@@ -518,7 +521,7 @@ async function executeGraphQLImpl(
       effectAllowed();
       if (!options.showUrl) throw new Error('Show URL operations require an MCP session.');
       const url = await options.showUrl(input);
-      if (options.instances?.registry.activeInstance) usage?.touch(options.instances.registry.activeInstance, metadata(options.instances.registry.activeInstance).value.manifest.id);
+      touchActive();
       results.push({operation: 'showUrl', error: null, changes: []});
       return url;
     };
@@ -536,7 +539,7 @@ async function executeGraphQLImpl(
         try {
           result = field === 'selectInstance' ? await session().selectInstance(path) : await session().createInstance(input);
         } catch (error) {
-          activationFailure = error instanceof Error ? error.message : String(error);
+          activationFailure = errorMessage(error);
           throw error;
         }
         const mutationResult: MutationResult = {status: result.error ? 'PARTIAL' : 'SUCCEEDED',
@@ -547,8 +550,7 @@ async function executeGraphQLImpl(
         recordChanges(result.instance.path, mutationResult.changes, result.instance.id);
         results.push({operation: field, error, changes: mutationResult.changes});
         // Following mutation fields must use the newly active store.
-        view = undefined; store = undefined; instanceRecord = null; validations.clear();
-        instanceOwners.clear(); automationViews.clear(); runtimeSnapshots.clear(); scopedViews.clear();
+        view = undefined; store = undefined; instanceRecord = null; dropDerived(); scopedViews.clear();
         if (result.error) activationFailure = result.error;
         // A partial bootstrap has explicit durable identity but no confirmed
         // owner state yet. Preserve its receipt; deeper fields require the owner.
@@ -558,6 +560,8 @@ async function executeGraphQLImpl(
     }
     const automationViews = new Map<string, AutomationView>();
     const instanceOwners = new Map<string, AutomationOwner>();
+    // What a write can change beneath answers already derived in this request.
+    const dropDerived = () => { validations.clear(); instanceOwners.clear(); automationViews.clear(); runtimeSnapshots.clear(); };
     const instanceOwner = (path: string): AutomationOwner => {
       let owner = instanceOwners.get(path);
       if (!owner) {
@@ -660,7 +664,8 @@ async function executeGraphQLImpl(
       refreshView();
       return automationView(path).runNode(automationRunRuntime(dispatch.run));
     };
-    for (const [field, { operation: name, kind }] of Object.entries(mutations)) {
+    for (const field of Object.keys(mutationKinds) as MutationField[]) {
+      const kind = mutationKinds[field], name: string = mutationOperations[field];
       roots[field] = async (inputArgs: any, info: GraphQLResolveInfo) => {
         effectAllowed();
         const preparedInput = prepared.get(info.fieldNodes[0]) ?? normalizeMutationArguments(field, inputArgs);
@@ -671,10 +676,7 @@ async function executeGraphQLImpl(
         const names = authoredAutomationModels(preparedInput);
         if (names.length) {
           const path = store!.getDataDir();
-          const choices = await catalogForContext(path);
-          for (const name of names) if (!choices.models.some(model => model.name === name)) {
-            throw new GraphQLError(`Model ${name} is not selectable in the execution's instance.`);
-          }
+          assertSelectableModels(names, await catalogForContext(path));
         }
         let result: MutationOutcome;
         let mutationResult: MutationResult;
@@ -726,17 +728,14 @@ async function executeGraphQLImpl(
         mutationResult = {...mutationResult, failures: mutationResult.failures.map(failure => ({...failure, message: errorGuidance(failure.message)}))};
         recordChanges(store!.getDataDir(), mutationResult.changes);
         if (isFullMutationFailure(mutationResult)) throw new GraphQLError(errorGuidance(summarizeMutationError(mutationResult, {message: failureMessage})!));
-        validations.clear();
-        instanceOwners.clear();
-        automationViews.clear();
-        runtimeSnapshots.clear();
+        dropDerived();
         let updatedView: QueryView | undefined;
         try {
           if (readbackError) throw new Error(readbackError);
           updatedView = refreshView();
         } catch (error) {
           view = undefined; instanceRecord = null; scopedViews.delete(store!.getDataDir());
-          const problem = `Saved changes could not be read back: ${error instanceof Error ? error.message : String(error)}`;
+          const problem = `Saved changes could not be read back: ${errorMessage(error)}`;
           failureMessage = failureMessage ? `${failureMessage}\n${problem}` : problem;
           if (!mutationResult.changes.length) throw new GraphQLError(problem);
         }
@@ -792,10 +791,9 @@ async function executeGraphQLImpl(
         if (info.parentType.name === 'Instance' && ['body', 'settings'].includes(field)) {
           const record = source.manifest ? source : metadata(source.path).value;
           if (field === 'body') return record.body;
-          const config = record.manifest.config;
+          const config = record.manifest.config, prefixes = eventTitlePrefixes(config);
           return {webapp: {sidebar: config?.webapp?.sidebar ?? []},
-            scheduledEventTitlePrefix: config?.scheduledEventTitlePrefix ?? '▢ ',
-            doneEventTitlePrefix: config?.doneEventTitlePrefix ?? '✓ '};
+            scheduledEventTitlePrefix: prefixes.active, doneEventTitlePrefix: prefixes.done};
         }
         if (info.parentType.name === 'SystemCheck' && ['problems', 'fixes'].includes(field)) return source[field] ?? [];
         if (info.parentType.name === 'SystemClaudeInstallation' && field === 'mcpServers') {
@@ -835,7 +833,7 @@ async function executeGraphQLImpl(
               ({...page, nodes: page.nodes.map(project => relations.get(project.id)!)}));
           }
           if (['entries', 'projects', 'actions', 'artifacts'].includes(field)) {
-            const target = field === 'relatedProjects' ? 'project' : field === 'entries' ? 'entry' : field.slice(0, -1) as Kind;
+            const target = field === 'entries' ? 'entry' : field.slice(0, -1) as Kind;
             return nodeView.list(target, input, node, field, needsRecordNodes(info), projectionPath(info));
           }
           if (node.kind === 'action' && field === 'delegationLog') return delegationView(path).log(node.id, node.record, input);
@@ -874,12 +872,12 @@ async function executeGraphQLImpl(
           const storedField = field === 'calendarAccount' ? 'calendar_account' : field;
           if (node.kind === 'action' && field === 'location' && typeof metadata.location !== 'string') return null;
           const value = field in node ? (node as any)[field] : field in node.record ? node.record[field] : metadata[storedField];
-          return value ?? (field === 'related_projects' ? [] : value);
+          return value;
         }
         if (info.parentType.name === 'Attachment' && field === 'filePath') return source.filePath ?? source.path ?? null;
         const storedField = {helperPath: 'helper_path', logPath: 'log_path', exitCode: 'exit_code'}[field as 'helperPath' | 'logPath' | 'exitCode'];
         const value = source?.[field] === undefined && storedField ? source?.[storedField] : source?.[field];
-        if (value === undefined && ['projects', 'actions', 'related_projects'].includes(field)) return [];
+        if (value === undefined && ['projects', 'actions'].includes(field)) return [];
         return typeof value === 'function' ? value.call(source, input, info) : value;
       },
     }, budget);
@@ -896,7 +894,7 @@ async function executeGraphQLImpl(
     if (mode === 'mutation' && error instanceof AbortedGraphQLExecutionError) await error.abortedResult;
     const reason = budget.signal.aborted ? budget.signal.reason : error;
     const message = budget.signal.aborted && !(reason instanceof GraphQLBudgetError) ? 'GraphQL request cancelled.'
-      : errorGuidance(reason instanceof Error ? reason.message : String(reason));
+      : errorGuidance(errorMessage(reason));
     // A budget failure returns a bounded error, never a partial query result.
     // Completed mutation effects remain authoritative and must not be discarded.
     const detail = !budget.signal.aborted && error instanceof GraphQLError ? error.toJSON() : {};

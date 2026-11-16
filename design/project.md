@@ -55,7 +55,7 @@ Front matter fields:
 - `name`: human-readable display name for the project
 - `created`: ISO 8601 with minute precision (`YYYY-MM-DDTHH:MM`) — when the project was created
 - `ended`: a real Gregorian floating date and clock in the same minute-precision format — when the project was closed. Omit if still open; use `null` on update to reopen. Invalid values are rejected before writing and reported for direct file edits.
-- `automations`: named [scheduled scripts or agent prompts](automation.md); closing the project pauses future execution.
+- `automations`: named [scheduled scripts or agent prompts](planning.md#automation); closing the project pauses future execution.
 - `related_projects`: [relationships](#related-projects) to other projects (by ID), each with a natural language description
 
 Status is implicit: a project is open if `ended` is absent, closed if it has a timestamp.

@@ -5,16 +5,17 @@ import { renderPills } from '../elements/pills';
 afterEach(() => document.body.replaceChildren());
 const specimen = (root: HTMLElement, name: string) => root.querySelector<HTMLElement>(`[data-specimen="${name}"]`)!;
 
-describe('production pill specimens', () => {
+describe('production reference specimens', () => {
   it('retains native reference types, active states, linked hover, and accessible mark descriptions', () => {
     const root = renderPills(); document.body.append(root);
     for (const type of ['project', 'action', 'entry']) {
       const row = specimen(root, `reference-${type}`);
-      expect(row.querySelector(`.tag-${type}`)).not.toBeNull();
+      const compact = type === 'entry' ? '.ref-row-entry' : `.tag-${type}`;
+      expect(row.querySelector(compact)).not.toBeNull();
       expect(row.querySelector(`.inline-tag-${type}`)).not.toBeNull();
-      expect(row.querySelector(`.tag-${type}.is-active`)).not.toBeNull();
-      expect(row.querySelector(`.tag-${type}.is-cohovered`)).not.toBeNull();
-      expect(row.querySelector(`.tag-${type}`)?.closest('.rendered-content')).toBeNull();
+      expect(row.querySelector(`${compact}.is-active`)).not.toBeNull();
+      expect(row.querySelector(`${compact}.is-cohovered`)).not.toBeNull();
+      expect(row.querySelector(compact)?.closest('.rendered-content')).toBeNull();
       expect(row.querySelector(`.inline-tag-${type}`)?.closest('.rendered-content')).not.toBeNull();
     }
     expect(specimen(root, 'reference-artifact').querySelector('.artifact-link')).not.toBeNull();
@@ -53,7 +54,7 @@ describe('production pill specimens', () => {
       'action-overdue-backlog': ['overdue', 'backlog'], 'action-due-slipped': ['due', 'slipped'],
       'action-overdue-slipped': ['overdue', 'slipped'],
     };
-    // The icon carries the lifecycle; a deadline rides the pill's ring instead.
+    // The icon carries lifecycle; deadlines remain independent reference facts.
     const icons: Record<string, string> = {
       'project-open': 'live', 'project-ended': 'ended',
       'action-scheduled': 'scheduled', 'action-backlog': 'backlog', 'action-slipped': 'slipped',
@@ -74,7 +75,7 @@ describe('production pill specimens', () => {
     }
     expect(specimen(root, 'recurrence-template').querySelector('.status-pills')?.textContent).toContain('Recurrence template');
     expect(specimen(root, 'recurrence-template').querySelector<SVGElement>('a.tag svg.entity-icon')?.dataset.state).toBe('recurring');
-    expect(specimen(root, 'recurrence-projected').querySelector('a.tag .pill')?.textContent).toBe('Projected');
+    expect(specimen(root, 'recurrence-projected').querySelector('a.tag .ref-note')?.textContent).toBe('Projected');
     expect(specimen(root, 'recurrence-projected').querySelector('.status-pills')?.textContent).toContain('Projected');
     expect(specimen(root, 'calendar-exception').querySelector('.status-pill.pill-exception .tag-text')?.textContent).toBe('No calendar');
     expect(specimen(root, 'facts-zero').querySelectorAll('.summary-stat')).toHaveLength(3);

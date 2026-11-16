@@ -50,7 +50,7 @@ export function* artifactReferenceTraversal(
   for (let i = 0; i < all.length; i++) {
     const source = all[i];
     const own = parseArtifactHandle(source.handle);
-    if (own && own.filename === undefined && artifacts.has(own.id)) {
+    if (own && artifacts.has(own.id)) {
       try { assertArtifactId(own.id); }
       catch { continue; }
       if (!contents.has(own.id)) {

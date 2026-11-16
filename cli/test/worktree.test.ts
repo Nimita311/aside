@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { execFileSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { checkoutInfo, instanceFamily, withPrimaryInstances, withoutInstanceFamilies, worktreeCalendarReason } from '../src/core/worktree.js';
+import { checkoutInfo, instanceFamily, withPrimaryInstances, withoutInstanceFamilies } from '../src/core/worktree.js';
 import { parseConfig } from '../src/core/parser.js';
 import {availableInstances} from '../src/source/instance-admission.js';
 import {resolveInstanceAddress} from '../src/core/catalogue.js';
@@ -91,7 +91,7 @@ describe('Git worktree identity', () => {
     expect(rows[0].address).toBe(rows[0].alias);
     expect(resolveInstanceAddress(rows, 'shared')).toBeUndefined();
     expect(resolveInstanceAddress(rows, rows[0].alias!)?.path).toBe(f.linked);
-    expect(worktreeCalendarReason(f.linked)).toContain('primary checkout');
+    expect(checkoutInfo(f.linked).worktree).toMatchObject({ linked: true, primaryPath: f.primary });
   });
 
   it('does not group different relative instance paths or manifests with different IDs', () => {
@@ -100,7 +100,7 @@ describe('Git worktree identity', () => {
     expect(availableInstances([f.primary, other]).every(row => row.duplicatePaths)).toBe(true);
     writeFileSync(join(f.linked, 'aside.md'), '---\nid: different\n---\n');
     expect(availableInstances([f.primary, f.linked]).every(row => !row.duplicatePaths)).toBe(true);
-    expect(worktreeCalendarReason(f.linked)).toContain('Git worktree');
+    expect(checkoutInfo(f.linked).worktree?.linked).toBe(true);
   });
 
   it('does not group a nested repository with a copy belonging to its outer repository', () => {
@@ -115,13 +115,13 @@ describe('Git worktree identity', () => {
     writeFileSync(join(f.linkedRoot, '.aside'), 'worktreeDetection: false\n');
     expect(checkoutInfo(f.linked).worktree?.linked).toBe(true);
     writeFileSync(join(f.primaryRoot, '.aside'), 'worktreeDetection: false\n');
-    expect(checkoutInfo(f.linked)).toEqual({}); expect(worktreeCalendarReason(f.linked)).toBeNull();
+    expect(checkoutInfo(f.linked)).toEqual({});
     expect(availableInstances([f.primary, f.linked]).every(row => row.duplicatePaths)).toBe(true);
     expect(parseConfig('worktreeDetection: false').value.worktreeDetection).toBe(false);
     writeFileSync(join(f.primaryRoot, '.aside'), 'worktreeDetection: invalid\n');
-    expect(worktreeCalendarReason(f.linked)).toContain('Invalid worktreeDetection');
+    expect(checkoutInfo(f.linked).error).toContain('Invalid worktreeDetection');
     writeFileSync(join(f.primaryRoot, '.aside'), 'worktreeDetection: false\n  broken: [\n');
-    expect(worktreeCalendarReason(f.linked)).toContain('Invalid worktreeDetection');
+    expect(checkoutInfo(f.linked).error).toContain('Invalid worktreeDetection');
   });
 
   it('syncs primary only, including retries, deletes, reverse writes and independent collisions', async () => {

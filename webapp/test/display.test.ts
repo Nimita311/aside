@@ -75,7 +75,7 @@ describe('rendered time presentation', () => {
     const panel = renderActionSummary({ frontMatter: fm, body: '' }, undefined, options, { projects: [], assets: [], stats: { entries: 0 } }, vi.fn());
     const timeline = renderInstanceSummary({ id: 'work' }, options, { projects: [], actions: { scheduled: [{ id: 'review', scheduled: fm.scheduled }], backlog: [] }, assets: [], stats: { entries: 0 } }, vi.fn());
     document.body.append(panel, timeline);
-    const link = timeline.querySelector<HTMLAnchorElement>('a.tag')!; link.focus();
+    const link = timeline.querySelector<HTMLAnchorElement>('a.ref-row-action')!; link.focus();
     const labels = () => Array.from(panel.querySelectorAll<HTMLElement>('.status-pill')).filter(n => !n.hidden).map(n => n.textContent);
     expect(labels()).toEqual(['Due in 1m', 'Scheduled 29m ago']);
     const current = opts('2026-10-04T10:01'); current.refMarks = () => actionMarks(fm, current.nowDate);
@@ -94,7 +94,7 @@ describe('rendered time presentation', () => {
     document.body.append(timeline);
     const list = timeline.querySelector<HTMLElement>('.timeline-list')!;
     const order = () => Array.from(list.children).map(row => row.classList.contains('timeline-now') ? 'now' : row.querySelector('.tag-text')?.textContent);
-    const link = timeline.querySelector<HTMLAnchorElement>('a.tag')!; link.focus();
+    const link = timeline.querySelector<HTMLAnchorElement>('a.ref-row-action')!; link.focus();
     expect(order()).toEqual(['now', 'first', 'second']);
     refreshDisplay(document.body, opts('2026-10-04T10:01'));
     expect(order()).toEqual(['first', 'now', 'second']); expect(document.activeElement).toBe(link);

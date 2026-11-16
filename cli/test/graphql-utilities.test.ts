@@ -328,7 +328,7 @@ describe('GraphQL validation and utility mutations', () => {
 
   it('opens the newly selected instance and preserves outcomes when a later field fails', async () => {
     const { a, b, host, session } = fixture(true);
-    const show = vi.spyOn(host, 'show').mockResolvedValue({ route: 'b/project/example/detail', port: 24800, tab: false, launchUrl: 'file:///private/show.html' });
+    const show = vi.spyOn(host, 'show').mockResolvedValue({ route: 'b/project/example/detail', port: 24800, tab: false });
     const result = await host.graphql(session, 'mutation', { document: `mutation($path: String!) {
       selectInstance(path: $path) { instance { path } }
       show(input: {project: "example", detail: true}) { url outcome }
@@ -337,21 +337,21 @@ describe('GraphQL validation and utility mutations', () => {
     expect(result.data).toMatchObject({selectInstance: {instance: {path: b}}, show: {outcome: 'OPENED'}, failed: null});
     expect(result.errors).toHaveLength(1);
     expect(show).toHaveBeenCalledWith(b, { project: 'example', detail: true }); expect(show).not.toHaveBeenCalledWith(a, expect.anything());
-    expect(openBrowser).toHaveBeenCalledExactlyOnceWith('file:///private/show.html');
+    expect(openBrowser).toHaveBeenCalledExactlyOnceWith('http://localhost:24800/b/project/example/detail');
     expect(result.extensions!.mutations).toEqual([{ operation: 'selectInstance', error: null, changes: [] }, { operation: 'show', error: null, changes: [] }]);
   });
 
   it.each([true, false])('opens the timeline and reports browser availability %s', async available => {
     const { a, host, session } = fixture(true);
-    const show = vi.spyOn(host, 'show').mockResolvedValue({ route: 'a', port: 24800, tab: false, launchUrl: 'file:///private/show.html' });
+    const show = vi.spyOn(host, 'show').mockResolvedValue({ route: 'a', port: 24800, tab: false });
     vi.mocked(openBrowser).mockResolvedValue(available);
     const result = await host.graphql(session, 'mutation', { document: 'mutation { show { url outcome } }' });
     expect(result.errors).toBeUndefined(); expect(show).toHaveBeenCalledWith(a, {});
-    expect(openBrowser).toHaveBeenCalledWith('file:///private/show.html');
+    expect(openBrowser).toHaveBeenCalledWith('http://localhost:24800/a');
     expect(result.data!.show).toEqual({ url: 'http://localhost:24800/a', outcome: available ? 'OPENED' : 'UNAVAILABLE' });
   });
 
-  it.each(['show', 'showUrl'])('rejects incompatible %s targets and missing records before preparing a handoff', async operation => {
+  it.each(['show', 'showUrl'])('rejects incompatible %s targets and missing records before starting the web server', async operation => {
     const { host, session } = fixture(true);
     const web = vi.spyOn(host, 'web');
     for (const input of ['{detail: true}', '{project: "missing"}', '{project: "a", action: "b"}', '{filename: "file.pdf"}', '{artifact: "example", entry: "example"}']) {
@@ -362,13 +362,13 @@ describe('GraphQL validation and utility mutations', () => {
     expect(web).not.toHaveBeenCalled(); expect(openBrowser).not.toHaveBeenCalled();
   });
 
-  it('returns only the fresh private handoff URL for a caller-managed browser', async () => {
+  it('returns only the view URL for a caller-managed browser', async () => {
     const { a, host, session } = fixture(true);
     const show = vi.spyOn(host, 'show').mockResolvedValue({ route: 'a', port: 24800, tab: false,
-      url: 'http://localhost:24800/a', launchUrl: 'file:///private/chosen-browser.html' });
+      url: 'http://localhost:24800/a' });
     const result = await host.graphql(session, 'mutation', { document: 'mutation { showUrl }' });
     expect(result.errors).toBeUndefined();
-    expect(result.data!.showUrl).toBe('file:///private/chosen-browser.html');
+    expect(result.data!.showUrl).toBe('http://localhost:24800/a');
     expect(show).toHaveBeenCalledExactlyOnceWith(a, {});
     expect(openBrowser).not.toHaveBeenCalled();
     expect(result.extensions!.mutations).toEqual([{operation: 'showUrl', error: null, changes: []}]);
@@ -378,7 +378,7 @@ describe('GraphQL validation and utility mutations', () => {
     const { a, host, session } = fixture(true);
     const source = '#artifact/2026-10-18-review/decisions.json';
     const show = vi.spyOn(host, 'show').mockResolvedValue({ route: `a/project/example/detail?${new URLSearchParams({ source })}`, port: 24800, tab: false,
-      launchUrl: 'file:///private/source-view.html' });
+      });
     const result = await host.graphql(session, 'mutation', { document: `mutation {
       ${operation}(input: {source: "${source}", search: "release review", project: "example", detail: true}) ${operation === 'show' ? '{ url }' : ''}
     }` });
@@ -389,14 +389,14 @@ describe('GraphQL validation and utility mutations', () => {
   it('prepares a URL for the newly selected instance and preserves it after a later failure', async () => {
     const { b, host, session } = fixture(true);
     const show = vi.spyOn(host, 'show').mockResolvedValue({ route: 'b/project/example/detail', port: 24800, tab: false,
-      launchUrl: 'file:///private/selected-browser.html' });
+      });
     const result = await host.graphql(session, 'mutation', { document: `mutation($path: String!) {
       selectInstance(path: $path) { instance { path } }
       link: showUrl(input: {project: "example", detail: true})
       failed: selectInstance(path: "/nonexistent/aside-gql-test") { error }
       skipped: showUrl
     }`, variables: {path: b} });
-    expect(result.data).toMatchObject({selectInstance: {instance: {path: b}}, link: 'file:///private/selected-browser.html', failed: null, skipped: null});
+    expect(result.data).toMatchObject({selectInstance: {instance: {path: b}}, link: 'http://localhost:24800/b/project/example/detail', failed: null, skipped: null});
     expect(result.errors).toHaveLength(2);
     expect(show).toHaveBeenCalledExactlyOnceWith(b, {project: 'example', detail: true});
     expect(openBrowser).not.toHaveBeenCalled();
@@ -405,7 +405,7 @@ describe('GraphQL validation and utility mutations', () => {
     ]);
   });
 
-  it('requires a selected instance and never substitutes a bookmark for a missing handoff', async () => {
+  it('requires a selected instance and returns ordinary HTTP URLs', async () => {
     const unselected = fixture();
     const web = vi.spyOn(unselected.host, 'web');
     const missing = await unselected.host.graphql(unselected.session, 'mutation', {document: 'mutation { showUrl }'});
@@ -415,10 +415,9 @@ describe('GraphQL validation and utility mutations', () => {
 
     const { host, session } = fixture(true);
     vi.spyOn(host, 'show').mockResolvedValue({route: 'a', port: 24800, tab: false, url: 'http://localhost:24800/a'});
-    const invalid = await host.graphql(session, 'mutation', {document: 'mutation { showUrl }'});
-    expect(invalid.errors).toEqual([expect.objectContaining({message: expect.stringContaining('Could not prepare browser authorization')})]);
-    expect(invalid.data!.showUrl).toBeNull();
-    expect(invalid.extensions!.mutations).toEqual([]);
+    const result = await host.graphql(session, 'mutation', {document: 'mutation { showUrl }'});
+    expect(result.errors).toBeUndefined();
+    expect(result.data!.showUrl).toBe('http://localhost:24800/a');
     expect(openBrowser).not.toHaveBeenCalled();
   });
 });

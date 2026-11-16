@@ -7,9 +7,10 @@ import { ICON_SIZE, artifactIconState, iconMarkup, refIconState } from './entity
 import { search, highlight, type SearchOutput, type SearchResult, type SearchResultType } from './search';
 import { bindDisplay, setDisplayText } from './display';
 import { formatDate } from './date-display';
-import { bindEntrySearchName } from './search-label';
+import { appendIdMatch, bindEntrySearchName } from './search-label';
 import { remoteSearch, type SearchQuery } from './search-remote';
 import { watchActiveSearch } from './search-progress';
+import { errorMessage } from '../../cli/src/core/error';
 
 // The search dropdown owns explicit query modes, request lifetime, result
 // ordering, keyboard navigation and combobox state. Selection navigates through
@@ -88,9 +89,8 @@ export function createSearchUi({ store, renderOpts, onSelect, query: queryBacken
 
   function syncSearchAccessibility(): void {
     const input = $<HTMLInputElement>('.search-input');
-    const results = resultsElement();
     const listbox = $('#search-listbox');
-    const expanded = !!results && !results.hidden;
+    const expanded = isSearchVisible();
     input?.setAttribute('aria-expanded', String(expanded));
     const active = searchSelectables[searchActive]?.el;
     if (expanded && active && listbox?.contains(active)) input?.setAttribute('aria-activedescendant', active.id);
@@ -117,24 +117,22 @@ export function createSearchUi({ store, renderOpts, onSelect, query: queryBacken
       if (mode() === 'text' || input.value !== searchLastQuery || mode() !== searchLastMode || (!searchLastOutput && !searchRequest)) handleSearch(input.value);
       else if (searchLastOutput) setSearchVisible(true);
     });
-    input?.addEventListener('blur', event => {
+    // Focus that leaves the whole search surface closes the dropdown.
+    const hideOnLeave = (event: FocusEvent) => {
       if (!(event.relatedTarget instanceof Node) || !document.querySelector('.search-wrapper')?.contains(event.relatedTarget)) setSearchVisible(false);
-    });
+    };
+    input?.addEventListener('blur', hideOnLeave);
     input?.addEventListener('keydown', handleSearchKeydown);
     // Keep presses (including the scrollbar) from blurring the input.
     results?.addEventListener('mousedown', event => event.preventDefault());
-    results?.addEventListener('focusout', event => {
-      if (!(event.relatedTarget instanceof Node) || !document.querySelector('.search-wrapper')?.contains(event.relatedTarget)) setSearchVisible(false);
-    });
+    results?.addEventListener('focusout', hideOnLeave);
     const select = $<HTMLSelectElement>('#search-mode');
     select?.addEventListener('change', () => {
       resetSearch(false); syncSearchLanguage();
       if (input?.value.trim()) handleSearch(input.value);
       input?.focus({ preventScroll: true });
     });
-    select?.addEventListener('blur', event => {
-      if (!(event.relatedTarget instanceof Node) || !document.querySelector('.search-wrapper')?.contains(event.relatedTarget)) setSearchVisible(false);
-    });
+    select?.addEventListener('blur', hideOnLeave);
     syncSearchLanguage();
     syncSearchAccessibility();
   }
@@ -239,7 +237,7 @@ export function createSearchUi({ store, renderOpts, onSelect, query: queryBacken
       searchRequest = undefined; cancelSearchLoading?.();
       const retry = document.createElement('button'); retry.type = 'button'; retry.textContent = 'Retry';
       retry.addEventListener('click', () => handleSearch(text));
-      const message = error instanceof Error ? error.message : String(error);
+      const message = errorMessage(error);
       showNotice(status, {
         kind: 'error', message: `${currentMode === 'semantic' ? 'Semantic' : 'Regex'} search failed.`,
         description: message,
@@ -262,6 +260,11 @@ export function createSearchUi({ store, renderOpts, onSelect, query: queryBacken
 
     const { results, terms } = searchLastOutput!;
     const context = searchLastMode === 'text' && onFlowSearch ? flowSearch?.() : null;
+    // Every exit places the listbox and restores the keyboard highlight.
+    const finish = () => {
+      if (!context) resultsEl.append(listbox);
+      setSearchActive(activeKey ? searchSelectables.findIndex(s => s.el.dataset.key === activeKey) : -1);
+    };
     if (context) listbox.append(flowSearchRow(context));
     if (searchDetail) {
       const detail = document.createElement('div'); detail.className = 'search-result-detail';
@@ -304,17 +307,13 @@ export function createSearchUi({ store, renderOpts, onSelect, query: queryBacken
         empty.setAttribute('role', 'status');
         empty.textContent = progress.complete ? 'No results' : 'No matches in available records yet'; resultsEl.append(empty);
       }
-      if (!context) resultsEl.append(listbox);
-      setSearchActive(activeKey ? searchSelectables.findIndex(s => s.el.dataset.key === activeKey) : -1);
-      return;
+      finish(); return;
     }
 
     const resolveName = renderOpts().resolveName;
     if (searchLastMode !== 'text') {
       for (const result of results) listbox.append(searchResultRow(result, terms, resolveName));
-      resultsEl.append(listbox);
-      setSearchActive(activeKey ? searchSelectables.findIndex(s => s.el.dataset.key === activeKey) : -1);
-      return;
+      finish(); return;
     }
     for (const group of SEARCH_GROUPS) {
       const items = results.filter((r) => r.type === group.type);
@@ -345,8 +344,7 @@ export function createSearchUi({ store, renderOpts, onSelect, query: queryBacken
         section.appendChild(more);
       }
     }
-    if (!context) resultsEl.append(listbox);
-    setSearchActive(activeKey ? searchSelectables.findIndex((s) => s.el.dataset.key === activeKey) : -1);
+    finish();
   }
 
   function flowSearchRow(context: { label: string; term: string }): HTMLElement {
@@ -394,12 +392,12 @@ export function createSearchUi({ store, renderOpts, onSelect, query: queryBacken
     item.dataset.key = `${result.type}:${result.id}`;
 
     const typeLabel = document.createElement('span');
-    typeLabel.className = `tag tag-${result.type} tag-sm`;
-    // The type icon in the entity's state, as its chips wear it; a date row
+    typeLabel.className = `search-result-type icon-${result.type}`;
+    // The type icon in the entity's state; a date row
     // jumps to a day. Constant geometry only — never user data.
-    typeLabel.innerHTML = result.type === 'date' ? iconMarkup('date', 'day', ICON_SIZE.pill)
-      : result.type === 'artifact' ? entityIcon('artifact', artifactIconState(store()?.getCachedArtifact(result.id)))
-      : entityIcon(result.type, refIconState(result.type, renderOpts().refMarks(result.type, result.id)));
+    typeLabel.innerHTML = result.type === 'date' ? iconMarkup('date', 'day', ICON_SIZE.row)
+      : result.type === 'artifact' ? entityIcon('artifact', artifactIconState(store()?.getCachedArtifact(result.id)), ICON_SIZE.row)
+      : entityIcon(result.type, refIconState(result.type, renderOpts().refMarks(result.type, result.id)), ICON_SIZE.row);
 
     const textCol = document.createElement('div');
     textCol.className = 'search-result-text';
@@ -434,15 +432,7 @@ export function createSearchUi({ store, renderOpts, onSelect, query: queryBacken
       bindDisplay(nameLabel, renderOpts(), (node, current) => setDisplayText(node, `Jump to ${formatDate(result.id, current.dateFormat)}`));
     } else if (result.type === 'entry') {
       bindEntrySearchName(nameLabel, textCol, result.id, terms, renderOpts(), otherMarked);
-    } else if (!otherMarked && !nameHtml.includes('<mark>')) {
-      const idHtml = highlight(result.id, terms);
-      if (idHtml.includes('<mark>')) {
-        const idLabel = document.createElement('div');
-        idLabel.className = 'search-result-description search-result-id';
-        idLabel.innerHTML = idHtml;
-        textCol.appendChild(idLabel);
-      }
-    }
+    } else if (!otherMarked && !nameHtml.includes('<mark>')) appendIdMatch(textCol, result.id, terms);
 
     item.appendChild(typeLabel);
     item.appendChild(textCol);
@@ -526,8 +516,6 @@ export function createSearchUi({ store, renderOpts, onSelect, query: queryBacken
       visible: () => store() === source && mode() === 'text' && isSearchVisible(),
       refresh: handleSearch,
     }),
-    // The query the open dropdown answers.
-    searchLastQuery: () => searchLastQuery,
     cancelPendingSearch: () => { clearTimeout(searchTimeout); cancelRemoteSearch(); },
     // An open dropdown re-runs its query — after the records it searched changed.
     rerunOpenSearch: () => {

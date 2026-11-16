@@ -147,8 +147,8 @@ Body.
     });
 
     it('loads projects', () => {
-      expect(store.getProjectIds()).toContain('my-project');
-      expect(store.getProjectIds()).toContain('other-project');
+      expect([...store.getProjects().keys()]).toContain('my-project');
+      expect([...store.getProjects().keys()]).toContain('other-project');
       const proj = store.getProject('my-project');
       expect(proj).toBeDefined();
       expect(proj!.frontMatter.name).toBe('My Project');
@@ -203,7 +203,7 @@ Body.
     it('derives actions for a project from entry co-occurrence', () => {
       // Entry 1 has my-project + my-action
       // Entry 2 has my-project + other-action
-      const actions = store.getActionsForProject('my-project');
+      const actions = [...(store.getRelations().actionsByProject.get('my-project') ?? [])];
       expect(actions).toContain('my-action');
       expect(actions).toContain('other-action');
       expect(actions).toHaveLength(2);
@@ -225,7 +225,7 @@ Body.
     });
 
     it('returns empty array for project with no actions', () => {
-      expect(store.getActionsForProject('nonexistent')).toEqual([]);
+      expect([...(store.getRelations().actionsByProject.get('nonexistent') ?? [])]).toEqual([]);
     });
 
     it('returns empty array for action with no projects', () => {
@@ -374,22 +374,22 @@ describe('Store synchronous updates', () => {
 
   it('saves an entry, deriving relationships and keeping reverse order', () => {
     const file = join(dir, 'notes', '2026', '2026-05-04.md');
-    store.saveEntry('2026-05-05T09:00', ['proj'], ['act'], 'first', file, weekly('2026-05-05T09:00', 'first', ['proj'], ['act']));
-    store.saveEntry('2026-05-06T09:00', ['proj'], [], 'second', file, weekly('2026-05-06T09:00', 'second', ['proj']));
+    store.saveEntry('2026-05-05T09:00', file, weekly('2026-05-05T09:00', 'first', ['proj'], ['act']));
+    store.saveEntry('2026-05-06T09:00', file, weekly('2026-05-06T09:00', 'second', ['proj']));
     expect(store.getEntries().map(e => e.meta.created)).toEqual(['2026-05-06T09:00', '2026-05-05T09:00']);
-    expect(store.getActionsForProject('proj')).toEqual(['act']);
+    expect([...(store.getRelations().actionsByProject.get('proj') ?? [])]).toEqual(['act']);
     expect([...(store.getRelations().projectsByAction.get('act') ?? [])]).toEqual(['proj']);
   });
 
   it('re-derives relationships when an entry is amended', () => {
     const file = join(dir, 'notes', '2026', '2026-05-04.md');
-    store.saveEntry('2026-05-05T09:00', ['proj'], ['act-old'], 'v1', file, weekly('2026-05-05T09:00', 'v1', ['proj'], ['act-old']));
-    expect(store.getActionsForProject('proj')).toEqual(['act-old']);
+    store.saveEntry('2026-05-05T09:00', file, weekly('2026-05-05T09:00', 'v1', ['proj'], ['act-old']));
+    expect([...(store.getRelations().actionsByProject.get('proj') ?? [])]).toEqual(['act-old']);
     // Amend the same entry (same created) with a different action — the stale link drops.
-    store.saveEntry('2026-05-05T09:00', ['proj'], ['act-new'], 'v2', file, weekly('2026-05-05T09:00', 'v2', ['proj'], ['act-new']));
+    store.saveEntry('2026-05-05T09:00', file, weekly('2026-05-05T09:00', 'v2', ['proj'], ['act-new']));
     expect(store.getEntries()).toHaveLength(1);
     expect(store.getEntries()[0].content).toBe('v2');
-    expect(store.getActionsForProject('proj')).toEqual(['act-new']);
+    expect([...(store.getRelations().actionsByProject.get('proj') ?? [])]).toEqual(['act-new']);
   });
 
   it('updates an index description in place, collapsing newlines', () => {
@@ -414,7 +414,7 @@ describe('Store synchronous updates', () => {
       const id = kind === 'notes' ? '2026-05-05T09:00' : '2026-05-05-record';
       const file = join(dir, kind, '2026', kind === 'notes' ? '2026-05-04.md' : `${id}.md`);
       const fm = { name: 'Record', created: '2026-05-05T09:00' };
-      if (kind === 'notes') store.saveEntry(id, [], [], 'body', file, weekly(id, 'body'));
+      if (kind === 'notes') store.saveEntry(id, file, weekly(id, 'body'));
       else if (kind === 'actions') store.saveAction(id, fm, 'body', file);
       else if (kind === 'projects') store.saveProject(id, fm, 'body', file);
       else store.saveArtifact(id, fm, 'body', file);

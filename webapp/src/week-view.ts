@@ -3,6 +3,7 @@ import { showActionFailure } from './toast';
 import { bindDisplay, setDisplayText } from './display';
 import { formatDate } from './date-display';
 import type { RenderOptions } from './render';
+import { errorMessage } from '../../cli/src/core/error';
 
 export interface WeekView {
   host: HTMLElement;
@@ -49,7 +50,7 @@ export function createWeekView(monday: string, options: {
     const details = document.createElement('details');
     const summary = document.createElement('summary'); summary.textContent = `Week of ${formatDate(monday)} could not load`;
     if (options.renderOpts) bindDisplay(summary, options.renderOpts(), (node, current) => setDisplayText(node, `Week of ${formatDate(monday, current.dateFormat)} could not load`));
-    const text = document.createElement('p'); text.textContent = error instanceof Error ? error.message : String(error);
+    const text = document.createElement('p'); text.textContent = errorMessage(error);
     details.append(summary, text);
     const retry = document.createElement('button'); retry.type = 'button'; retry.className = 'history-retry notice-action'; retry.textContent = 'Retry';
     retry.setAttribute('aria-label', `Retry week of ${formatDate(monday)}`);

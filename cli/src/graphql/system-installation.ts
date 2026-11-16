@@ -3,6 +3,8 @@ import { closeSync, constants, fstatSync, openSync, opendirSync, readSync, realp
 import { join } from 'node:path';
 import { defaultPluginContext, inspectPluginStatus, type ClaudeState, type CodexState, type PluginContext, type Runner } from '../commands/plugin.js';
 import type { HealthCheck } from '../commands/output.js';
+import { abortable } from '../core/async.js';
+import { errorMessage } from '../core/error.js';
 
 export interface SystemInstallationSnapshot {
   checkout: string | null;
@@ -22,15 +24,6 @@ export interface SystemInstallationOptions {
   /** Test seam; production inspects the same checkout and registrations as plugin status. */
   context?: PluginContext;
   timeoutMs?: number;
-}
-
-function abortable<T>(work: Promise<T>, signal: AbortSignal): Promise<T> {
-  return new Promise((resolve, reject) => {
-    const abort = () => reject(signal.reason);
-    signal.addEventListener('abort', abort, {once: true});
-    if (signal.aborted) abort();
-    work.then(resolve, reject).finally(() => signal.removeEventListener('abort', abort)).catch(() => {});
-  });
 }
 
 function statusRunner(signal: AbortSignal): Runner {
@@ -107,7 +100,7 @@ export async function collectSystemInstallation(options: SystemInstallationOptio
   }
   catch (error) {
     return {checkout: null, information: [], agents: [], checks: checks([
-      {code: 'plugin_operation', label: 'Plugin status', passed: false, problems: [error instanceof Error ? error.message : String(error)]},
+      {code: 'plugin_operation', label: 'Plugin status', passed: false, problems: [errorMessage(error)]},
     ])};
   }
   const runner = options.context?.runner ?? statusRunner(signal);

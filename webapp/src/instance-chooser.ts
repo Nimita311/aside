@@ -1,13 +1,11 @@
 import { daemonRequest, instanceLink, type AvailableInstance } from './backend';
 import { showDelayedLoading, delayLoading } from './notice';
 import { showActionFailure } from './toast';
-import { catalogueRows, instanceIdentity, instanceGroup, calendarTooltip, duplicateTooltip, setInstanceTooltip, CALENDAR_OFF_ICON, WARNING_ICON } from './instance-catalogue';
+import { catalogueRows, hasDuplicateId, instanceIdentity, instanceGroup, instanceLine, calendarTooltip, duplicateTooltip, setInstanceTooltip, CALENDAR_OFF_ICON, WARNING_ICON } from './instance-catalogue';
 import { formatDate, formatClock } from './date-display';
-import { renderFactsLine, formatStamp, type RenderOptions } from './render';
+import { isModifiedClick, renderFactsLine, formatStamp, type RenderOptions } from './render';
 import { localDateStamp } from './date-reference';
 import { createModal, type ModalController } from './modal';
-
-const hasDuplicateId = (instance: AvailableInstance): boolean => !!instance.duplicatePaths?.length;
 
 // The chooser manages catalogue entries; removing one never deletes its files.
 export class InstanceChooser {
@@ -340,25 +338,15 @@ export class InstanceChooser {
       if (content instanceof HTMLAnchorElement) {
         content.href = instanceLink(instance);
         content.addEventListener('click', event => {
-          if (!this.openInstance || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+          if (!this.openInstance || isModifiedClick(event)) return;
           event.preventDefault();
           if (!this.mutating && this.openingPath !== instance.path) this.openInstance(instance);
         });
       }
       const label = instance.name || instance.id || 'Unavailable instance';
       content.append(instanceIdentity(instance, instances, compact));
-      if (!compact && instance.description) {
-        const description = document.createElement('span');
-        description.className = 'instance-description';
-        description.textContent = instance.description;
-        content.append(description);
-      }
-      if (instance.error) {
-        const error = document.createElement('span');
-        error.className = 'instance-error';
-        error.textContent = instance.error;
-        content.append(error);
-      }
+      if (!compact && instance.description) content.append(instanceLine('instance-description', instance.description));
+      if (instance.error) content.append(instanceLine('instance-error', instance.error));
       const body = document.createElement('div'); body.className = 'instance-card-body'; body.append(content);
       const opts = this.options.renderOptions?.();
       const facts = instance.summary && opts ? renderFactsLine(instance.summary, instance.summary.latest, opts) : document.createElement('div');

@@ -1,14 +1,13 @@
-// The daemon has one stable browser origin for every instance.
+// One loopback listener serves every instance.
 import { execFile } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { AsideWebServer, type WebBackend, type WebServerOptions } from './server.js';
-import { nativeCommand } from '../native/helper.js';
+import { AsideWebServer, type WebBackend } from './server.js';
 
 const WEB_PORT = 24800;
-export async function startWeb(appDir: string, backend: WebBackend, port = WEB_PORT, options: WebServerOptions): Promise<AsideWebServer> {
-  const server = await AsideWebServer.start(appDir, backend, port, options);
+export async function startWeb(appDir: string, backend: WebBackend, port = WEB_PORT): Promise<AsideWebServer> {
+  const server = await AsideWebServer.start(appDir, backend, port);
   if (!server) throw new Error(`Aside's browser port ${port} is already in use. Close the process using it and retry.`);
   return server;
 }
@@ -33,23 +32,8 @@ export function resolveAppDir(override?: string): string {
 // Open the user's default browser at a URL. False when it can't be opened
 // (headless session) — the caller shares the URL instead.
 export async function openBrowser(url: string): Promise<boolean> {
-  let browser: string | null = null;
-  if (process.platform === 'darwin' && url.startsWith('file:')) {
-    // A private HTML handoff must use the HTTP browser, even when .html files
-    // are associated with an editor. AppKit reads Launch Services without
-    // asking the browser for automation permission.
-    const command = nativeCommand('default-browser');
-    if (!command) return false;
-    browser = await new Promise<string | null>(resolve => {
-      execFile(command.file, command.args, { timeout: 5000, maxBuffer: 16 * 1024 }, (error, stdout) => {
-        const application = stdout?.trim();
-        resolve(!error && application && path.isAbsolute(application) && application.endsWith('.app') ? application : null);
-      });
-    });
-    if (!browser) return false;
-  }
   const [cmd, args]: [string, string[]] =
-    process.platform === 'darwin' ? ['open', [...(browser ? ['-a', browser] : []), url]] :
+    process.platform === 'darwin' ? ['open', [url]] :
     process.platform === 'win32' ? ['cmd', ['/c', 'start', '', url]] :
     ['xdg-open', [url]];
   return new Promise((resolve) => {

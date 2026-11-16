@@ -2,6 +2,7 @@ import type { MockAction, Scenario } from './scenarios';
 import { settlePreview } from './settle';
 import { preserveSessionNavigation } from './session-navigation';
 import { deferPreviewFocus } from './preview-focus';
+import { errorMessage } from '../../cli/src/core/error';
 
 export interface MockConfig { id: string; scenario: Scenario; theme?: 'light' | 'dark' }
 const preferences = ['darkMode', 'timeFormat', 'dateFormat', 'timeStyle', 'expandProjects', 'expandActions', 'searchShortcutEnabled', 'animSpeed'] as const;
@@ -81,7 +82,7 @@ async function perform(action: MockAction): Promise<void> {
     await activatePreview();
     element.focus(); return;
   }
-  if (action.kind === 'hover') { element.dispatchEvent(new MouseEvent('mouseover', { bubbles: true })); return; }
+  if (action.kind === 'hover') { element.dispatchEvent(new PointerEvent('pointerover', { bubbles: true, pointerType: 'mouse' })); return; }
   if (action.kind === 'key') {
     element.focus();
     element.dispatchEvent(new KeyboardEvent('keydown', { key: action.value ?? 'Enter', bubbles: true, cancelable: true }));
@@ -114,7 +115,7 @@ async function stage(session: MockConfig): Promise<void> {
     window.parent.postMessage({ type: 'aside:mock:ready', session: session.id, scenario: session.scenario.id }, location.origin);
   } catch (error) {
     if (revision !== stagingRevision) return;
-    const message = error instanceof Error ? error.message : String(error);
+    const message = errorMessage(error);
     document.documentElement.dataset.mockError = message;
     window.parent.postMessage({ type: 'aside:mock:error', session: session.id, message }, location.origin);
     console.error('Mock scenario staging failed:', error);
@@ -123,8 +124,6 @@ async function stage(session: MockConfig): Promise<void> {
 
 async function recover(session: MockConfig): Promise<void> {
   stagingRevision++;
-  localStorage.setItem('aside.webToken', `mock:${session.id}`);
-  window.dispatchEvent(new StorageEvent('storage', { key: 'aside.webToken' }));
   window.dispatchEvent(new Event('focus'));
   // These are ordinary app retry controls. No application state is exported
   // or rewritten by the gallery, including during recovery demonstrations.
@@ -170,8 +169,6 @@ export async function bootstrap(config?: MockConfig): Promise<void> {
   for (const key of preferences) localStorage.removeItem(key);
   const defaults = { darkMode: String(session.theme === 'dark') };
   for (const [key, value] of Object.entries({ ...defaults, ...session.scenario.preferences })) localStorage.setItem(key, value);
-  if (session.scenario.faults?.auth === 'required') localStorage.removeItem('aside.webToken');
-  else localStorage.setItem('aside.webToken', `mock:${id}`);
   freezeClock(session.scenario.now);
 
   window.fetch = (input, init = {}) => {

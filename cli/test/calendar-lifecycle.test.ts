@@ -53,15 +53,15 @@ describe('Calendar instance lifecycle ownership', () => {
     const f = fixture(), forward = vi.spyOn(f.sync, 'syncActions').mockImplementation(async actions => actions.map(action => ({id: action.id, status: 'synced'})));
     const reverse = vi.spyOn(f.sync, 'reconcile').mockResolvedValue();
     await f.owner.reconcile(f.store); forward.mockClear();
-    f.write('new'); f.store.rebuild(); await f.owner.changed(f.store);
+    f.write('new'); f.store.rebuild(); await f.owner.reconcile(f.store);
     expect(forward.mock.calls.at(-1)![0].map(action => action.id)).toEqual(['new']);
-    f.write('existing', 'scheduled: 2026-06-01T11:00\ncalendar: Work'); f.store.rebuild(); await f.owner.changed(f.store);
+    f.write('existing', 'scheduled: 2026-06-01T11:00\ncalendar: Work'); f.store.rebuild(); await f.owner.reconcile(f.store);
     expect(forward.mock.calls.at(-1)![0][0].frontMatter.scheduled).toBe('2026-06-01T11:00');
-    f.write('existing', 'scheduled: 2026-06-01T11:00'); f.store.rebuild(); await f.owner.changed(f.store);
+    f.write('existing', 'scheduled: 2026-06-01T11:00'); f.store.rebuild(); await f.owner.reconcile(f.store);
     expect(forward.mock.calls.at(-1)![0].map(action => action.id)).toEqual(['existing']);
     expect(forward.mock.calls.at(-1)![0][0].frontMatter.calendar).toBeUndefined();
     writeFileSync(join(f.root, 'aside.md'), '---\nid: calendar-lifecycle\nname: Calendar lifecycle\nconfig:\n  scheduledEventTitlePrefix: "Next "\n---\n');
-    f.store.rebuild(); await f.owner.changed(f.store);
+    f.store.rebuild(); await f.owner.reconcile(f.store);
     expect(forward.mock.calls.at(-1)![0].map(action => action.id)).toEqual(['new']);
     expect(reverse).toHaveBeenCalledTimes(5);
   });
@@ -75,7 +75,7 @@ describe('Calendar instance lifecycle ownership', () => {
     expect(forward.mock.calls.every(call => call[0].length === 0)).toBe(true);
     f.write('new'); f.store.rebuild();
     forward.mockResolvedValueOnce([{id: 'new', status: 'error', reason: 'helper unavailable'}]);
-    await f.owner.changed(f.store);
+    await f.owner.reconcile(f.store);
     forward.mockResolvedValueOnce([{id: 'new', status: 'synced'}]);
     await f.owner.reconcile(f.store);
     expect(forward.mock.calls.at(-1)![0].map(action => action.id)).toEqual(['new']);
@@ -88,13 +88,13 @@ describe('Calendar instance lifecycle ownership', () => {
     const forward = vi.spyOn(f.sync, 'syncActions').mockRejectedValueOnce(new Error('unexpected local failure')).mockResolvedValue([]);
     const reverse = vi.spyOn(f.sync, 'reconcile').mockResolvedValue();
     f.write('new'); f.store.rebuild();
-    await expect(f.owner.changed(f.store)).rejects.toThrow('unexpected local failure');
+    await expect(f.owner.reconcile(f.store)).rejects.toThrow('unexpected local failure');
     await f.owner.reconcile(f.store);
     expect(forward.mock.calls.at(-1)![0].map(action => action.id)).toEqual(['new']);
     forward.mockImplementationOnce(async () => {f.owner.unregister(f.store); return [];});
     await f.owner.reconcile(f.store);
     expect(reverse).toHaveBeenCalledOnce();
-    await f.owner.changed(f.store);
+    await f.owner.reconcile(f.store);
     expect(forward).toHaveBeenCalledTimes(3);
   });
 
@@ -104,8 +104,8 @@ describe('Calendar instance lifecycle ownership', () => {
     const started = new Promise<void>(resolve => {entered = resolve;});
     const gate = new Promise<void>(resolve => {release = resolve;});
     const forward = vi.spyOn(f.sync, 'syncActions').mockImplementationOnce(async () => {entered(); await gate; return [];}).mockResolvedValue([]);
-    f.write('new'); f.store.rebuild(); const first = f.owner.changed(f.store); await started;
-    f.write('new', 'scheduled: 2026-06-01T12:00\ncalendar: Work'); f.store.rebuild(); const second = notify ? f.owner.changed(f.store) : Promise.resolve();
+    f.write('new'); f.store.rebuild(); const first = f.owner.reconcile(f.store); await started;
+    f.write('new', 'scheduled: 2026-06-01T12:00\ncalendar: Work'); f.store.rebuild(); const second = notify ? f.owner.reconcile(f.store) : Promise.resolve();
     release(); await Promise.all([first, second]);
     expect(forward).toHaveBeenCalledTimes(2);
     expect(forward.mock.calls[1][0][0].frontMatter.scheduled).toBe('2026-06-01T12:00');
@@ -118,7 +118,7 @@ describe('Calendar instance lifecycle ownership', () => {
     vi.spyOn(f.store, 'watch').mockImplementation(() => {});
     const lifecycle = new InstanceLifecycle({reconciliationIntervalMs: 0, debounceMs: 5});
     lifecycle.addFeature('calendar', {
-      load: store => f.owner.register(store, f.sync), changed: store => f.owner.changed(store),
+      load: store => f.owner.register(store, f.sync), changed: store => f.owner.reconcile(store),
       reconcile: store => f.owner.reconcile(store), unload: store => f.owner.unregister(store),
     });
     cleanups.push(() => lifecycle.close());
@@ -255,7 +255,7 @@ describe('Calendar instance lifecycle ownership', () => {
     expect(reads).not.toHaveBeenCalled();
     expect(upsert).not.toHaveBeenCalled(); expect(get).not.toHaveBeenCalled(); expect(remove).not.toHaveBeenCalled();
     reads.mockRestore();
-    await f.owner.changed(f.store);
+    await f.owner.reconcile(f.store);
     expect(remove).toHaveBeenCalledOnce();
     expect(f.sync.status('existing')).toEqual({id: 'existing', status: 'removed'});
   });

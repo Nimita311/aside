@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createDatePicker } from '../src/datepicker';
-import { addLatchMarker, mountLatch, resetLatchMarkers, updateLatchNow, REDUCED_MOTION } from '../src/latch';
+import { addLatchMarker, currentFlowDate, mountLatch, resetLatchMarkers, updateLatchNow, REDUCED_MOTION } from '../src/latch';
 
 let picker: ReturnType<typeof createDatePicker> | undefined;
 
@@ -11,7 +11,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-  picker?.close(); picker?.close(); picker = undefined;
+  picker?.dispose(); picker = undefined;
   resetLatchMarkers();
   delete document.documentElement.dataset.timelineLayout;
   document.body.replaceChildren();
@@ -23,13 +23,14 @@ function fixture() {
   const scroller = document.createElement('div'); scroller.id = 'flow-scroll';
   const flow = scroller.appendChild(document.createElement('div')); flow.id = 'flow';
   document.body.append(scroller);
-  mountLatch(flow, () => picker!.toggle());
+  mountLatch(flow);
   const latch = document.getElementById('date-latch')!;
   const chip = latch.querySelector<HTMLElement>('.date-latch-chip')!;
   chip.querySelector<HTMLElement>('.latch-date-row')!.style.paddingTop = '12.5px';
   const marker = flow.appendChild(document.createElement('div')); marker.dataset.date = '2026-10-03';
   addLatchMarker(marker); updateLatchNow();
-  picker = createDatePicker({ jumpToDate: vi.fn(), jumpNear: vi.fn(async () => true) });
+  picker = createDatePicker({ getCalendarContext: () => ({ key: 'timeline', current: currentFlowDate() }), jumpToDate: vi.fn() });
+  picker.mountInline(document.body.appendChild(document.createElement('div')));
   return { latch, chip, marker };
 }
 
@@ -43,14 +44,14 @@ function typeDate(value: string): void {
 }
 
 describe('date picker semantics', () => {
-  it('includes the configured date in the launcher name and follows date changes', () => {
+  it('includes the configured date in the readout name and follows date changes', () => {
     const f = fixture();
-    expect(f.chip.getAttribute('aria-label')).toBe('Jump to date: Oct 3, 2026');
+    expect(f.chip.getAttribute('aria-label')).toBe('Timeline date: Oct 3, 2026');
     f.marker.dataset.date = '2026-11-15'; updateLatchNow();
-    expect(f.chip.getAttribute('aria-label')).toBe('Jump to date: Nov 15, 2026');
+    expect(f.chip.getAttribute('aria-label')).toBe('Timeline date: Nov 15, 2026');
     resetLatchMarkers(); updateLatchNow();
     expect(f.latch.hidden).toBe(true);
-    expect(f.chip.getAttribute('aria-label')).toBe('Jump to date');
+    expect(f.chip.getAttribute('aria-label')).toBe('Timeline date');
   });
 
   it('keeps the standard readout position when a hidden timeline becomes visible', () => {
@@ -78,23 +79,11 @@ describe('date picker semantics', () => {
     expect(f.latch.dataset.date).toBe('2026-10-03');
     top = 12.5; updateLatchNow();
     expect(f.latch.dataset.date).toBe('2026-10-02');
-    expect(f.chip.title).toBe('Jump to date: Oct 2, 2026');
-  });
-
-  it('exposes whether the launcher is expanded and associates only the existing popover', () => {
-    const f = fixture();
-    expect(f.chip.getAttribute('aria-expanded')).toBe('false');
-    expect(f.chip.hasAttribute('aria-controls')).toBe(false);
-    picker!.toggle();
-    expect(f.chip.getAttribute('aria-expanded')).toBe('true');
-    expect(document.getElementById(f.chip.getAttribute('aria-controls')!)?.className).toBe('date-jump');
-    picker!.close();
-    expect(f.chip.getAttribute('aria-expanded')).toBe('false');
-    expect(f.chip.hasAttribute('aria-controls')).toBe(false);
+    expect(f.chip.getAttribute('aria-label')).toBe('Timeline date: Oct 2, 2026');
   });
 
   it('distinguishes today, the timeline date, and the date selected in the field', () => {
-    fixture(); picker!.toggle(); typeDate('2026-10-20');
+    fixture(); typeDate('2026-10-20');
     expect(day('2026-10-04').getAttribute('aria-current')).toBe('date');
     expect(day('2026-10-04').getAttribute('aria-label')).toBe('Oct 4, 2026');
     expect(day('2026-10-03').getAttribute('aria-label')).toBe('Oct 3, 2026, currently shown in timeline');
@@ -104,9 +93,9 @@ describe('date picker semantics', () => {
     expect(document.querySelector('.date-jump-cal')?.getAttribute('aria-label')).toBe('Oct 2026');
   });
 
-  it('combines coincident states and clears obsolete selected and timeline states after edits and scrolls', async () => {
-    const f = fixture(); picker!.toggle(); typeDate('2026-10-04');
-    f.latch.dataset.date = '2026-10-04'; await vi.advanceTimersByTimeAsync(0);
+  it('combines coincident states and clears obsolete selected and timeline states after edits and scrolls', () => {
+    const f = fixture(); typeDate('2026-10-04');
+    f.latch.dataset.date = '2026-10-04'; picker!.refresh();
     expect(day('2026-10-04').getAttribute('aria-label')).toBe('Oct 4, 2026, selected, currently shown in timeline');
     expect(day('2026-10-04').getAttribute('aria-current')).toBe('date');
     expect(day('2026-10-03').getAttribute('aria-label')).toBe('Oct 3, 2026');
@@ -115,7 +104,7 @@ describe('date picker semantics', () => {
   });
 
   it('moves the programmatic today marker at midnight while retaining the other date states', () => {
-    fixture(); picker!.toggle(); typeDate('2026-10-04');
+    fixture(); typeDate('2026-10-04');
     vi.setSystemTime(new Date('2026-10-05T00:01:00')); picker!.refresh();
     expect(day('2026-10-04').hasAttribute('aria-current')).toBe(false);
     expect(day('2026-10-04').getAttribute('aria-label')).toBe('Oct 4, 2026, selected');

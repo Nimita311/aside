@@ -1,7 +1,7 @@
 import { toKebabCase } from './slug.js';
 import { isCalendarDate } from './scheduling.js';
 import type { Artifact } from './types.js';
-import { markdownReferenceText } from './markdown.js';
+import { markdownReferenceText, unescapeMarkdown } from './markdown.js';
 
 export interface ArtifactReference {
   id: string;
@@ -49,7 +49,7 @@ export function parseArtifactHandle(target: string): ArtifactReference | undefin
   const rest = target.slice('#artifact/'.length);
   const slash = rest.indexOf('/');
   const decode = (s: string) => {
-    try { return decodeURIComponent(s.replace(/\\([!"#$%&'()*+,\-./:;<=>?@[\\\]^_`{|}~])/g, '$1')); }
+    try { return decodeURIComponent(unescapeMarkdown(s)); }
     catch { return s; }
   };
   return slash < 0

@@ -14,6 +14,7 @@ import {parseArtifactFile} from '../core/parser.js';
 import {assertManagedPath, readManagedText} from '../core/managed-path.js';
 import {serializeArtifact} from './serialize.js';
 import {persistMutationWrite} from './mutation-result.js';
+import {errorMessage} from '../core/error.js';
 
 export interface ArtifactImport {
   source: string;
@@ -63,7 +64,7 @@ function resolveImports(store: Store, id: string, files: ArtifactImport[], creat
       if (!fstatSync(fd).isFile()) throw new Error('expected a regular file');
       return { source: file.source, filename, destination };
     } catch (err) {
-      throw new Error(`Cannot import "${file.source}": ${err instanceof Error ? err.message : String(err)}`);
+      throw new Error(`Cannot import "${file.source}": ${errorMessage(err)}`);
     } finally {
       if (fd !== undefined) closeSync(fd);
     }

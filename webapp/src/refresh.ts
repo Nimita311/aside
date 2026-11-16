@@ -2,7 +2,8 @@
 // and when to land what a check found. The store knows how to check
 // (StoreView.check()); this module owns the policy: a light check on tab
 // focus and on a timer while visible, a full sweep every few checks, and a
-// staged update applied only once the app is quiet. See "Catch-up" in spec.md.
+// staged update applied only once the app is quiet.
+// Consistency constraints: design/runtime.md#data-ownership.
 import type { CheckScope, PendingUpdate } from '../../cli/src/core/data-snapshot';
 
 export interface RefreshHooks {

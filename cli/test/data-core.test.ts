@@ -1,4 +1,3 @@
-import { WebAuth } from '../src/web/auth.js';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { mkdtempSync, realpathSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import crypto from 'node:crypto';
@@ -22,12 +21,10 @@ describe('daemon core data API', () => {
     writeFileSync(file, '---\nname: Original\ncreated: 2026-10-04T10:00\n---\nOriginal body');
     writeFileSync(join(dir, 'actions', '2026', 'index.yaml'), '- id: 2026-10-04-task\n  description: Task');
     const store = new Store(dir);
-    const auth = new WebAuth(join(dir, 'auth')), credential = auth.issue();
-    const fetch = (url: string, init: RequestInit = {}) => globalThis.fetch(url, { ...init, headers: { ...init.headers, Authorization: `Bearer ${credential.token}` } });
     server = await AsideWebServer.start(dir, {
       instances: () => availableInstances([dir]), register: async () => null, remove: () => {}, load: () => {},
       data: async (path, refresh) => { expect(path).toBe(dir); if (refresh) store.rebuild(); return store.snapshot(); },
-    }, 0, { auth, stateDirectory: join(dir, 'auth') });
+    }, 0);
     const url = `http://127.0.0.1:${server!.port}/-/api/instances/core-test/data`;
     const clone = vi.spyOn(globalThis, 'structuredClone');
     const hash = vi.spyOn(crypto, 'createHash');
@@ -81,7 +78,7 @@ describe('daemon core data API', () => {
     expect(new Map(recovered.actions).get('2026-10-04-task')!.body).toBe('Repaired body');
     expect(recovered.searchProgress.complete).toBe(false);
     expect((await fetch(url.replace('core-test', 'other'))).status).toBe(404);
-    expect((await fetch(url, { method: 'POST', headers: { 'X-Aside-Control': '1' } })).status).toBe(405);
+    expect((await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' } })).status).toBe(405);
     store.close();
   });
 });

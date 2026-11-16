@@ -1,7 +1,7 @@
 import type { ActionFrontMatter } from '../../core/types.js';
 import type { CalCalendar, CalErrorCode } from './protocol.js';
 
-export function calendarAccount(calendar: CalCalendar): string {
+function calendarAccount(calendar: CalCalendar): string {
   return calendar.account || 'local';
 }
 

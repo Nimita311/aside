@@ -42,7 +42,7 @@ describe('bootstrap catalogue publication', () => {
     const host = new InstanceHost(new CalClient(null)); cleanup.push(() => host.close());
     host.configureSources({debounceMs: 60_000, reconciliationIntervalMs: 0});
     init(root, {name: 'Previous', description: 'Old metadata'});
-    host.load(root); host.unload(root);
+    host.unloadKey(host.load(root).key);
     expect(host.metadata(root).value.manifest.name).toBe('Previous');
     rmSync(root, {recursive: true}); mkdirSync(root);
 

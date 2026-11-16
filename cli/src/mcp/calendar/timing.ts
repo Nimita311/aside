@@ -1,4 +1,5 @@
-import { isSchedulingDate, scheduleInstant, schedulingIssues, wallTimeAt } from '../../core/scheduling.js';
+import { isRepeatedSchedule, isSchedulingDate, scheduleInstant, schedulingIssues, wallTimeAt } from '../../core/scheduling.js';
+import type { ActionFrontMatter } from '../../core/types.js';
 import type { CalEvent } from './protocol.js';
 import type { CalendarDiagnostic } from './diagnostics.js';
 
@@ -22,10 +23,8 @@ export function eventTimingDiagnostic(event: CalEvent): CalendarDiagnostic | und
     if (event.endInstant < event.startInstant) reason = 'Calendar all-day event ends before it starts.';
   } else {
     const zone = event.timezone ?? undefined;
-    const invalid = schedulingIssues({ scheduled: event.start, timezone: zone });
     const elapsed = (event.endInstant - event.startInstant) / 60000;
-    if (invalid.length) reason = invalid.join(' ');
-    else if (wallTimeAt(event.startInstant, zone) !== event.start) {
+    if (wallTimeAt(event.startInstant, zone) !== event.start) {
       reason = 'Calendar start wall time disagrees with its actual instant and timezone.';
     } else if (scheduleInstant(event.start, zone) !== event.startInstant) {
       reason = `scheduled: calendar start ${event.start} (${zone ?? 'floating'}) cannot be represented faithfully: it is a later occurrence of a repeated hour or has sub-minute precision.`;
@@ -39,6 +38,19 @@ export function eventTimingDiagnostic(event: CalEvent): CalendarDiagnostic | und
     category: 'event-time-unrepresentable', reason,
     recovery: 'Sync is blocked for this action in both directions; its record and calendar event are preserved. Correct the Calendar event to a first-occurrence whole-minute time, or explicitly change scheduled/timezone to an unambiguous start through updateAction (UTC can express a repeated-hour instant). Name, notes, and duration-only edits do not unblock it. If timing metadata is missing, rebuild the calendar helper and restart the daemon, then check Instance.calendarSync through query.',
   } : undefined;
+}
+
+// What defines an action's start: its wall time, and its zone when timed.
+export function startDefinition(fm: ActionFrontMatter): string {
+  return JSON.stringify([fm.scheduled ?? null, fm.scheduled?.includes('T') ? fm.timezone ?? null : null]);
+}
+
+// Only a deliberate new start that is valid and unambiguous lifts a timing
+// block; `blocked` is the start definition recorded when the block began.
+export function isExplicitReschedule(blocked: string, fm: ActionFrontMatter): boolean {
+  return blocked !== startDefinition(fm) && !!fm.scheduled && !!fm.calendar && fm.resolution !== 'cancelled' &&
+    schedulingIssues(fm).length === 0 && scheduleInstant(fm.scheduled, fm.timezone) !== undefined &&
+    !isRepeatedSchedule(fm.scheduled, fm.timezone);
 }
 
 // Explicit rescheduling can replace a real, precisely reported event time; it

@@ -1,8 +1,8 @@
 import { assertRecurrence, CompiledRecurrence, occurrenceKey, projectedAction, type OccurrenceIdentity } from '../../core/recurrence.js';
-import { isRepeatedSchedule, scheduleInstant, schedulingIssues, wallTimeAt } from '../../core/scheduling.js';
+import { scheduleInstant, wallTimeAt } from '../../core/scheduling.js';
 import { handleUpdateOccurrence } from '../tools/recurrence.js';
 import { nativeSeries, type NativeSeries } from './recurrence-rule.js';
-import { canReplaceEventTime, eventTimingDiagnostic } from './timing.js';
+import { canReplaceEventTime, eventTimingDiagnostic, isExplicitReschedule, startDefinition } from './timing.js';
 import { actionLocationIssues, sameCalendarLocation } from './location.js';
 import { RecurrenceMirror, type FamilyMirror } from './recurrence-state.js';
 import { parseMarker, buildMarker } from './markers.js';
@@ -22,9 +22,17 @@ function normalizeRule(rule: NativeRecurrenceRule, anchor: string): string {
   return JSON.stringify(Object.entries(value).sort(([a],[b]) => a.localeCompare(b)).map(([k,v]) => [k, Array.isArray(v) ? [...v].sort((a,b) => JSON.stringify(a).localeCompare(JSON.stringify(b))) : v]));
 }
 interface Observed { event: CalEvent; identity: OccurrenceIdentity; source?: string }
-function startDefinition(action: Action): string {
-  const fm = action.frontMatter;
-  return JSON.stringify([fm.scheduled ?? null, fm.scheduled?.includes('T') ? fm.timezone ?? null : null]);
+// The saved exceptions of one template, in the published generation's order.
+function savedOccurrences(store: Store, template: string): [string, Action][] {
+  return [...store.getActions()].filter(([, action]) => action.frontMatter.occurrence?.template === template);
+}
+function hasRecurrenceError(store: Store, id: string): boolean {
+  return store.getRecordIssues('action', id).some(issue => issue.severity === 'error' && /recurrence|occurrence/.test(issue.code));
+}
+// A family's stored series items: the heads when the provider marks any,
+// otherwise every non-detached item.
+function seriesRoots(events: CalEvent[]): CalEvent[] {
+  return events.filter(e => !e.detached && (e.seriesHead || !events.some(v => v.seriesHead)));
 }
 function eventOccurrence(rule: CompiledRecurrence, template: string, event: CalEvent) {
   const original = event.originalInstant !== undefined ? rule.schedule.timezone ? new Date(event.originalInstant).toISOString().replace('.000Z','Z') : rule.allDay ? event.originalLocal?.slice(0,10) : event.originalLocal : undefined;
@@ -117,7 +125,7 @@ export class RecurrenceCalSync {
   private async prune(mirror: RecurrenceMirror, base: string, guard: () => void): Promise<void> {
     const previous = mirror.families.get(base)!;
     const events = await this.fetch(base, previous, guard);
-    const roots = events.filter(e => !e.detached && (e.seriesHead || !events.some(v => v.seriesHead)));
+    const roots = seriesRoots(events);
     for (const event of roots.sort((a,b) => a.startInstant - b.startInstant)) { guard(); await this.cal.deleteSeries({ eventId: event.id, marker: base }); guard(); }
     // A wholly detached family can outlive its root; removing every stored item
     // is safe because native writes re-fetch and re-check marker ownership.
@@ -189,14 +197,14 @@ export class RecurrenceCalSync {
     for (const [templateId, template] of store.getActions()) if (template.frontMatter.recurrence) {
       try {
         const schedules = assertRecurrence(template.frontMatter.recurrence);
-        const saved = [...store.getActions()].filter(([,a]) => a.frontMatter.occurrence?.template === templateId);
+        const saved = savedOccurrences(store, templateId);
         for (const action of [template, ...saved.map(([,action]) => action)]) {
           const invalid = actionLocationIssues(action.frontMatter.location);
           if (invalid.length) throw new Error(invalid.join(' '));
         }
         const sourceGuard = store.captureActionSourceGuard(templateId, template);
         const templateGuard = () => { guard(); if (!sourceGuard()) throw new Error('Template changed during Calendar reconciliation; retry with its current definition.'); };
-        if (store.getRecordIssues('action', templateId).some(issue => issue.severity === 'error' && /recurrence|occurrence/.test(issue.code))) throw new Error('Recurrence definition is malformed or rewrites history.');
+        if (hasRecurrenceError(store, templateId)) throw new Error('Recurrence definition is malformed or rewrites history.');
         store.assertRecurrenceChange(templateId, schedules);
         // Only a recorded prior ordinary event or schedule needs a handoff. Fresh
         // templates do not require a date-window discovery sweep.
@@ -235,7 +243,7 @@ export class RecurrenceCalSync {
         }
         for (const family of families) await this.syncFamily(store, instance, templateId, template, family, saved, calendars, prefixes, templateGuard, reverse, mirror);
         results.push(translationErrors.length ? { id: templateId, status: 'error', reason: translationErrors.join(' ') } : { id: templateId, status: 'synced' });
-        for (const [id, action] of store.getActions()) if (action.frontMatter.occurrence?.template === templateId && isNativeOccurrence(store, action)) {
+        for (const [id, action] of savedOccurrences(store, templateId)) if (isNativeOccurrence(store, action)) {
           results.push({ id, status: !action.frontMatter.scheduled || action.frontMatter.resolution === 'cancelled' || !action.frontMatter.calendar ? 'deleted' : 'synced' });
           const native = mirror.pendingNative.delete(id), ordinary = mirror.pendingOrdinary.delete(id);
           if (native || ordinary) mirror.save();
@@ -258,7 +266,7 @@ export class RecurrenceCalSync {
       if (!sourceGuard()) throw new Error('Template changed during Calendar reconciliation; retry with its current definition.');
       for (const current of exceptionSources.values()) if (!current()) throw new Error('Occurrence changed during Calendar reconciliation; retry with its current state.');
     };
-    const refreshExceptionSources = () => { for (const [id, action] of store.getActions()) if (action.frontMatter.occurrence?.template === templateId) exceptionSources.set(id, store.captureActionSourceGuard(id, action)); };
+    const refreshExceptionSources = () => { for (const [id, action] of savedOccurrences(store, templateId)) exceptionSources.set(id, store.captureActionSourceGuard(id, action)); };
     const base = marker(instance, templateId, family.key), rule = new CompiledRecurrence(family.schedule);
     const version = JSON.stringify(template), previous = mirror.families.get(base), stable = previous?.definition === version;
     const snapshot: FamilyMirror = previous ? structuredClone(previous) : { template: templateId, family, observed: [] };
@@ -284,7 +292,7 @@ export class RecurrenceCalSync {
     const events = new Map<string, CalEvent>();
     for (const event of await this.fetch(base, snapshot, guard)) events.set(`${event.id}:${event.original ?? event.start}`, event);
     const canonical = normalizeRule(family.rule, family.schedule.dtstart);
-    const masters = [...events.values()].filter(e => !e.detached && e.seriesRule && (e.seriesHead || ![...events.values()].some(v => v.seriesHead)));
+    const masters = seriesRoots([...events.values()]).filter(e => e.seriesRule);
     const desired = desiredFromAction({ id: templateId, frontMatter: { ...template.frontMatter, scheduled: family.schedule.dtstart, timezone: family.schedule.timezone, recurrence: undefined }, body: template.body }, instance, prefixes);
     if (!desired.have) return;
     const nativeMatches = masters.every(e => normalizeRule(e.seriesRule!, family.schedule.dtstart) === canonical);
@@ -304,10 +312,8 @@ export class RecurrenceCalSync {
       const action = existing?.[1] ?? projectedAction(template, occurrence.identity, occurrence.scheduled);
       const timing = eventTimingDiagnostic(event);
       if (timing) {
-        if (!this.timeBlocked.has(key)) this.timeBlocked.set(key, startDefinition(action));
-        const fm = action.frontMatter;
-        const explicit = existing && this.timeBlocked.get(key) !== startDefinition(action) && fm.scheduled && fm.calendar && fm.resolution !== 'cancelled' &&
-          schedulingIssues(fm).length === 0 && scheduleInstant(fm.scheduled, fm.timezone) !== undefined && !isRepeatedSchedule(fm.scheduled, fm.timezone);
+        if (!this.timeBlocked.has(key)) this.timeBlocked.set(key, startDefinition(action.frontMatter));
+        const explicit = existing && isExplicitReschedule(this.timeBlocked.get(key)!, action.frontMatter);
         if (!explicit || !canReplaceEventTime(event)) throw new Error(timing.reason);
         replaceTime.add(key);
         continue;
@@ -358,23 +364,23 @@ export class RecurrenceCalSync {
       const fallback = desiredFromAction({ id, frontMatter: projectedAction(template, provenance, wall).frontMatter, body: action.body }, instance, prefixes);
       if (!fallback.have) continue;
       const target = actual.have ? actual.up : fallback.up;
-      const observed = current.get(occurrenceKey(provenance))?.event;
-      if (!actual.have && !observed) { current.delete(occurrenceKey(provenance)); continue; }
+      const key = occurrenceKey(provenance), observed = current.get(key)?.event;
+      if (!actual.have && !observed) { current.delete(key); continue; }
       const url = base + (actual.have && action.frontMatter.resolution === 'done' ? '/done' : '');
       if (actual.have && observed && observed.url === url && observed.title === target.title && observed.calendar === target.calendar && (!target.calendar_account || observed.calendar_account === target.calendar_account) && observed.start === target.start && !!observed.allDay === !!target.allDay && observed.timezone === (target.timezone ?? null) && (target.allDay || observed.durationMinutes === target.durationMinutes) && sameCalendarLocation(target.location, observed.location)) continue;
-      guard(); const exported = await this.cal.upsertOccurrence({ ...target, marker: base + (actual.have && action.frontMatter.resolution === 'done' ? '/done' : ''), original: provenance.original, originalTimezone: provenance.timezone, originalAllDay: provenance.original.length === 10, anchor: family.schedule.dtstart, eventId: observed?.id, remove: !actual.have, ...(replaceTime.has(occurrenceKey(provenance)) && { allowTimeReplacement: true }), notes: `Aside occurrence: ${provenance.original}\n${target.notes ?? ''}` }); guard();
-      if (!actual.have) current.delete(occurrenceKey(provenance));
+      guard(); const exported = await this.cal.upsertOccurrence({ ...target, marker: url, original: provenance.original, originalTimezone: provenance.timezone, originalAllDay: provenance.original.length === 10, anchor: family.schedule.dtstart, eventId: observed?.id, remove: !actual.have, ...(replaceTime.has(key) && { allowTimeReplacement: true }), notes: `Aside occurrence: ${provenance.original}\n${target.notes ?? ''}` }); guard();
+      if (!actual.have) current.delete(key);
       else {
         const startInstant = scheduleInstant(target.start, target.timezone)!;
         let effective: CalEvent = { id: exported.eventId, url, title: target.title, calendar: target.calendar, calendar_account: target.calendar_account, start: target.start, end: target.end, allDay: target.allDay, timezone: target.timezone ?? null, startInstant, endInstant: startInstant + (target.durationMinutes ?? 0) * 60000, durationMinutes: target.durationMinutes, location: target.location ?? null, original: provenance.original, detached: true, recurring: true, seriesRule: family.rule };
         if (!target.timezone && !target.allDay) {
           // Retain the returned native identifier before confirmation so a
           // failed read still locates an exception moved far from its origin.
-          current.set(occurrenceKey(provenance), { identity: provenance, event: effective });
-          snapshot.observed = [...current.values()].map(value => ({ ...value, source: occurrenceKey(value.identity) === occurrenceKey(provenance) ? undefined : witnessed.get(occurrenceKey(value.identity))?.source }));
+          current.set(key, { identity: provenance, event: effective });
+          snapshot.observed = [...current.values()].map(value => ({ ...value, source: occurrenceKey(value.identity) === key ? undefined : witnessed.get(occurrenceKey(value.identity))?.source }));
           mirror.families.set(base, snapshot); mirror.save();
           const confirmation = await this.cal.getEvents({ eventIds: [exported.eventId] }); guard();
-          const actual = confirmation.events.find(event => event.id === exported.eventId && event.url === url && occurrenceKey(eventOccurrence(rule, templateId, event)?.identity ?? { template: '', original: '' }) === occurrenceKey(provenance));
+          const actual = confirmation.events.find(event => event.id === exported.eventId && event.url === url && occurrenceKey(eventOccurrence(rule, templateId, event)?.identity ?? { template: '', original: '' }) === key);
           if (!actual) throw new Error('Calendar occurrence was saved but readback did not confirm its identity; retry its current definition.');
           const timing = eventTimingDiagnostic(actual);
           if (timing) throw new Error(timing.reason);
@@ -382,15 +388,15 @@ export class RecurrenceCalSync {
           if (actual.start !== target.start) { this.updateOccurrence(store, { template: templateId, original: provenance.original, scheduled: actual.start }); refreshExceptionSources(); }
           effective = actual;
         }
-        current.set(occurrenceKey(provenance), { identity: provenance, event: effective });
-        this.timeBlocked.delete(occurrenceKey(provenance));
+        current.set(key, { identity: provenance, event: effective });
+        this.timeBlocked.delete(key);
       }
     }
     // A Calendar-only venue edit can detach an occurrence without any timing
     // gesture to materialize locally. Restore its projected venue directly,
     // retaining the observed event clock until ordinary reverse sync imports it.
-    const storedKeys = new Set([...store.getActions().values()].filter(action => action.frontMatter.occurrence?.template === templateId)
-      .map(action => occurrenceKey(action.frontMatter.occurrence!)));
+    const storedKeys = new Set(savedOccurrences(store, templateId)
+      .map(([, action]) => occurrenceKey(action.frontMatter.occurrence!)));
     for (const [key, value] of current) {
       const event = value.event;
       if (!event.id || !event.detached || storedKeys.has(key)) continue;
@@ -409,7 +415,7 @@ export class RecurrenceCalSync {
       guard();
       current.set(key, {...value, event: {...event, id: exported.eventId, location: projected.up.location ?? null}});
     }
-    const sources = new Map([...store.getActions().values()].filter(action => action.frontMatter.occurrence?.template === templateId).map(action => [occurrenceKey(action.frontMatter.occurrence!), JSON.stringify(action)]));
+    const sources = new Map(savedOccurrences(store, templateId).map(([, action]) => [occurrenceKey(action.frontMatter.occurrence!), JSON.stringify(action)]));
     snapshot.observed = [...current.values()].map(value => ({ ...value, source: sources.get(occurrenceKey(value.identity)) })); snapshot.definition = version;
     mirror.families.set(base, snapshot); mirror.save();
   }
@@ -421,8 +427,8 @@ export function isNativeOccurrence(store: Store | undefined, action: { frontMatt
   const template = store.getAction(identity.template);
   // Malformed references and history edits must not fall through to ordinary
   // export, which would duplicate or replace a preserved native exception.
-  if (!template?.frontMatter.recurrence || store.getRecordIssues('action', identity.template).some(issue => issue.severity === 'error' && /recurrence|occurrence/.test(issue.code))) return true;
+  if (!template?.frontMatter.recurrence || hasRecurrenceError(store, identity.template)) return true;
   try { assertRecurrence(template.frontMatter.recurrence); } catch { return true; }
   if (!template.frontMatter.calendar) return false;
-  try { return store.getAction(identity.template)?.frontMatter.recurrence?.some(schedule => new CompiledRecurrence(schedule).contains(identity.template, identity.original) && nativeSeries(schedule).length > 0) ?? false; } catch { return false; }
+  try { return template.frontMatter.recurrence.some(schedule => new CompiledRecurrence(schedule).contains(identity.template, identity.original) && nativeSeries(schedule).length > 0); } catch { return false; }
 }

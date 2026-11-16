@@ -98,13 +98,14 @@ export class AutomationController {
   }
   private fail(error: string): void {
     this.failure = error;
-    for (const request of this.pending.values()) { clearTimeout(request.timer); request.reject(new Error(error)); }
-    this.pending.clear();
-    for (const request of this.dispatches.values()) {clearTimeout(request.timer); request.reject(new Error(error));}
-    this.dispatches.clear();
-    for (const request of this.maintenance.values()) {clearTimeout(request.timer); request.reject(new Error(error));}
-    this.maintenance.clear();
+    for (const waiters of [this.pending, this.dispatches, this.maintenance]) {
+      for (const request of waiters.values()) { clearTimeout(request.timer); request.reject(new Error(error)); }
+      waiters.clear();
+    }
   }
+  // Retained history is read fresh from disk: it survives a stopped or failed worker.
+  private retained(root: string) { return new RunStorage(this.storage).history().filter(run => run.root === root); }
+  private unavailable(root: string, warning: string): AutomationInspection { return { available: false, jobs: [], runs: this.retained(root), warning }; }
   cleanup(): Promise<{runs: number}> { return this.maintain('cleanup'); }
   purge(root?: string): Promise<{runs: number}> { return this.maintain('purge', root); }
   private async maintain(operation: 'cleanup' | 'purge', root?: string): Promise<{runs: number}> {
@@ -134,10 +135,10 @@ export class AutomationController {
     // failed scheduler can still provide retained history from disk.
     if (this.failure) {
       if (root === undefined) return Promise.reject(new Error(this.failure));
-      return Promise.resolve({ available: false, jobs: [], runs: new RunStorage(this.storage).history().filter(run => run.root === root), warning: this.failure });
+      return Promise.resolve(this.unavailable(root, this.failure));
     }
     if (root === undefined && !this.worker && existsSync(this.storage)) this.start();
-    if (!this.worker) return Promise.resolve({ available: true, jobs: [], runs: root === undefined ? [] : new RunStorage(this.storage).history().filter(run => run.root === root) });
+    if (!this.worker) return Promise.resolve({ available: true, jobs: [], runs: root === undefined ? [] : this.retained(root) });
     const id = ++this.sequence;
     return new Promise<AutomationInspection>((resolve, reject) => {
       const timer = setTimeout(() => { this.pending.delete(id); reject(new Error('Automation worker did not answer within 5 seconds.')); }, AUTOMATION_WORKER_TIMEOUT_MS);
@@ -150,7 +151,7 @@ export class AutomationController {
       this.worker!.postMessage({ type: 'inspect', id, ...(root === undefined ? {} : { root }) });
     }).catch(error => {
       if (root === undefined) throw error;
-      return { available: false, jobs: [], runs: new RunStorage(this.storage).history().filter(run => run.root === root), warning: (error as Error).message };
+      return this.unavailable(root, (error as Error).message);
     });
   }
   close(): Promise<void> {

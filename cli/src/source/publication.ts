@@ -1,3 +1,7 @@
+// Values whose state lives in internal slots rather than enumerable keys.
+const nativeValue = (value: object): boolean => value instanceof Date || ArrayBuffer.isView(value)
+  || value instanceof ArrayBuffer || value instanceof SharedArrayBuffer || value instanceof RegExp;
+
 // Native mutable values need their internal slots preserved. Binary copies use
 // dedicated buffers: pooled Buffer backing stores could otherwise alias a
 // private template when a caller writes beyond the returned slice.
@@ -19,7 +23,7 @@ function detached(value: any, seen = new WeakMap<object, any>()): any {
   seen.set(value, result);
   if (value instanceof Map) for (const [key, item] of value) result.set(detached(key, seen), detached(item, seen));
   else if (value instanceof Set) for (const item of value) result.add(detached(item, seen));
-  else if (!(value instanceof Date || ArrayBuffer.isView(value) || value instanceof ArrayBuffer || value instanceof SharedArrayBuffer || value instanceof RegExp))
+  else if (!nativeValue(value))
     for (const key of Object.keys(value)) Object.defineProperty(result, key, {
       value: detached(value[key], seen), enumerable: true, writable: true, configurable: true,
     });
@@ -49,8 +53,7 @@ function publication<T>(source: T, protectedCollections?: ReadonlySet<object>): 
     if (value === null || typeof value !== 'object') return value;
     const saved = copies.get(value);
     if (saved) return saved;
-    if (value instanceof Date || ArrayBuffer.isView(value) || value instanceof ArrayBuffer
-      || value instanceof SharedArrayBuffer || value instanceof RegExp
+    if (nativeValue(value)
       || protectedCollections && !protectedCollections.has(value) && (value instanceof Map || value instanceof Set)) {
       const template = detached(value), slot = Object.freeze({});
       copies.set(value, slot); defensive.set(slot, () => detached(template));

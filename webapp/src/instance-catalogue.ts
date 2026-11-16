@@ -9,13 +9,21 @@ export function instanceGroup(instance: AvailableInstance): string {
   return JSON.stringify([instance.id, instance.worktree?.commonDir, instance.worktree?.primaryPath ?? instance.path]);
 }
 
+export const hasDuplicateId = (instance: AvailableInstance): boolean => !!instance.duplicatePaths?.length;
+
+// One line of an instance row: its checkout, description or error.
+export function instanceLine(className: string, text: string): HTMLElement {
+  const span = document.createElement('span'); span.className = className; span.textContent = text;
+  return span;
+}
+
 export function catalogueRows(instances: AvailableInstance[]) {
   const families = new Map<string, AvailableInstance[]>();
   for (const instance of instances) {
     const key = instanceGroup(instance), group = families.get(key) ?? [];
     group.push(instance); families.set(key, group);
   }
-  return [...families.values()].sort((a, b) => Number(!!a[0].duplicatePaths?.length) - Number(!!b[0].duplicatePaths?.length))
+  return [...families.values()].sort((a, b) => Number(hasDuplicateId(a[0])) - Number(hasDuplicateId(b[0])))
     .flatMap(group => {
       // Path order keeps an orphan group's representative stable across edits
       // and discovery order changes. It remains a worktree for calendar policy.
@@ -35,11 +43,11 @@ export function instanceIdentity(instance: AvailableInstance, instances: Availab
   const label = document.createElement('strong');
   label.textContent = compact ? instance.worktree!.label : instance.name || instance.id || 'Unavailable instance';
   text.append(label);
-  const detail = (value: string) => { const span = document.createElement('span'); span.className = 'instance-checkout'; span.textContent = value; text.append(span); };
+  const detail = (value: string) => text.append(instanceLine('instance-checkout', value));
   if (!compact && instance.worktree) detail(instance.worktree.label);
   const ambiguousName = instances.some(other => other.path !== instance.path && (other.name || other.id) === (instance.name || instance.id) && instanceGroup(other) !== instanceGroup(instance));
   const ambiguousBranch = compact && instances.some(other => other.path !== instance.path && instanceGroup(other) === instanceGroup(instance) && other.worktree?.label === instance.worktree?.label);
-  if ((!compact && (instance.duplicatePaths?.length || ambiguousName || instance.error)) || ambiguousBranch) detail(instance.path);
+  if ((!compact && (hasDuplicateId(instance) || ambiguousName || instance.error)) || ambiguousBranch) detail(instance.path);
   return identity;
 }
 
@@ -50,7 +58,7 @@ export function duplicateTooltip(instance: AvailableInstance, instances: Availab
 }
 
 export function calendarTooltip(instance: AvailableInstance): string | undefined {
-  return instance.worktree?.linked ? 'Calendar sync is disabled for Git worktrees.' : instance.calendarWarning || (instance.duplicatePaths?.length ? 'Calendar sync is paused because another instance uses this ID.' : undefined);
+  return instance.worktree?.linked ? 'Calendar sync is disabled for Git worktrees.' : instance.calendarWarning || (hasDuplicateId(instance) ? 'Calendar sync is paused because another instance uses this ID.' : undefined);
 }
 
 export function setInstanceTooltip(control: HTMLElement, text: string): void {

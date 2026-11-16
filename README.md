@@ -80,18 +80,4 @@ geocoding, system events, and desktop dialogs.
 
    > Set me up with Aside and show me what it can do.
 
-## Optional semantic search
-
-Run [Ollama](https://ollama.com) locally and install the embedding model:
-
-```sh
-ollama pull qwen3-embedding:0.6b
-```
-
-Agents use per-entity `where.regex` filters for patterns and
-`search(rankBy: {semantic: ...})` for natural-language ranking across entities.
-The web app offers explicit search modes too. Semantic
-search builds a disposable local LanceDB index; Markdown remains authoritative.
-See [setup and behavior](design/semantic-search.md).
-
 *Let AI be useful; make your life beautiful.*

@@ -1,4 +1,4 @@
-// Where the daemon keeps its files (see design/daemon.md, Files). On macOS the
+// Daemon paths: reference/configuration.md#storage-and-retention. On macOS the
 // socket, locks, and known-instances list live in Application Support and the
 // log in Logs; elsewhere they follow the XDG state directory. ASIDE_DAEMON_HOME
 // relocates everything under one directory (tests, isolated runs).

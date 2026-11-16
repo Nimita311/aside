@@ -3,7 +3,6 @@ import { artifactHandle, artifactAttachmentRelativePath, assertArtifactId, asser
 import type {AttachmentFile} from '../core/attachment-metadata.js';
 import {attachmentFiles} from '../mcp/attachments.js';
 import { extractContentReferences, type ContentReference } from '../core/content-reference.js';
-import { entityFilePath, weekFilePath } from '../core/record-reference.js';
 import type { ParseIssue } from '../core/types.js';
 import type { Kind, RecordNode } from './query.js';
 
@@ -29,10 +28,8 @@ export interface ReferenceGraph {
   page(source: ReferenceTarget | string, direction: 'links' | 'attachmentLinks' | 'backlinks', offset?: number, limit?: number): ReferencePage;
 }
 
-export function referenceFilePath(root: string, node: RecordNode): string | null {
-  if (node.projected) return null;
-  const existing = (node as RecordNode & { filePath?: string | null }).filePath;
-  return existing === undefined ? join(root, node.kind === 'entry' ? weekFilePath(node.record.weekFile) : entityFilePath(node.kind, node.id)) : existing;
+export function referenceFilePath(node: RecordNode): string | null {
+  return node.projected ? null : node.filePath;
 }
 
 // The source owner supplies record content, attachment observations and root
@@ -65,11 +62,11 @@ export function buildReferenceGraph(root: string, records: ReferenceRecords, opt
   for (const kind of Object.keys(records) as Kind[]) for (const node of records[kind].values()) {
     check();
     targets.set(node.handle, node);
-    const filePath = referenceFilePath(root, node);
+    const filePath = referenceFilePath(node);
     if (filePath !== null) targetPaths.set(node.handle, relative(resolve(root), resolve(filePath)).split('\\').join('/'));
     const body = kind === 'entry' ? node.record.content : node.record.body;
     const template = node.projected ? records.action.get(node.record.frontMatter.occurrence?.template) : undefined;
-    const sourcePath = filePath ?? (template && referenceFilePath(root, template)) ?? join(root, 'actions');
+    const sourcePath = filePath ?? (template && referenceFilePath(template)) ?? join(root, 'actions');
     sources.push({ node, markdown: body, filePath: sourcePath, baseFile: relative(root, sourcePath).split('\\').join('/'), projected: node.projected });
   }
   for (const artifact of records.artifact.values()) {
@@ -80,11 +77,11 @@ export function buildReferenceGraph(root: string, records: ReferenceRecords, opt
       let handle: string;
       try { handle = artifactHandle(artifact.id, filename); }
       catch (error) {
-        report(referenceFilePath(root, artifact)!, `Artifact ${artifact.id} has an invalid attachment ${filename}: ${(error as Error).message}`, 'content_reference_invalid');
+        report(referenceFilePath(artifact)!, `Artifact ${artifact.id} has an invalid attachment ${filename}: ${(error as Error).message}`, 'content_reference_invalid');
         continue;
       }
       if (!observed.path || observed.error) {
-        report(referenceFilePath(root, artifact)!, `Attachment ${handle} cannot be resolved: ${observed.error ?? 'No published attachment path'}`, 'content_reference_attachment');
+        report(referenceFilePath(artifact)!, `Attachment ${handle} cannot be resolved: ${observed.error ?? 'No published attachment path'}`, 'content_reference_attachment');
         continue;
       }
       const node: AttachmentNode = { __typename: 'Attachment', filename, handle, filePath: observed.path };

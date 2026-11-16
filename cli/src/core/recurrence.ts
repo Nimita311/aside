@@ -1,10 +1,7 @@
-import * as rruleModule from 'rrule';
 import { Temporal } from '@js-temporal/polyfill';
-import { isCalendarDate, isWallMinute, scheduleInstant, wallTimeAt, schedulingIssues } from './scheduling.js';
+import { isCalendarDate, isSchedulingDate, isWallMinute, scheduleInstant, wallTimeAt, schedulingIssues } from './scheduling.js';
 import type { Action, ActionFrontMatter } from './types.js';
-import { recurrenceCounter, type RecurrenceCounter } from './rrule-count.js';
-const rrule = rruleModule as unknown as { RRule: typeof import('rrule').RRule; default?: { RRule: typeof import('rrule').RRule } };
-const RRule = rrule.RRule ?? rrule.default!.RRule;
+import { fixedWidth, recurrenceCounter, RRule, type RecurrenceCounter } from './rrule-count.js';
 
 export interface RecurrenceSchedule { dtstart: string; rrule: string; timezone?: string }
 export interface RecurrenceScheduleSelector { dtstart: string; timezone?: string }
@@ -13,7 +10,9 @@ export type RecurrenceMutation =
   | { set_end: { schedule: RecurrenceScheduleSelector; at?: string }; append?: never; remove?: never }
   | { remove: RecurrenceScheduleSelector; append?: never; set_end?: never };
 export interface OccurrenceIdentity { template: string; original: string; timezone?: string }
-export interface PlanningAction { id: string; action: Action; projected: boolean; occurrence?: OccurrenceIdentity }
+export interface ScheduledOccurrence { identity: OccurrenceIdentity; scheduled: string }
+export interface RankExtent { rank: number; excluded?: { from: number; to: number } }
+export interface PlanningAction { id: string; action: Action; occurrence: OccurrenceIdentity }
 export interface PlanningPage { nodes: PlanningAction[]; next: string | null; issues: string[] }
 
 const fields = new Set(['FREQ', 'INTERVAL', 'COUNT', 'UNTIL', 'BYDAY', 'BYMONTHDAY', 'BYMONTH', 'BYWEEKNO', 'BYYEARDAY', 'BYSETPOS', 'BYHOUR', 'BYMINUTE', 'BYSECOND', 'WKST']);
@@ -56,7 +55,7 @@ export function assertRecurrence(value: unknown): RecurrenceSchedule[] {
     if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw new Error(`recurrence.${index} must be a schedule.`);
     const s = raw as Record<string, unknown>;
     if (Object.keys(s).some(key => !['dtstart', 'rrule', 'timezone'].includes(key))) throw new Error(`recurrence.${index} has an unknown field; use dtstart, rrule, timezone.`);
-    if (typeof s.dtstart !== 'string' || (!isCalendarDate(s.dtstart) && !isWallMinute(s.dtstart))) throw new Error('dtstart must be a date or wall time at minute precision.');
+    if (typeof s.dtstart !== 'string' || !isSchedulingDate(s.dtstart)) throw new Error('dtstart must be a date or wall time at minute precision.');
     if (s.timezone !== undefined && (typeof s.timezone !== 'string' || isCalendarDate(s.dtstart))) throw new Error('All-day recurrence has no timezone; timed timezone must be an IANA name.');
     if (typeof s.rrule !== 'string' || !s.rrule || /[\r\n]/.test(s.rrule)) throw new Error('rrule must contain one RRULE.');
     const schedule: RecurrenceSchedule = { dtstart: s.dtstart, rrule: s.rrule, ...(s.timezone !== undefined && { timezone: s.timezone as string }) };
@@ -83,7 +82,7 @@ export function assertRecurrence(value: unknown): RecurrenceSchedule[] {
     if (until) {
       const pattern = isCalendarDate(schedule.dtstart) ? /^\d{8}$/ : schedule.timezone ? /^\d{8}T\d{6}Z$/ : /^\d{8}T\d{6}$/;
       const untilWall = `${until.slice(0,4)}-${until.slice(4,6)}-${until.slice(6,8)}` + (until.length > 8 ? `T${until.slice(9,11)}:${until.slice(11,13)}` : '');
-      if (!pattern.test(until) || (!isCalendarDate(untilWall) && !isWallMinute(untilWall)) || until.length > 8 && Number(until.slice(13,15)) > 59 || !options.until || !Number.isFinite(options.until.getTime())) throw new Error('UNTIL must match DTSTART semantics: date for all-day, local time for floating, UTC for zoned schedules.');
+      if (!pattern.test(until) || !isSchedulingDate(untilWall) || until.length > 8 && Number(until.slice(13,15)) > 59 || !options.until || !Number.isFinite(options.until.getTime())) throw new Error('UNTIL must match DTSTART semantics: date for all-day, local time for floating, UTC for zoned schedules.');
     }
     const compiled = new CompiledRecurrence(schedule);
     if (!compiled.matchesStart()) throw new Error('dtstart must match the RRULE pattern.');
@@ -147,7 +146,7 @@ export class CompiledRecurrence {
       const elapsed = (threshold.getUTCFullYear() - start.getUTCFullYear()) * 12 + threshold.getUTCMonth() - start.getUTCMonth();
       boundary = new Date(Date.UTC(start.getUTCFullYear(), start.getUTCMonth() + Math.max(0, Math.floor(elapsed / interval) - 1) * interval, 1));
     } else {
-      const width = frequency === RRule.WEEKLY ? 604800000 : frequency === RRule.DAILY ? 86400000 : frequency === RRule.HOURLY ? 3600000 : frequency === RRule.MINUTELY ? 60000 : 1000;
+      const width = fixedWidth(frequency);
       let origin = Math.floor(start.getTime() / width) * width;
       if (frequency === RRule.WEEKLY) origin = Math.floor(start.getTime() / 86400000) * 86400000 - ((start.getUTCDay() + 6) % 7 - this.rule.options.wkst + 7) % 7 * 86400000;
       boundary = new Date(origin + Math.max(0, Math.floor((threshold.getTime() - origin) / (width * interval)) - 1) * width * interval);
@@ -166,7 +165,7 @@ export class CompiledRecurrence {
     if (this.countEnd !== undefined) return this.countEnd;
     const start = this.rule.options.dtstart.getTime(), maximum = new Date('9999-12-31T23:59:00Z').getTime();
     const frequency = this.rule.options.freq;
-    const width = frequency === RRule.YEARLY ? 366 * 86400000 : frequency === RRule.MONTHLY ? 31 * 86400000 : frequency === RRule.WEEKLY ? 7 * 86400000 : frequency === RRule.DAILY ? 86400000 : frequency === RRule.HOURLY ? 3600000 : frequency === RRule.MINUTELY ? 60000 : 1000;
+    const width = frequency === RRule.YEARLY ? 366 * 86400000 : frequency === RRule.MONTHLY ? 31 * 86400000 : fixedWidth(frequency);
     let span = Math.max(60000, width * this.rule.options.interval * (this.count! - 1));
     let high = Math.min(maximum, start + span);
     while (this.counter.countThrough(new Date(high)) < this.count! && high < maximum) {
@@ -182,7 +181,7 @@ export class CompiledRecurrence {
     }
     return this.countEnd = upper * 60000;
   }
-  previous(template: string, upper: string, inclusive = true): { identity: OccurrenceIdentity; scheduled: string } | undefined {
+  previous(template: string, upper: string, inclusive = true): ScheduledOccurrence | undefined {
     let threshold = wallDate(upper);
     if (this.rule.options.until && threshold > this.rule.options.until) { threshold = this.rule.options.until; inclusive = true; }
     if (this.count && this.counter.countThrough(threshold) > this.count) {
@@ -202,7 +201,7 @@ export class CompiledRecurrence {
     }
     return undefined;
   }
-  previousBefore(now: Date): { identity: OccurrenceIdentity; scheduled: string } | undefined {
+  previousBefore(now: Date): ScheduledOccurrence | undefined {
     let wall = wallUpperBound(now.getTime() - 1, this.schedule.timezone), inclusive = true;
     for (;;) {
       const value = this.previous('', wall, inclusive);
@@ -216,8 +215,8 @@ export class CompiledRecurrence {
     const value = this.previousBefore(now);
     return value ? scheduleInstant(value.scheduled, this.schedule.timezone)! : -Infinity;
   }
-  pastExtent(now: Date): { rank: number; excluded?: { from: number; to: number } } {
-    let last: { identity: OccurrenceIdentity; scheduled: string } | undefined;
+  pastExtent(now: Date): RankExtent {
+    let last: ScheduledOccurrence | undefined;
     const local = wallTimeAt(now.getTime()), elapsed = now.getTime() - scheduleInstant(local)!;
     if (this.allDay) {
       const today = local.slice(0, 10);
@@ -242,7 +241,7 @@ export class CompiledRecurrence {
     const occurrence = this.contains('', original);
     return occurrence ? this.counter.countThrough(wallDate(occurrence.scheduled)) : undefined;
   }
-  *occurrences(template: string, from?: string, to?: string): Generator<{ identity: OccurrenceIdentity; scheduled: string }> {
+  *occurrences(template: string, from?: string, to?: string): Generator<ScheduledOccurrence> {
     const lower = from ? wallDate(from) : wallDate(this.schedule.dtstart);
     const upper = to ? wallDate(to.length === 10 && !this.allDay ? to + 'T23:59' : to) : undefined;
     let cursor = lower, inclusive = true;
@@ -260,7 +259,7 @@ export class CompiledRecurrence {
     const last = this.previous('', wallString(new Date(this.countedEnd()), this.allDay));
     return last ? scheduleInstant(last.scheduled, this.schedule.timezone)! : -Infinity;
   }
-  contains(template: string, original: string): { identity: OccurrenceIdentity; scheduled: string } | undefined {
+  contains(template: string, original: string): ScheduledOccurrence | undefined {
     const wall = this.wallFor(original);
     if (!wall) return undefined;
     const found = this.occurrences(template, wall, wall).next().value;
@@ -268,26 +267,29 @@ export class CompiledRecurrence {
   }
 }
 
+// A rule's parts without the end it was given (UNTIL or COUNT).
+function openParts(schedule: RecurrenceSchedule): string[] {
+  return schedule.rrule.replace(/^RRULE:/, '').split(';').filter(part => !part.startsWith('UNTIL=') && !part.startsWith('COUNT='));
+}
 function pattern(schedule: RecurrenceSchedule): string {
-  const parts = schedule.rrule.replace(/^RRULE:/, '').split(';').filter(p => !p.startsWith('UNTIL=') && !p.startsWith('COUNT=')).sort();
-  return JSON.stringify([schedule.dtstart, schedule.timezone ?? null, parts]);
+  return JSON.stringify([schedule.dtstart, schedule.timezone ?? null, openParts(schedule).sort()]);
 }
 function withoutEnd(schedule: RecurrenceSchedule): RecurrenceSchedule {
   const prefix = schedule.rrule.startsWith('RRULE:') ? 'RRULE:' : '';
-  return { ...schedule, rrule: prefix + schedule.rrule.replace(/^RRULE:/, '').split(';').filter(part => !part.startsWith('UNTIL=') && !part.startsWith('COUNT=')).join(';') };
+  return { ...schedule, rrule: prefix + openParts(schedule).join(';') };
 }
-function withEnd(schedule: RecurrenceSchedule, last: { identity: OccurrenceIdentity; scheduled: string }): RecurrenceSchedule {
+function withEnd(schedule: RecurrenceSchedule, last: ScheduledOccurrence): RecurrenceSchedule {
   const until = schedule.timezone ? last.identity.original.replace(/[-:]/g, '') : last.scheduled.replace(/[-:]/g, '') + (isCalendarDate(schedule.dtstart) ? '' : '00');
   const open = withoutEnd(schedule);
   return { ...open, rrule: `${open.rrule};UNTIL=${until}` };
 }
-function extentContains(extent: { rank: number; excluded?: { from: number; to: number } }, rank: number): boolean {
+function extentContains(extent: RankExtent, rank: number): boolean {
   return rank <= extent.rank && (!extent.excluded || rank < extent.excluded.from || rank > extent.excluded.to);
 }
-function extentSize(extent: { rank: number; excluded?: { from: number; to: number } }): number {
+function extentSize(extent: RankExtent): number {
   return extent.rank - (extent.excluded ? extent.excluded.to - extent.excluded.from + 1 : 0);
 }
-function extentIntersection(a: { rank: number; excluded?: { from: number; to: number } }, b: { rank: number; excluded?: { from: number; to: number } }): number {
+function extentIntersection(a: RankExtent, b: RankExtent): number {
   const rank = Math.min(a.rank, b.rank), clipped = (value?: { from: number; to: number }) => value ? Math.max(0, Math.min(rank, value.to) - value.from + 1) : 0;
   const shared = a.excluded && b.excluded ? clipped({ from: Math.max(a.excluded.from, b.excluded.from), to: Math.min(a.excluded.to, b.excluded.to) }) : 0;
   return rank - clipped(a.excluded) - clipped(b.excluded) + shared;
@@ -350,7 +352,7 @@ export function appendRecurrenceSchedule(before: RecurrenceSchedule[] | undefine
 function selectedSchedule(schedules: RecurrenceSchedule[], value: unknown): number {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('Schedule selector must contain dtstart and optional timezone.');
   const selector = value as Record<string, unknown>;
-  if (Object.keys(selector).some(key => !['dtstart', 'timezone'].includes(key)) || typeof selector.dtstart !== 'string' || !isCalendarDate(selector.dtstart) && !isWallMinute(selector.dtstart) || selector.timezone !== undefined && typeof selector.timezone !== 'string') throw new Error('Schedule selector must contain dtstart and optional timezone.');
+  if (Object.keys(selector).some(key => !['dtstart', 'timezone'].includes(key)) || typeof selector.dtstart !== 'string' || !isSchedulingDate(selector.dtstart) || selector.timezone !== undefined && typeof selector.timezone !== 'string') throw new Error('Schedule selector must contain dtstart and optional timezone.');
   const matches = schedules.flatMap((schedule, index) => schedule.dtstart === selector.dtstart && schedule.timezone === selector.timezone ? [index] : []);
   if (!matches.length) throw new Error('Recurrence schedule not found for the exact dtstart and timezone.');
   if (matches.length !== 1) throw new Error('Recurrence schedule selector is ambiguous.');
@@ -396,7 +398,7 @@ export function assertOccurrence(value: unknown): OccurrenceIdentity {
   const o = value as Record<string, unknown>;
   if (Object.keys(o).some(k => !['template', 'original', 'timezone'].includes(k)) || typeof o.template !== 'string' || !o.template || typeof o.original !== 'string' || !o.original) throw new Error('Invalid occurrence provenance.');
   if (o.timezone !== undefined && (typeof o.timezone !== 'string' || !o.timezone || schedulingIssues({ scheduled: '2026-01-01T12:00', timezone: o.timezone }).length)) throw new Error('Invalid occurrence timezone.');
-  if (o.timezone ? !isOriginalInstant(o.original) : !isCalendarDate(o.original) && !isWallMinute(o.original)) throw new Error('Invalid original occurrence value.');
+  if (o.timezone ? !isOriginalInstant(o.original) : !isSchedulingDate(o.original)) throw new Error('Invalid original occurrence value.');
   return { template: o.template, original: o.original, ...(o.timezone && { timezone: o.timezone as string }) };
 }
 
@@ -406,20 +408,19 @@ export function projectedAction(template: Action, identity: OccurrenceIdentity, 
 }
 
 interface PlanningCursor { now: string; phase: number; clock: string; id: string }
+// Every planning row is a projection, so it has a schedule.
 function planningClock(row: PlanningAction): string {
-  const fm = row.action.frontMatter;
-  const instant = fm.scheduled && fm.timezone ? scheduleInstant(fm.scheduled, fm.timezone) : undefined;
-  // Projections have a schedule; only saved backlog actions use creation time.
-  return instant === undefined ? fm.scheduled ?? fm.created! : wallTimeAt(instant);
+  const fm = row.action.frontMatter, scheduled = fm.scheduled!;
+  const instant = fm.timezone ? scheduleInstant(scheduled, fm.timezone) : undefined;
+  return instant === undefined ? scheduled : wallTimeAt(instant);
 }
 function planningPhase(row: PlanningAction, now: Date): number {
-  const fm = row.action.frontMatter;
-  if (!fm.scheduled) return 1;
+  const fm = row.action.frontMatter, scheduled = fm.scheduled!;
   // Floating and all-day values retain their authored calendar coordinates,
   // including local clocks that happen to lie inside this machine's DST gap.
   const localNow = wallTimeAt(now.getTime());
-  const secondFold = !fm.timezone && isWallMinute(fm.scheduled) && now.getTime() - scheduleInstant(localNow)! >= 60000;
-  const future = fm.timezone || secondFold ? scheduleInstant(fm.scheduled, fm.timezone)! > now.getTime() : fm.scheduled > localNow;
+  const secondFold = !fm.timezone && isWallMinute(scheduled) && now.getTime() - scheduleInstant(localNow)! >= 60000;
+  const future = fm.timezone || secondFold ? scheduleInstant(scheduled, fm.timezone)! > now.getTime() : scheduled > localNow;
   return future ? 0 : 2;
 }
 function comparePlanning(a: Pick<PlanningCursor, 'phase' | 'clock' | 'id'>, b: Pick<PlanningCursor, 'phase' | 'clock' | 'id'>): number {
@@ -436,45 +437,45 @@ function readPlanningCursor(cursor?: string): PlanningCursor | undefined {
     return value;
   } catch { throw new Error('Invalid planning cursor; start a new planning query.'); }
 }
-function isSchedulingClock(value: unknown): value is string { return typeof value === 'string' && (isCalendarDate(value) || isWallMinute(value)); }
+function isSchedulingClock(value: unknown): value is string { return typeof value === 'string' && isSchedulingDate(value); }
 function shiftedWall(wall: string, minutes: number, allDay: boolean): string { return wallString(new Date(wallDate(wall).getTime() + minutes * 60000), allDay); }
 
-export function planningActions(actions: ReadonlyMap<string, Action>, options: { from?: string; to?: string; after?: string; limit?: number; now?: Date; lookaheadDays?: number; templates?: string[]; savedIds?: string[]; projectionsOnly?: boolean } = {}): PlanningPage {
-  if (options.from && !isCalendarDate(options.from) || options.to && !isCalendarDate(options.to) || options.from && options.to && options.from > options.to) throw new Error('Planning date bounds must be real dates with from no later than to.');
+// Upcoming projections are listed this many days ahead.
+const PLANNING_LOOKAHEAD_DAYS = 7;
+// A planning page holds at most this many projections.
+const PLANNING_PAGE_SIZE = 100;
+
+export function planningActions(actions: ReadonlyMap<string, Action>, options: { after?: string; now?: Date; templates?: string[] } = {}): PlanningPage {
   const cursor = readPlanningCursor(options.after);
-  const now = cursor ? new Date(cursor.now) : options.now ?? new Date(), limit = options.limit ?? 100;
-  if (!Number.isSafeInteger(limit) || limit < 1 || limit > 100) throw new Error('Planning limit must be from 1 to 100.');
-  const horizon = new Date(now.getTime() + (options.lookaheadDays ?? 7) * 86400000);
-  const horizonDate = shiftedWall(wallTimeAt(now.getTime()).slice(0, 10), (options.lookaheadDays ?? 7) * 1440, true);
+  const now = cursor ? new Date(cursor.now) : options.now ?? new Date();
+  const horizon = new Date(now.getTime() + PLANNING_LOOKAHEAD_DAYS * 86400000);
+  const horizonDate = shiftedWall(wallTimeAt(now.getTime()).slice(0, 10), PLANNING_LOOKAHEAD_DAYS * 1440, true);
   const rows: PlanningAction[] = [], seen = new Set<string>(), issues: string[] = [];
   const history: (() => void)[] = [];
   const wanted = options.templates ? new Set(options.templates) : undefined;
   const key = (row: PlanningAction) => ({ phase: planningPhase(row, now), clock: planningClock(row), id: row.id });
-  const eligible = (row: PlanningAction) => (!cursor || comparePlanning(key(row), cursor) > 0) &&
-    (!options.from || !row.action.frontMatter.scheduled || row.action.frontMatter.scheduled >= options.from) &&
-    (!options.to || !row.action.frontMatter.scheduled || row.action.frontMatter.scheduled.slice(0, 10) <= options.to);
-  for (const [id, action] of actions) {
-    if (action.frontMatter.occurrence) seen.add(occurrenceKey(action.frontMatter.occurrence));
-    const row: PlanningAction = { id, action, projected: false, occurrence: action.frontMatter.occurrence };
-    if (!options.projectionsOnly && !action.frontMatter.recurrence && (!options.savedIds || options.savedIds.includes(id)) && eligible(row)) rows.push(row);
-  }
+  const eligible = (row: PlanningAction) => !cursor || comparePlanning(key(row), cursor) > 0;
+  // A saved occurrence replaces its projection.
+  for (const action of actions.values()) if (action.frontMatter.occurrence) seen.add(occurrenceKey(action.frontMatter.occurrence));
   for (const [template, action] of actions) if (action.frontMatter.recurrence && (!wanted || wanted.has(template))) {
     try {
       assertRecurrence(action.frontMatter.recurrence);
+      const projectedRow = (identity: OccurrenceIdentity, scheduled: string): PlanningAction =>
+        ({ id: projectionId(identity), action: projectedAction(action, identity, scheduled), occurrence: identity });
       const add = (identity: OccurrenceIdentity, scheduled: string) => {
-        const row: PlanningAction = { id: projectionId(identity), action: projectedAction(action, identity, scheduled), projected: true, occurrence: identity };
+        const row = projectedRow(identity, scheduled);
         if (eligible(row) && !seen.has(occurrenceKey(identity))) {
           seen.add(occurrenceKey(identity)); rows.push(row); return true;
         }
         return false;
       };
-      let firstFuture: { identity: OccurrenceIdentity; scheduled: string } | undefined;
+      let firstFuture: ScheduledOccurrence | undefined;
       for (const schedule of action.frontMatter.recurrence) {
         const rule = new CompiledRecurrence(schedule), localNow = wallTimeAt(now.getTime(), schedule.timezone);
         const nowWall = rule.allDay ? localNow.slice(0, 10) : localNow;
-        const upper = options.to ? rule.allDay ? options.to : options.to + 'T23:59' : rule.allDay ? horizonDate : wallUpperBound(horizon.getTime(), schedule.timezone);
+        const upper = rule.allDay ? horizonDate : wallUpperBound(horizon.getTime(), schedule.timezone);
         if (!cursor || cursor.phase === 0) {
-          let lower = options.from && options.from > nowWall ? options.from : nowWall;
+          let lower = nowWall;
           if (cursor?.phase === 0) {
             // Calendar coordinates are ordered for floating clocks; a generous
             // date boundary also covers offsets when merging differently zoned rules.
@@ -484,11 +485,11 @@ export function planningActions(actions: ReadonlyMap<string, Action>, options: {
           }
           let count = 0;
           for (const next of rule.occurrences(template, lower)) {
-            const candidate: PlanningAction = { id: projectionId(next.identity), action: projectedAction(action, next.identity, next.scheduled), projected: true, occurrence: next.identity };
+            const candidate = projectedRow(next.identity, next.scheduled);
             if (planningPhase(candidate, now) !== 0 || seen.has(occurrenceKey(next.identity))) continue;
-            if (!options.to && (!firstFuture || planningClock(candidate) < planningClock({ id: '', action: projectedAction(action, firstFuture.identity, firstFuture.scheduled), projected: true }))) firstFuture = next;
-            if (next.scheduled > upper || !options.to && !rule.allDay && scheduleInstant(next.scheduled, schedule.timezone)! > horizon.getTime()) break;
-            if (add(next.identity, next.scheduled) && ++count > limit) break;
+            if (!firstFuture || planningClock(candidate) < planningClock(projectedRow(firstFuture.identity, firstFuture.scheduled))) firstFuture = next;
+            if (next.scheduled > upper || !rule.allDay && scheduleInstant(next.scheduled, schedule.timezone)! > horizon.getTime()) break;
+            if (add(next.identity, next.scheduled) && ++count > PLANNING_PAGE_SIZE) break;
           }
         }
         history.push(() => {
@@ -503,25 +504,25 @@ export function planningActions(actions: ReadonlyMap<string, Action>, options: {
               if (cursorWall < before) before = cursorWall;
             }
             let inclusive = true, count = 0;
-            while (count <= limit) {
+            while (count <= PLANNING_PAGE_SIZE) {
               const previous = rule.previous(template, before, inclusive);
-              if (!previous || options.from && previous.scheduled < options.from) break;
-              const row: PlanningAction = { id: projectionId(previous.identity), action: projectedAction(action, previous.identity, previous.scheduled), projected: true };
+              if (!previous) break;
+              const row = projectedRow(previous.identity, previous.scheduled);
               if (planningPhase(row, now) === 2 && add(previous.identity, previous.scheduled)) count++;
               before = previous.scheduled; inclusive = false;
             }
           } catch (error) { issues.push(`${template}: ${(error as Error).message}`); }
         });
       }
-      if (!options.to && firstFuture) add(firstFuture.identity, firstFuture.scheduled);
+      if (firstFuture) add(firstFuture.identity, firstFuture.scheduled);
     } catch (error) { issues.push(`${template}: ${(error as Error).message}`); }
   }
-  // A page full of upcoming/backlog work cannot contain history. Delay its
+  // A page full of upcoming work cannot contain history. Delay its
   // backward rank queries until they can contribute a visible row.
-  if (rows.filter(row => planningPhase(row, now) < 2).length <= limit) for (const load of history) load();
+  if (rows.filter(row => planningPhase(row, now) < 2).length <= PLANNING_PAGE_SIZE) for (const load of history) load();
   rows.sort((a, b) => comparePlanning(key(a), key(b)));
-  const nodes = rows.slice(0, limit), last = nodes[nodes.length - 1];
-  return { nodes, next: rows.length > limit && last ? 'p1:' + encodeURIComponent(JSON.stringify({ now: now.toISOString(), ...key(last) })) : null, issues };
+  const nodes = rows.slice(0, PLANNING_PAGE_SIZE), last = nodes[nodes.length - 1];
+  return { nodes, next: rows.length > PLANNING_PAGE_SIZE && last ? 'p1:' + encodeURIComponent(JSON.stringify({ now: now.toISOString(), ...key(last) })) : null, issues };
 }
 
 export function recurrenceIssues(actions: ReadonlyMap<string, Action>): string[] {

@@ -10,7 +10,7 @@ export interface SourceAccessException {
 }
 
 const sourceReaders: Record<string, ReadonlySet<string>> = {
-  'core/instance': new Set(['isAsideDir', 'readInstanceRecordResult', 'readManifestResult', 'readManifest', 'shouldRetainKnownInstance', 'readConfig']),
+  'core/instance': new Set(['isAsideDir', 'readInstanceRecordResult', 'readManifestResult', 'readManifest', 'shouldRetainKnownInstance', 'readConfig', 'instancePathError']),
   'core/reader': new Set(['readInstanceData', 'InstanceReadCache']),
   'core/managed-path': new Set(['readManagedText', 'createManagedReader', 'assertManagedPath']),
   'core/source-metadata': new Set(['readSourceMetadata']),
@@ -18,7 +18,7 @@ const sourceReaders: Record<string, ReadonlySet<string>> = {
   'core/content-attachment': new Set(['contentAttachmentPath']),
   'core/attachment-metadata': new Set(['readAttachmentFiles', 'readReferenceRoots']),
   'core/validator': new Set(['validate']),
-  'core/worktree': new Set(['checkoutInfo', 'instanceFamily', 'primaryCounterpart', 'withPrimaryInstances', 'withoutInstanceFamilies', 'worktreeCalendarReason']),
+  'core/worktree': new Set(['canonicalPath', 'checkoutInfo', 'instanceFamily', 'primaryCounterpart', 'withPrimaryInstances', 'withoutInstanceFamilies']),
   'daemon/host': new Set(['instanceKey']),
   'source/index-file': new Set(['prependIndex', 'updateIndexDescription']),
   'storage/atomic-file': new Set(['writeFileCrashSafe']),
@@ -28,7 +28,7 @@ const sourceReaders: Record<string, ReadonlySet<string>> = {
   'mcp/tools/update': new Set(['handleUpdateAction', 'handleUpdateProject', 'handleUpdateEntry']),
   'mcp/tools/capture': new Set(['handleCapture', 'resolveEntityRefs']),
   'mcp/tools/instance': new Set(['handleUpdateInstance']),
-  'mcp/tools/artifact': new Set(['handleCreateArtifact', 'createArtifact', 'handleUpdateArtifact', 'prepareCreateArtifact']),
+  'mcp/tools/artifact': new Set(['createArtifact', 'handleUpdateArtifact', 'prepareCreateArtifact']),
   'source/bootstrap': new Set(['init']),
   'source/recurrence-history': new Set(['recurrenceHistoryPath', 'readRecurrenceHistory', 'writeRecurrenceHistory']),
   'source/execution-context': new Set(['readExecutionContextSnapshot']),

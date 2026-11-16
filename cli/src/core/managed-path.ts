@@ -35,23 +35,30 @@ function containedRelative(root: string, path: string): string | undefined {
   return rel === '..' || rel.startsWith(`..${sep}`) || isAbsolute(rel) ? undefined : rel;
 }
 
-// The selected root may be an alias (including the OS's /tmp alias). Every
-// component owned by Aside below that root must be an ordinary file/directory.
-// Same-user processes are trusted; this is not a sandbox against concurrent
-// replacement of parent directories by another process running as that user.
-export function assertManagedPath(root: string, path: string, kind: ManagedKind, allowMissing = false): string {
-  const selectedRoot = resolve(root);
-  const canonicalRoot = realpathSync(selectedRoot);
-  const absolutePath = isAbsolute(path) ? resolve(path) : resolve(selectedRoot, path);
-  const rel = containedRelative(selectedRoot, absolutePath) ?? containedRelative(canonicalRoot, absolutePath);
+// Whether `path` is `root` or lies beneath it.
+export function isInside(root: string, path: string): boolean {
+  return containedRelative(root, path) !== undefined;
+}
+
+// Locate a path beneath either spelling of the root, or refuse it.
+function relativeInside(selectedRoot: string, canonicalRoot: string, path: string): string {
+  const absolute = isAbsolute(path) ? resolve(path) : resolve(selectedRoot, path);
+  const rel = containedRelative(selectedRoot, absolute) ?? containedRelative(canonicalRoot, absolute);
   if (rel === undefined) throw pathError('EINVAL', 'Managed path is outside the instance', path);
-  if (!lstatSync(canonicalRoot).isDirectory()) throw pathError('ENOTDIR', 'Instance root is not a directory', root);
+  return rel;
+}
+
+// Walk each component below the canonical root. A scan passes the directories
+// it has already verified; everything else is checked on every visit.
+function checkComponents(canonicalRoot: string, rel: string, kind: ManagedKind, allowMissing: boolean, path: string, verified?: Set<string>): string {
   const parts = rel ? rel.split(sep) : [];
   const canonicalPath = join(canonicalRoot, ...parts);
   if (!parts.length && kind === 'file') throw pathError('EISDIR', 'Managed file is a directory', path);
   let current = canonicalRoot;
   for (let i = 0; i < parts.length; i++) {
     current = join(current, parts[i]);
+    const expected = i === parts.length - 1 ? kind : 'directory';
+    if (expected === 'directory' && verified?.has(current)) continue;
     let stat;
     try { stat = lstatSync(current); }
     catch (error) {
@@ -59,22 +66,37 @@ export function assertManagedPath(root: string, path: string, kind: ManagedKind,
       throw error;
     }
     if (stat.isSymbolicLink()) throw pathError('ELOOP', 'Symlinks are not allowed in Aside-managed paths', current);
-    const expected = i === parts.length - 1 ? kind : 'directory';
-    if (expected === 'directory' && !stat.isDirectory()) throw pathError('ENOTDIR', 'Managed directory is not a directory', current);
-    if (expected === 'file' && !stat.isFile()) {
-      throw pathError(stat.isDirectory() ? 'EISDIR' : 'EINVAL', 'Managed file is not a regular file', current);
-    }
+    if (expected === 'directory') {
+      if (!stat.isDirectory()) throw pathError('ENOTDIR', 'Managed directory is not a directory', current);
+      verified?.add(current);
+    } else if (!stat.isFile()) throw pathError(stat.isDirectory() ? 'EISDIR' : 'EINVAL', 'Managed file is not a regular file', current);
   }
   return canonicalPath;
 }
 
-export function readManagedText(root: string, path: string): string {
-  const checked = assertManagedPath(root, path, 'file');
-  const fd = openSync(checked, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+// Open without following a final symlink, and read only a regular file.
+function readRegularText(file: string): string {
+  const fd = openSync(file, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
   try {
-    if (!fstatSync(fd).isFile()) throw pathError('EINVAL', 'Managed file is not a regular file', checked);
+    if (!fstatSync(fd).isFile()) throw pathError('EINVAL', 'Managed file is not a regular file', file);
     return readFileSync(fd, 'utf8');
   } finally { closeSync(fd); }
+}
+
+// The selected root may be an alias (including the OS's /tmp alias). Every
+// component owned by Aside below that root must be an ordinary file/directory.
+// Same-user processes are trusted; this is not a sandbox against concurrent
+// replacement of parent directories by another process running as that user.
+export function assertManagedPath(root: string, path: string, kind: ManagedKind, allowMissing = false): string {
+  const selectedRoot = resolve(root);
+  const canonicalRoot = realpathSync(selectedRoot);
+  const rel = relativeInside(selectedRoot, canonicalRoot, path);
+  if (!lstatSync(canonicalRoot).isDirectory()) throw pathError('ENOTDIR', 'Instance root is not a directory', root);
+  return checkComponents(canonicalRoot, rel, kind, allowMissing, path);
+}
+
+export function readManagedText(root: string, path: string): string {
+  return readRegularText(assertManagedPath(root, path, 'file'));
 }
 
 /** A synchronous directory scan can share validated ancestors. Each leaf is
@@ -94,37 +116,10 @@ export function createManagedReader(root: string): {
       canonicalRoot = resolvedRoot;
       directories.add(canonicalRoot);
     }
-    const absolute = isAbsolute(path) ? resolve(path) : resolve(selectedRoot, path);
-    const rel = containedRelative(selectedRoot, absolute) ?? containedRelative(canonicalRoot, absolute);
-    if (rel === undefined) throw pathError('EINVAL', 'Managed path is outside the instance', path);
-    const parts = rel ? rel.split(sep) : [];
-    const canonicalPath = join(canonicalRoot, ...parts);
-    if (!parts.length && kind === 'file') throw pathError('EISDIR', 'Managed file is a directory', path);
-    let current = canonicalRoot;
-    for (let i = 0; i < parts.length; i++) {
-      current = join(current, parts[i]);
-      const expected = i === parts.length - 1 ? kind : 'directory';
-      if (expected === 'directory' && directories.has(current)) continue;
-      let stat;
-      try { stat = lstatSync(current); }
-      catch (error) { if (allowMissing && (error as NodeJS.ErrnoException).code === 'ENOENT') return canonicalPath; throw error; }
-      if (stat.isSymbolicLink()) throw pathError('ELOOP', 'Symlinks are not allowed in Aside-managed paths', current);
-      if (expected === 'directory') {
-        if (!stat.isDirectory()) throw pathError('ENOTDIR', 'Managed directory is not a directory', current);
-        directories.add(current);
-      } else if (!stat.isFile()) throw pathError(stat.isDirectory() ? 'EISDIR' : 'EINVAL', 'Managed file is not a regular file', current);
-    }
-    return canonicalPath;
+    return checkComponents(canonicalRoot, relativeInside(selectedRoot, canonicalRoot, path), kind, allowMissing, path, directories);
   };
   return {
     directory: (path, allowMissing = false) => checked(path, 'directory', allowMissing),
-    text(path) {
-      const file = checked(path, 'file');
-      const fd = openSync(file, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
-      try {
-        if (!fstatSync(fd).isFile()) throw pathError('EINVAL', 'Managed file is not a regular file', file);
-        return readFileSync(fd, 'utf8');
-      } finally { closeSync(fd); }
-    },
+    text: path => readRegularText(checked(path, 'file')),
   };
 }

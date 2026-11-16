@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { pinMatches, setViewPinned, sidebarView, toggleViewPin, viewPin } from '../src/view-pins';
+import { pinMatches, setViewPinned, sidebarView, viewPin } from '../src/view-pins';
 import type { WebappSidebarSection } from '../../cli/src/core/types';
 
 const instance = 'work';
@@ -46,11 +46,11 @@ describe('explicit sidebar navigation', () => {
   it('preserves agent sections and appends/removes pins from the same declaration', () => {
     const sections: WebappSidebarSection[] = [{ title: 'Focus', items: [{ label: 'Decisions', timeline: source }] }];
     const pin = { ...empty, search: 'calmer' };
-    const added = toggleViewPin(sections, instance, pin, 'Calmer');
+    const added = setViewPinned(sections, instance, pin, 'Calmer', true);
     expect(added).toEqual([...sections, { items: [{ label: 'Calmer', timeline: 'calmer' }] }]);
     expect(sections).toHaveLength(1);
-    expect(toggleViewPin(added, instance, pin, 'Ignored rename')).toEqual(sections);
-    expect(toggleViewPin(sections, instance, { ...empty, source }, '')).toEqual([{ title: 'Focus', items: [] }]);
+    expect(setViewPinned(added, instance, pin, 'Ignored rename', false)).toEqual(sections);
+    expect(setViewPinned(sections, instance, { ...empty, source }, '', false)).toEqual([{ title: 'Focus', items: [] }]);
   });
   it('reapplies Pin and Unpin intentions idempotently after concurrent changes', () => {
     const view = { ...empty, search: 'calmer' };

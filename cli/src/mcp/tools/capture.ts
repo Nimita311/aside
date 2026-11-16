@@ -8,7 +8,7 @@ import { assertScheduling } from '../../core/scheduling.js';
 import { assertCalendarName } from '../../core/calendar-name.js';
 import { assertLocationHandle } from '../../core/location-reference.js';
 import { formatDate, formatTimestamp, getMonday, getSunday, getWeekNumber } from '../../core/date.js';
-import { toKebabCase } from '../../core/slug.js';
+import { linkId } from '../../core/link-edits.js';
 import { validateEntryContent, buildEntryBlock, renderEntries, splitEntrySegments, splitWeekFile } from './entry-file.js';
 import { resolveMarkdownSource } from './content-source.js';
 import type { ActionFrontMatter, ProjectFrontMatter } from '../../core/types.js';
@@ -85,6 +85,15 @@ function requireExisting(ids: string[], exists: (id: string) => boolean, entity:
   }
 }
 
+// A related-project link names a saved project or one this call creates.
+export function requireRelatedProjects(store: Store, links: readonly { project: string }[], created: readonly string[] = []): void {
+  for (const link of links) {
+    if (!store.getProject(link.project) && !created.includes(link.project)) {
+      throw new Error(`Related project "${link.project}" not found.\nHint: query projects to find the correct ID.`);
+    }
+  }
+}
+
 // Reject derived-ID collisions, both within this call and against existing
 // files. Distinct names can slugify to the same ID (e.g. "Eye + face" and
 // "Eye face"), and the {today}- prefix only disambiguates across days.
@@ -122,7 +131,6 @@ export function resolveEntityRefs(
 }
 function resolveRefs(store: Store, projects: (string | NewProject)[], actions: (string | NewAction)[], currentTime: Date): ResolvedRefs {
   const dataDir = store.getDataDir();
-  const today = formatDate(currentTime);
   const year = String(currentTime.getFullYear());
   const projectsDir = join(dataDir, 'projects', year);
   const actionsDir = join(dataDir, 'actions', year);
@@ -154,21 +162,13 @@ function resolveRefs(store: Store, projects: (string | NewProject)[], actions: (
   // fire after some projects/actions are already on disk. (An I/O failure
   // mid-sequence can still leave a partial create; only the collision check is
   // all-or-nothing.)
-  const newProjectIds = newProjects.map(np => `${today}-${toKebabCase(np.name)}`);
-  const newActionIds = newActions.map(na => `${today}-${toKebabCase(na.name)}`);
+  const newProjectIds = newProjects.map(np => linkId(np, currentTime));
+  const newActionIds = newActions.map(na => linkId(na, currentTime));
   rejectIdCollisions(store, newProjectIds, newProjects, projectsDir, 'project');
   rejectIdCollisions(store, newActionIds, newActions, actionsDir, 'action');
 
   // Validate related_projects references (existing projects or ones created here).
-  for (const proj of newProjects) {
-    if (proj.related_projects) {
-      for (const rp of proj.related_projects) {
-        if (!store.getProject(rp.project) && !newProjectIds.includes(rp.project)) {
-          throw new Error(`Related project "${rp.project}" not found.\nHint: query projects to find the correct ID.`);
-        }
-      }
-    }
-  }
+  for (const proj of newProjects) requireRelatedProjects(store, proj.related_projects ?? [], newProjectIds);
 
   // Resolve every draft before creating anything: a later unreadable source or
   // conflicting input must not leave earlier projects/actions behind.
@@ -176,7 +176,6 @@ function resolveRefs(store: Store, projects: (string | NewProject)[], actions: (
   const actionBodies = newActions.map(act => resolveMarkdownSource(act.body, act.body_file, 'body') ?? '');
 
   // 4. Create new projects (IDs derived and collision-checked in step 3).
-  const createdProjectIds: string[] = [];
   for (let i = 0; i < newProjects.length; i++) {
     const proj = newProjects[i];
     const id = newProjectIds[i];
@@ -187,12 +186,9 @@ function resolveRefs(store: Store, projects: (string | NewProject)[], actions: (
     if (proj.related_projects && proj.related_projects.length > 0) fm.related_projects = proj.related_projects;
     store.saveProject(id, fm, projectBodies[i], file);
     store.addIndexEntry('projects', file, id, proj.description);
-
-    createdProjectIds.push(id);
   }
 
   // 5. Create new actions (IDs derived and collision-checked in step 3).
-  const createdActionIds: string[] = [];
   for (let i = 0; i < newActions.length; i++) {
     const act = newActions[i];
     const id = newActionIds[i];
@@ -210,15 +206,13 @@ function resolveRefs(store: Store, projects: (string | NewProject)[], actions: (
     if (act.deadline) fm.deadline = act.deadline;
     store.saveAction(id, fm, actionBodies[i], file);
     store.addIndexEntry('actions', file, id, act.description);
-
-    createdActionIds.push(id);
   }
 
   return {
-    projectIds: [...existingProjectIds, ...createdProjectIds],
-    actionIds: [...existingActionIds, ...createdActionIds],
-    createdProjectIds,
-    createdActionIds,
+    projectIds: [...existingProjectIds, ...newProjectIds],
+    actionIds: [...existingActionIds, ...newActionIds],
+    createdProjectIds: newProjectIds,
+    createdActionIds: newActionIds,
   };
 }
 
@@ -258,7 +252,7 @@ function capture(store: Store, args: CaptureArgs, now?: Date): CaptureResult {
 
   const entryBlock = buildEntryBlock(entryId, allProjectIds, allActionIds, content);
 
-  store.saveEntry(entryId, allProjectIds, allActionIds, content, weekFilePath, fileContent => {
+  store.saveEntry(entryId, weekFilePath, fileContent => {
     let weeklyContent: string;
     if (fileContent !== undefined) {
       // Prepend the new entry, then re-render every existing entry so the whole

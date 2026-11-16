@@ -63,7 +63,7 @@ describe('managed mutation paths', () => {
       if (location === 'dangling') expect(existsSync(target)).toBe(false);
       else if (kind === 'directory') expect(readdirSync(target)).toEqual([]);
       else expect(readFileSync(target, 'utf8')).toBe('Referenced content must stay untouched.');
-      expect(store.getProjectIds()).toEqual([]);
+      expect([...store.getProjects().keys()]).toEqual([]);
       expect(store.getActionIds()).toEqual([]);
       expect(store.getEntries()).toEqual([]);
     });
@@ -84,7 +84,7 @@ describe('managed mutation paths', () => {
     expectRejectedBeforeWrites(update);
     expect(readFileSync(target, 'utf8')).toBe(original);
     expect(lstatSync(file).isSymbolicLink()).toBe(true);
-    expect(store.getProjectIds()).toEqual([projectId]);
+    expect([...store.getProjects().keys()]).toEqual([projectId]);
   });
 
   it.each(['projects', 'actions', 'notes'] as const)('rejects a replaced %s index before changing the record body', kind => {

@@ -1,14 +1,13 @@
 // Show route building: validate the target against the store and
 // the webapp's route grammar, and emit the route the webapp navigates by.
-// Mirrors webapp/src/route.ts (buildRoute): segments are
-// encodeURIComponent-ed with ':' kept raw so entry-id timestamps read clean,
-// and asset paths keep their slashes real (encoded per segment).
+// Mirrors webapp/src/route.ts (buildRoute) and shares its segment encoding.
 import { realpathSync, statSync } from 'node:fs';
 import { join, normalize, relative, sep } from 'node:path';
 import { assertArtifactId } from '../../core/artifact.js';
 import { artifactHandle, assertAttachmentFilename, parseArtifactHandle } from '../../core/artifact-reference.js';
 import { contentAttachmentPath } from '../../core/content-attachment.js';
 import { assertManagedPath, isManagedInstancePath } from '../../core/managed-path.js';
+import { encodeRoutePath, encodeRouteSegment } from '../../core/record-reference.js';
 import type { Store } from '../../source/store.js';
 
 export interface ShowArgs {
@@ -26,19 +25,15 @@ export interface ShowArgs {
 export interface ShowPayload {
   route: string;
   url: string;
-  outcome: 'OPENED' | 'UNAVAILABLE';
+  outcome: 'OPENED' | 'UNAVAILABLE' | 'RETURNED';
 }
 
 export async function finishShow(
-  { route, port, url: requestedUrl, launchUrl }: { route: string; port: number; url?: string; launchUrl?: string },
+  { route, port, url: requestedUrl }: { route: string; port: number; url?: string },
   open: (url: string) => Promise<boolean>,
 ): Promise<ShowPayload> {
   const url = requestedUrl ?? `http://localhost:${port}/${route}`;
-  return { route: `/${route}`, url, outcome: await open(launchUrl ?? url) ? 'OPENED' : 'UNAVAILABLE' };
-}
-
-function encodeSegment(segment: string): string {
-  return encodeURIComponent(segment).replace(/%3A/gi, ':');
+  return { route: `/${route}`, url, outcome: await open(url) ? 'OPENED' : 'UNAVAILABLE' };
 }
 
 // Build the route for a show target, or throw the tool error explaining what
@@ -77,19 +72,19 @@ export function buildShowRoute(store: Store, args: ShowArgs): string {
     if (!store.getProject(args.project)) {
       throw new Error(`project "${args.project}" not found.\nHint: query projects to find the correct ID.`);
     }
-    parts.push('project', encodeSegment(args.project));
+    parts.push('project', encodeRouteSegment(args.project));
   }
   if (args.action) {
     if (!store.getAction(args.action)) {
       throw new Error(`action "${args.action}" not found.\nHint: query actions to find the correct ID.`);
     }
-    parts.push('action', encodeSegment(args.action));
+    parts.push('action', encodeRouteSegment(args.action));
   }
   if (args.entry) {
     if (!store.getEntryFile(args.entry)) {
       throw new Error(`entry "${args.entry}" not found.\nHint: query entries to find the correct ID (the entry's created timestamp).`);
     }
-    parts.push(encodeSegment(args.entry));
+    parts.push(encodeRouteSegment(args.entry));
   } else if (args.detail) {
     parts.push('detail');
   } else if (args.artifact) {
@@ -97,14 +92,14 @@ export function buildShowRoute(store: Store, args: ShowArgs): string {
     if (!store.getArtifact(args.artifact)) {
       throw new Error(`artifact "${args.artifact}" not found.\nHint: query artifacts to find the correct ID.`);
     }
-    parts.push('artifact', encodeSegment(args.artifact));
+    parts.push('artifact', encodeRouteSegment(args.artifact));
     if (args.filename !== undefined) {
       try {
         contentAttachmentPath(store.getDataDir(), args.artifact, args.filename);
       } catch {
         throw new Error(`artifact attachment "${args.filename}" not found.\nHint: filename must name a supporting file stored with this artifact.`);
       }
-      parts.push(encodeSegment(args.filename));
+      parts.push(encodeRouteSegment(args.filename));
     }
   } else if (args.asset) {
     const assetPath = args.asset.replace(/^\/+/, '');
@@ -117,7 +112,7 @@ export function buildShowRoute(store: Store, args: ShowArgs): string {
     } catch {
       throw new Error(`asset "${args.asset}" not found or unavailable.\nHint: choose a regular file inside this instance (e.g. report.pdf); asset paths are relative to the instance root.`);
     }
-    parts.push('asset', assetPath.split('/').map(encodeSegment).join('/'));
+    parts.push('asset', encodeRoutePath(assetPath));
   }
   const query = new URLSearchParams();
   if (source !== undefined) query.set('source', source);

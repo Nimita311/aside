@@ -20,9 +20,8 @@ import { collectSystemInstallation } from '../graphql/system-installation.js';
 import type { SystemDaemonSnapshot } from '../graphql/system-daemon.js';
 // The daemon's instance host: every loaded instance's record cache, calendar
 // syncer, and web server, plus the operations clients run against them (see
-// design/daemon.md, Roles). It owns no sockets — the daemon wraps it — so the
+// design/runtime.md, Data ownership). It owns no sockets — the daemon wraps it — so the
 // same host runs in-process under tests.
-import { realpathSync } from 'node:fs';
 import { resolve, relative } from 'node:path';
 import { validateToolArgs } from '../mcp/schemas.js';
 import { Store } from '../source/store.js';
@@ -35,7 +34,7 @@ import { handleCapture } from '../mcp/tools/capture.js';
 import { handleUpdateAction, handleUpdateProject, handleUpdateEntry } from '../mcp/tools/update.js';
 import { buildShowRoute, finishShow, type ShowArgs } from '../mcp/tools/show.js';
 import { startWeb, resolveAppDir, openBrowser } from '../web/locate.js';
-import {cataloguedInstances, type AvailableInstance} from '../core/catalogue.js';
+import {cataloguedInstances, instanceFamilyKey, instanceIdError, observedInstance, type AvailableInstance} from '../core/catalogue.js';
 import { instanceCardSummary } from '../web/summary.js';
 import type { WebBackend } from '../web/server.js';
 import type { AsideWebServer } from '../web/server.js';
@@ -44,13 +43,11 @@ import { CalClient } from '../mcp/calendar/client.js';
 import { geocodeAddress } from '../mcp/geocoding.js';
 import { CalSync, storeAction, type SyncAction } from '../mcp/calendar/sync.js';
 import { collectCalendarInfo, collectCalendarStatus, collectCalendarSyncInfo } from '../mcp/calendar/info.js';
-import { isAsideDir, readManifestResult, readInstanceRecordResult, shouldRetainKnownInstance, InstancePathError } from '../core/instance.js';
+import { isAsideDir, readManifestResult, readInstanceRecordResult, shouldRetainKnownInstance, instancePathError, InstancePathError } from '../core/instance.js';
 import { isInstanceId } from '../core/identity.js';
-import {checkoutInfo, type CheckoutInfo} from '../core/worktree.js';
-import type {ParseIssue, ParseResult, InstanceRecord, WebappSidebarSection} from '../core/types.js';
+import {canonicalPath, checkoutInfo, type CheckoutInfo} from '../core/worktree.js';
+import {eventTitlePrefixes, type ParseIssue, type ParseResult, type InstanceRecord, type WebappSidebarSection} from '../core/types.js';
 import {assertSidebarUnchanged, assertWebappSidebar, SidebarConflictError} from '../core/webapp-config.js';
-import { daemonPaths } from './paths.js';
-import { WebAuth } from '../web/auth.js';
 import { InstanceLifecycle, type InstanceLifecycleOptions } from './instance-lifecycle.js';
 import { InstanceCalendarLifecycle } from './calendar-lifecycle.js';
 import {readExecutionContextSnapshot} from '../source/execution-context.js';
@@ -69,11 +66,9 @@ export interface ToolResult {
 export interface ShowResult {
   route: string;
   port: number;
-  // Handoffs leave connected tabs untouched.
+  // Opening a new view leaves existing tabs untouched.
   tab: boolean;
   url?: string;
-  // Private local handoff file; showUrl returns this for caller-managed opening.
-  launchUrl?: string;
 }
 
 interface Loaded {
@@ -92,14 +87,23 @@ function outcomeWarnings(warning: string | undefined, others: string[] = []): {w
   return warnings.length ? {warnings} : {};
 }
 
+// A loaded instance's manifest issues, under either spelling of its file.
+function manifestIssues(store: Store, path: string): ParseIssue[] {
+  return store.getIssues().filter(issue => issue.file === 'aside.md' || issue.file === resolve(path, 'aside.md'));
+}
+
+// Usage and automation diagnostics are both attempted before either failure
+// surfaces. Thunks keep a synchronous throw inside the returned promise.
+async function bothSettled<U, A>(usage: () => Promise<U>, automation: () => Promise<A> | A) {
+  const [usageWork, automationWork] = await Promise.allSettled([usage(), automation()]);
+  if (usageWork.status === 'rejected') throw usageWork.reason;
+  if (automationWork.status === 'rejected') throw automationWork.reason;
+  return {usage: usageWork.value, automation: automationWork.value};
+}
+
 // One key per instance however its path is spelled.
 export function instanceKey(path: string): string {
-  const abs = resolve(path);
-  try {
-    return realpathSync(abs);
-  } catch {
-    return abs;
-  }
+  return canonicalPath(path);
 }
 
 export class InstanceHost {
@@ -226,22 +230,8 @@ export class InstanceHost {
   private usageLog = new GraphQLUsageLog();
   configureUsage(logs: string): void { this.usageLog = new GraphQLUsageLog({logs}); }
   usageStatus() { return this.usageLog.status(); }
-  async cleanupDiagnostics() {
-    const [usage, automation] = await Promise.allSettled([
-      this.usageLog.cleanup(), this.automation?.cleanup() ?? {runs: 0},
-    ]);
-    if (usage.status === 'rejected') throw usage.reason;
-    if (automation.status === 'rejected') throw automation.reason;
-    return {usage: usage.value, automation: automation.value};
-  }
-  async purgeDiagnostics(root?: string) {
-    const [usage, automation] = await Promise.allSettled([
-      this.usageLog.purge(root), this.automation?.purge(root) ?? {runs: 0},
-    ]);
-    if (usage.status === 'rejected') throw usage.reason;
-    if (automation.status === 'rejected') throw automation.reason;
-    return {usage: usage.value, automation: automation.value};
-  }
+  cleanupDiagnostics() { return bothSettled(() => this.usageLog.cleanup(), () => this.automation?.cleanup() ?? {runs: 0}); }
+  purgeDiagnostics(root?: string) { return bothSettled(() => this.usageLog.purge(root), () => this.automation?.purge(root) ?? {runs: 0}); }
   readonly cal: CalClient;
   private automation?: AutomationController;
   private automationStorage?: string;
@@ -310,6 +300,11 @@ export class InstanceHost {
     return loaded.store.getIssues().find(issue => issue.severity === 'error' && (issue.code === 'rebuild_failed' ||
       file && (issue.file === file || issue.file === relative(loaded.path, file))))?.message;
   }
+  // A saved action is blocked through its own file; a projected occurrence
+  // through its template's.
+  private delegationTargetBlock(loaded: Loaded, target: ReturnType<InstanceHost['delegationAction']>): string | undefined {
+    return this.delegationBlock(loaded, loaded.store.getAction(target.id) ? target.id : target.action.frontMatter.occurrence?.template ?? target.id);
+  }
   private delegationAction(loaded: Loaded, id: string) {
     const actions = loaded.store.getActions();
     const saved = actions.get(id);
@@ -325,7 +320,7 @@ export class InstanceHost {
     const target = this.delegationAction(loaded, id);
     if (target.action.frontMatter.recurrence !== undefined) throw new Error('Run a projected occurrence, not the recurrence template.');
     assertDelegation(target.action.frontMatter.delegation);
-    const blocked = this.delegationBlock(loaded, loaded.store.getAction(target.id) ? target.id : target.action.frontMatter.occurrence?.template ?? target.id);
+    const blocked = this.delegationTargetBlock(loaded, target);
     if (blocked) throw new Error(blocked);
     return this.automation.dispatch({...delegationSource(loaded.path, loaded.store.getManifest().id, target.id, target.action), executionContext: loaded.store.getExecutionContext()});
   }
@@ -334,7 +329,7 @@ export class InstanceHost {
     if (!loaded) throw new Error('Delegation instance is no longer loaded.');
     const target = this.delegationAction(loaded, request.target.id);
     const fm = target.action.frontMatter;
-    const blocked = this.delegationBlock(loaded, loaded.store.getAction(target.id) ? target.id : fm.occurrence?.template ?? target.id);
+    const blocked = this.delegationTargetBlock(loaded, target);
     if (blocked) throw new Error(blocked);
     if (loaded.store.getManifest().id !== request.source.instance) throw new Error('Delegation instance identity changed before dispatch.');
     const definition = assertDelegation(fm.delegation);
@@ -359,7 +354,6 @@ export class InstanceHost {
   private instances = new Map<string, Loaded>();
   private webServer?: AsideWebServer;
   private webPort: number | undefined;
-  private webState = daemonPaths().state;
   private webStarting?: Promise<AsideWebServer>;
   private webBackend: WebBackend = {
     instances: () => this.availableInstances(this.loadedPaths()),
@@ -413,10 +407,10 @@ export class InstanceHost {
     const managed = this.catalogue.flatMap(instance => {
       const loaded = this.instances.get(instance.path);
       if (!loaded) return [instance];
-      if (loaded.store.getIssues().some(issue => issue.code === 'read_error' && (issue.file === 'aside.md' || issue.file === resolve(instance.path, 'aside.md')))) return [];
+      if (manifestIssues(loaded.store, instance.path).some(issue => issue.code === 'read_error')) return [];
       const {id, name, description} = loaded.store.getManifest();
       const {error: _error, address: _address, alias: _alias, duplicatePaths: _duplicates, ...previous} = instance;
-      return [{...previous, id, name, description, ...(!isInstanceId(id) ? {error: 'aside.md needs a valid instance id (lowercase letters, numbers, and hyphens).'} : {})}];
+      return [{...previous, id, name, description, ...instanceIdError(id)}];
     });
     return cataloguedInstances([...managed,
       ...[...this.passiveCatalogue.values()].filter(instance => wanted.has(instance.path) && !this.catalogueRecords.has(instance.path))])
@@ -433,11 +427,8 @@ export class InstanceHost {
       this.observedExecutionContexts.set(key, readExecutionContextSnapshot(key));
       this.passiveCatalogue.delete(key);
       if (record.issues.some(issue => issue.code === 'read_error') || !isAsideDir(key)) continue;
-      const {id, name, description} = record.value.manifest, topology = checkoutInfo(key);
-      this.passiveCatalogue.set(key, {path: key, id, name, description,
-        ...(topology.worktree ? {worktree: topology.worktree} : {}),
-        ...(topology.error ? {calendarWarning: topology.error} : {}),
-        ...(!isInstanceId(id) ? {error: 'aside.md needs a valid instance id (lowercase letters, numbers, and hyphens).'} : {})});
+      const topology = checkoutInfo(key);
+      this.passiveCatalogue.set(key, observedInstance(key, record.value.manifest, topology.worktree, topology.error));
     }
   }
 
@@ -476,8 +467,8 @@ export class InstanceHost {
     });
   }
 
-  configureWeb(backend: WebBackend, port?: number, stateDirectory = daemonPaths().state): void {
-    this.webBackend = backend; this.webPort = port; this.webState = stateDirectory;
+  configureWeb(backend: WebBackend, port?: number): void {
+    this.webBackend = backend; this.webPort = port;
   }
   // Forward syncs still running, awaited by flush() before the daemon exits.
   private inFlight = new Set<Promise<unknown>>();
@@ -501,7 +492,7 @@ export class InstanceHost {
     this.cal = cal;
     // The helper's `changed` signal is coarse and can fire in bursts (incl. our
     // own writes), so debounce, then reverse-reconcile every loaded instance.
-    cal.onChanged(() => this.scheduleReconcile());
+    cal.onChanged(() => this.sources.reconcileFeature('calendar'));
   }
 
   isLoaded(path: string): boolean {
@@ -528,7 +519,7 @@ export class InstanceHost {
     for (const observed of this.observedIdentities.keys()) if (!paths.has(observed)) this.observedIdentities.delete(observed);
     return [...paths].sort().map(path => {
       const loaded = this.instances.get(path);
-      const record = loaded ? {value: loaded.store.getInstance()!, issues: loaded.store.getIssues().filter(issue => issue.file === 'aside.md' || issue.file === resolve(path, 'aside.md'))} : readInstanceRecordResult(path);
+      const record = loaded ? {value: loaded.store.getInstance()!, issues: manifestIssues(loaded.store, path)} : readInstanceRecordResult(path);
       if (!loaded) this.observedExecutionContexts.set(path, readExecutionContextSnapshot(path));
       this.catalogueRecords.set(path, record);
       this.topologies.set(path, checkoutInfo(path));
@@ -542,8 +533,7 @@ export class InstanceHost {
   }
 
   private identityFamily(path: string): string {
-    const worktree = this.topologies.get(path)?.worktree;
-    return worktree ? `${worktree.commonDir}\0${worktree.primaryPath}` : path;
+    return instanceFamilyKey(this.topologies.get(path)?.worktree, path);
   }
 
   private identityIssue(path: string): ParseIssue | null {return this.identityIssues.get(this.key(path)) ?? null;}
@@ -598,10 +588,7 @@ export class InstanceHost {
     }
     this.catalogue = cataloguedInstances(observations.filter(observation => !observation.readError).map(observation => {
       const manifest = this.catalogueRecords.get(observation.path)!.value.manifest, topology = this.topologies.get(observation.path);
-      return {path: observation.path, id: manifest.id, name: manifest.name, description: manifest.description,
-        ...(topology?.worktree ? {worktree: topology.worktree} : {}),
-        ...(this.calendarWarning(observation.path) ? {calendarWarning: this.calendarWarning(observation.path)} : {}),
-        ...(!isInstanceId(manifest.id) ? {error: 'aside.md needs a valid instance id (lowercase letters, numbers, and hyphens).'} : {})};
+      return observedInstance(observation.path, manifest, topology?.worktree, this.calendarWarning(observation.path));
     }));
     const observedPaths = new Set(observations.map(observation => observation.path));
     for (const path of this.catalogueRecords.keys()) if (!observedPaths.has(path)) {
@@ -622,23 +609,21 @@ export class InstanceHost {
     const existing = this.instances.get(key);
     if (existing) return existing;
     if (!isAsideDir(key)) {
-      const error = readManifestResult(key).issues.find(issue => issue.code === 'read_error');
+      const error = instancePathError(key);
       if (!shouldRetainKnownInstance(key)) this.unloadKey(key);
-      if (error) throw new Error(error.message);
-      throw new InstancePathError(`Not an aside instance (no aside.md manifest): ${key}`);
+      throw error;
     }
-    const abs = key;
-    const store = new Store(abs);
+    const store = new Store(key);
     this.admittedKeys.set(resolve(path), key);
     // The syncer reads the instance id and config from the store's manifest at
     // use time, so a later aside.md edit (e.g. adding the missing `id`) takes
     // effect without a reload; no fallback values are injected here.
-    const loaded: Loaded = {key, path: abs, store, sync: new CalSync(this.cal, '', store, undefined, () => this.calendarBlock(abs), write => {this.sources.mutation(store, write);})};
+    const loaded: Loaded = {key, path: key, store, sync: new CalSync(this.cal, '', store, undefined, () => this.calendarBlock(key), write => {this.sources.mutation(store, write);})};
     this.instances.set(key, loaded);
     try {this.sources.register(store);}
     catch (error) {this.instances.delete(key); store.close(); loaded.sync.dispose(); throw error;}
     this.refreshIdentities();
-    this.scheduleReconcile(); // catch up on calendar edits made while it was not loaded
+    this.sources.reconcileFeature('calendar'); // catch up on calendar edits made while it was not loaded
     return loaded;
   }
 
@@ -652,11 +637,11 @@ export class InstanceHost {
   };
 
   private loadedInstance = (path: string) => {
-    const loaded = this.instances.get(this.key(path));
-    if (!loaded) return this.catalogueRecords.get(this.key(path)) ?? this.passiveRecords.get(this.key(path));
+    const key = this.key(path), loaded = this.instances.get(key);
+    if (!loaded) return this.catalogueRecords.get(key) ?? this.passiveRecords.get(key);
     const value = loaded.store.getInstance();
     if (!value) throw new Error('Loaded instance metadata is unavailable. Wait for lifecycle reconciliation.');
-    return {value, issues: loaded.store.getIssues().filter(issue => issue.file === 'aside.md' || issue.file === resolve(loaded.path, 'aside.md'))};
+    return {value, issues: manifestIssues(loaded.store, loaded.path)};
   };
 
   metadata(path: string): ParseResult<InstanceRecord> {
@@ -674,10 +659,6 @@ export class InstanceHost {
   // without opening their stores or presenting expected worktree info as a warning.
   calendarWarning(path: string): string | undefined {
     return this.identityIssue(path)?.message ?? this.topologyWarnings.get(this.key(path));
-  }
-
-  unload(path: string): void {
-    this.unloadKey(this.key(path));
   }
 
   unloadKey(key: string): void {
@@ -721,7 +702,7 @@ export class InstanceHost {
 
   // A GraphQL MCP request includes session selection explicitly. Store access
   // is lazy so discovery, introspection, and instance creation need no default.
-  graphql(session: InstanceSession, mode: 'query' | 'mutation', args: GraphQLArgs, signal?: AbortSignal, use: (path: string) => string = path => path, onInstancePathError?: () => void) {
+  graphql(session: InstanceSession, mode: 'query' | 'mutation', args: GraphQLArgs, signal?: AbortSignal, use: (path: string) => string = path => path, onInstancePathError?: () => void, navigationOrigin?: string) {
     return executeGraphQL(() => this.load(use(session.requireInstance())).store, mode, args, {
       resolveStore: this.resolveStore, loadedInstance: this.loadedInstance, executionContext: this.executionContext,
       observeInstance: path => {this.observeInstances([path]); return this.availableInstances([path]).length > 0;},
@@ -738,11 +719,14 @@ export class InstanceHost {
       runDelegation: (root, id) => this.runDelegation(root, id),
       automationRuntime: root => this.automationRuntime(root),
       automationLog: (root, runId, stream, offset, limit) => this.automationLog(root, runId, stream, offset, limit),
-      show: async input => finishShow(await this.show(use(session.requireInstance()), input), openBrowser),
+      show: async input => {
+        const result = await this.show(use(session.requireInstance()), input);
+        if (navigationOrigin) return { route: `/${result.route}`, url: `${navigationOrigin}/${result.route}`, outcome: 'RETURNED' as const };
+        return finishShow(result, openBrowser);
+      },
       showUrl: async input => {
-        const {launchUrl} = await this.show(use(session.requireInstance()), input);
-        if (!launchUrl) throw new Error('Could not prepare browser authorization. Request showUrl again.');
-        return launchUrl;
+        const result = await this.show(use(session.requireInstance()), input);
+        return navigationOrigin ? `${navigationOrigin}/${result.route}` : result.url ?? `http://localhost:${result.port}/${result.route}`;
       },
     });
   }
@@ -793,8 +777,8 @@ export class InstanceHost {
         const before = store.getManifest().config;
         handleUpdateInstance(store, args);
         const after = store.getManifest().config;
-        if ((before?.scheduledEventTitlePrefix ?? '▢ ') === (after?.scheduledEventTitlePrefix ?? '▢ ') &&
-          (before?.doneEventTitlePrefix ?? '✓ ') === (after?.doneEventTitlePrefix ?? '✓ ')) return {};
+        const was = eventTitlePrefixes(before), now = eventTitlePrefixes(after);
+        if (was.active === now.active && was.done === now.done) return {};
         const warnings = this.calendarWarnings(loaded, this.scheduledActions(store).filter(action => !!action.frontMatter.calendar));
         return warnings.length ? {warnings} : {};
       }
@@ -858,19 +842,13 @@ export class InstanceHost {
     return this.calendarWarnings(loaded, actions);
   }
 
-  private scheduleReconcile(): void {
-    this.sources.reconcileFeature('calendar');
-  }
-
   // One server belongs to the host, independently of any loaded instance.
   async web(appDir?: string): Promise<AsideWebServer> {
     if (this.webServer) {
       if (appDir) this.webServer.setAppDir(resolveAppDir(appDir));
       return this.webServer;
     }
-    this.webStarting ??= startWeb(resolveAppDir(appDir), this.webBackend, this.webPort, {
-      auth: new WebAuth(this.webState), stateDirectory: this.webState,
-    }).then(server => {
+    this.webStarting ??= startWeb(resolveAppDir(appDir), this.webBackend, this.webPort).then(server => {
       server.onTabsChanged = () => this.onTabsChanged?.();
       this.webServer = server;
       return server;
@@ -878,18 +856,17 @@ export class InstanceHost {
     return this.webStarting;
   }
 
-  async show(path: string, args: ShowArgs, appDir?: string, navigate = true): Promise<ShowResult> {
+  async show(path: string, args: ShowArgs, appDir?: string): Promise<ShowResult> {
     const validated = validateToolArgs('show', args);
     const viewRoute = buildShowRoute(this.load(path).store, validated);
     const server = await this.web(appDir);
-    const key = this.key(path);
-    const route = server.routeFor(key, viewRoute);
-    return { route, port: server.port, ...await server.show(key, route, navigate) };
+    const route = server.routeFor(this.key(path), viewRoute);
+    return { route, port: server.port, url: `${server.origin}/${route}`, tab: false };
   }
 
-  async serve(appDir?: string, navigate = true): Promise<ShowResult> {
+  async serve(appDir?: string): Promise<ShowResult> {
     const server = await this.web(appDir);
-    return { route: '', port: server.port, ...await server.show(null, '', navigate) };
+    return { route: '', port: server.port, url: `${server.origin}/`, tab: false };
   }
 
   // Settle calendar work before exit: wait for forward syncs in flight, then

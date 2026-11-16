@@ -12,37 +12,32 @@ import { assertAutomationEdits } from '../core/automation-edits.js';
 const calendarNameSchema = z.string().refine(isCalendarName, CALENDAR_NAME_RULE);
 const locationSchema = z.string().refine(value => parseLocationHandle(value) !== null, LOCATION_HANDLE_RULE);
 
-const automationsSchema = z.record(z.string(), z.unknown()).superRefine((value, ctx) => {
-  try { assertAutomationDeclarations(value); }
+// Core assertions state each rule once; a schema reports the failure as its issue.
+const asserting = (assert: (value: any) => unknown) => (value: unknown, ctx: z.RefinementCtx) => {
+  try { assert(value); }
   catch (error) { ctx.addIssue({ code: 'custom', message: (error as Error).message }); }
-});
+};
 
-const delegationSchema = z.record(z.string(), z.unknown()).superRefine((value, ctx) => {
-  try { assertDelegation(value); }
-  catch (error) { ctx.addIssue({code: 'custom', message: (error as Error).message}); }
-});
+const automationsSchema = z.record(z.string(), z.unknown()).superRefine(asserting(assertAutomationDeclarations));
+
+const delegationSchema = z.record(z.string(), z.unknown()).superRefine(asserting(assertDelegation));
 
 const automationEditsSchema = z.object({
   upsert: z.record(z.string(), z.unknown()).nullable().optional(),
   patch: z.record(z.string(), z.unknown()).nullable().optional(),
   remove: z.array(z.string()).nullable().optional(),
-}).strict().superRefine((value, ctx) => {
-  try { assertAutomationEdits(value); }
-  catch (error) { ctx.addIssue({code: 'custom', message: (error as Error).message}); }
-}).nullable().optional();
+}).strict().superRefine(asserting(assertAutomationEdits)).nullable().optional();
 
 const recurrenceScheduleSchema = z.object({ dtstart: z.string(), rrule: z.string(), timezone: z.string().optional() }).strict();
-const recurrenceSchema = z.array(recurrenceScheduleSchema).superRefine((value, ctx) => {
-  try { assertRecurrence(value); } catch (error) { ctx.addIssue({ code: 'custom', message: (error as Error).message }); }
-});
-const appendedScheduleSchema = recurrenceScheduleSchema.superRefine((value, ctx) => {
-  const parsed = recurrenceSchema.safeParse([value]);
+const recurrenceSchema = z.array(recurrenceScheduleSchema).superRefine(asserting(assertRecurrence));
+// One schedule obeys the list's rules; report its issues at the schedule's own path.
+const scheduleIssues = (schedule: unknown, ctx: z.RefinementCtx) => {
+  const parsed = recurrenceSchema.safeParse([schedule]);
   if (!parsed.success) for (const issue of parsed.error.issues) ctx.addIssue({ ...issue, path: issue.path.slice(1) });
-});
-const recurrenceSelectorSchema = z.object({ dtstart: z.string(), timezone: z.string().optional() }).strict().superRefine((value, ctx) => {
-  const parsed = recurrenceSchema.safeParse([{ ...value, rrule: 'FREQ=DAILY' }]);
-  if (!parsed.success) for (const issue of parsed.error.issues) ctx.addIssue({ ...issue, path: issue.path.slice(1) });
-});
+};
+const appendedScheduleSchema = recurrenceScheduleSchema.superRefine(scheduleIssues);
+const recurrenceSelectorSchema = z.object({ dtstart: z.string(), timezone: z.string().optional() }).strict()
+  .superRefine((value, ctx) => scheduleIssues({ ...value, rrule: 'FREQ=DAILY' }, ctx));
 const recurrenceEndSchema = z.object({
   schedule: recurrenceSelectorSchema,
   at: z.string().datetime({ offset: true }).refine(value => {
@@ -111,6 +106,10 @@ const newActionSchema = z.object({
   location: locationSchema.optional(),
 }).strict();
 
+// A link list names existing records by ID and declares new ones inline.
+const projectLinksSchema = z.array(z.union([z.string(), newProjectSchema]));
+const actionLinksSchema = z.array(z.union([z.string(), newActionSchema]));
+
 const graphQLArgs = z.object({
   document: z.string().min(1).max(64_000).describe('Standard GraphQL operation document. Use introspection to discover types, fields, filters, and mutation inputs.'),
   variables: z.record(z.string(), z.unknown()).optional().describe('GraphQL variable values as a JSON object.'),
@@ -130,10 +129,7 @@ export const TOOL_SCHEMAS = {
     }).strict(),
   update_instance: z.object({
     webapp: z.object({
-      sidebar: z.array(z.unknown()).superRefine((value, ctx) => {
-        try { assertWebappSidebar(value); }
-        catch (error) { ctx.addIssue({ code: 'custom', message: (error as Error).message }); }
-      }).optional(),
+      sidebar: z.array(z.unknown()).superRefine(asserting(assertWebappSidebar)).optional(),
     }).strict().optional(),
     automations: automationsSchema.nullable().optional(),
     automationEdits: automationEditsSchema,
@@ -201,14 +197,8 @@ export const TOOL_SCHEMAS = {
       content: z.string().optional(),
       content_file: contentFileSchema,
       description: z.string(),
-      projects: z.array(z.union([
-        z.string(),
-        newProjectSchema,
-      ])).optional(),
-      actions: z.array(z.union([
-        z.string(),
-        newActionSchema,
-      ])).optional(),
+      projects: projectLinksSchema.optional(),
+      actions: actionLinksSchema.optional(),
     }).strict(),
   update_action: z.object({
       delegation: delegationSchema.nullable().optional(),
@@ -244,20 +234,14 @@ export const TOOL_SCHEMAS = {
       content: z.string().optional(),
       content_file: contentFileSchema,
       description: z.string().optional(),
-      projects: z.array(z.union([
-        z.string(),
-        newProjectSchema,
-      ])).nullable().optional(),
-      actions: z.array(z.union([
-        z.string(),
-        newActionSchema,
-      ])).nullable().optional(),
+      projects: projectLinksSchema.nullable().optional(),
+      actions: actionLinksSchema.nullable().optional(),
       projectEdits: z.object({
-        add: z.array(z.union([z.string(), newProjectSchema])).nullable().optional(),
+        add: projectLinksSchema.nullable().optional(),
         remove: z.array(z.string().min(1)).nullable().optional(),
       }).strict().nullable().optional(),
       actionEdits: z.object({
-        add: z.array(z.union([z.string(), newActionSchema])).nullable().optional(),
+        add: actionLinksSchema.nullable().optional(),
         remove: z.array(z.string().min(1)).nullable().optional(),
       }).strict().nullable().optional(),
     }).strict(),

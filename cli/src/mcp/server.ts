@@ -14,24 +14,24 @@ import { DaemonClient } from '../daemon/client.js';
 // daemon over its socket; tests inject an in-process host.
 export interface Backend {
   issues(instance: string): Promise<ParseIssue[]>;
-  graphql(session: InstanceSessionState, mode: 'query' | 'mutation', args: GraphQLArgs): Promise<{ result: GraphQLResult; session: InstanceSessionState }>;
+  graphql(session: InstanceSessionState, mode: 'query' | 'mutation', args: GraphQLArgs, context?: { origin?: string }): Promise<{ result: GraphQLResult; session: InstanceSessionState }>;
   graphqlSchema(session: InstanceSessionState): Promise<{ result: GraphQLSchemaResult; session: InstanceSessionState }>;
   close(): void;
 }
 
-function daemonBackend(client: DaemonClient = new DaemonClient()): Backend {
+export function daemonBackend(client: DaemonClient = new DaemonClient()): Backend {
   return {
     issues: async (instance) => (await client.request<{ issues: ParseIssue[] }>('instance.info', { instance }, { read: true })).issues,
-    graphql: (session, mode, args) => client.request('graphql', { session, mode, args }, { read: mode === 'query' }),
+    graphql: (session, mode, args, context) => client.request('graphql', { session, mode, args, navigationOrigin: context?.origin }, { read: mode === 'query' }),
     graphqlSchema: session => client.request('graphql.schema', { session }, { read: true }),
     close: () => client.close(),
   };
 }
 
-// The MCP server is a daemon client (design/daemon.md): it owns this session's
+// The MCP server is a daemon client (design/runtime.md): it owns this session's
 // workspace — discovery and the active instance — and sends that selection with
 // every request.
-export async function startServer(dataDir: string | null, candidates: string[], configIssues: ParseIssue[] = [], discovery = true, backend: Backend = daemonBackend()): Promise<void> {
+export function createMcpServer(dataDir: string | null, candidates: string[], configIssues: ParseIssue[] = [], discovery = true, backend: Backend = daemonBackend(), origin?: () => string | undefined): McpServer {
   // The active instance + every instance encountered this session (the startup
   // candidates and any later selectInstance). instances reports these so the
   // agent can switch between them.
@@ -78,11 +78,16 @@ export async function startServer(dataDir: string | null, candidates: string[], 
       annotations: { readOnlyHint: name === 'query' },
     }, async args => {
       const mode = name === 'query' ? 'query' : 'mutation';
-      const result = await sessionRequest(mode, session => backend.graphql(session, mode, args));
+      const result = await sessionRequest(mode, session => backend.graphql(session, mode, args, { origin: origin?.() }));
       return { content: [{ type: 'text' as const, text: JSON.stringify(result) }], structuredContent: result, isError: hasGraphQLProblems(result) };
     });
   }
 
+  return server;
+}
+
+export async function startServer(dataDir: string | null, candidates: string[], configIssues: ParseIssue[] = [], discovery = true, backend: Backend = daemonBackend()): Promise<void> {
+  const server = createMcpServer(dataDir, candidates, configIssues, discovery, backend);
   const transport = new StdioServerTransport();
   // The daemon connection would keep this process alive after its host is gone.
   transport.onclose = () => {

@@ -1,5 +1,5 @@
 import type { EntityRef, EntityType } from '../lib/types';
-import { safeDecode } from '../lib/types';
+import { encodeRoutePath, encodeRouteSegment, safeDecode } from '../lib/types';
 import { isEntryTimestamp } from './entity-reference';
 import { assertArtifactId, assertAttachmentFilename } from '../../cli/src/core/artifact-reference';
 import { canonicalEntrySource } from './entry-source-reference';
@@ -70,32 +70,21 @@ function isEntryId(segment: string): boolean {
 
 const ENTITY_TYPES = new Set<string>(['project', 'action', 'entry']);
 
-// A route segment: encoded, but with ':' kept raw — legal in a path segment
-// and in a fragment (RFC 3986 pchar), so entry-id timestamps stay readable.
-function encodeSegment(segment: string): string {
-  return encodeURIComponent(segment).replace(/%3A/gi, ':');
-}
-
-// An asset path as route segments: each segment encoded, slashes kept real.
-function encodePath(path: string): string {
-  return path.split('/').map(encodeSegment).join('/');
-}
-
 export function buildRoute(state: ViewState): string {
   const parts: string[] = [];
-  if (state.filter) parts.push(state.filter.type, encodeSegment(state.filter.id));
+  if (state.filter) parts.push(state.filter.type, encodeRouteSegment(state.filter.id));
   if (state.date) {
     if (!parseDateHandle(dateHandle(state.date))) throw new Error('Invalid date reference');
-    parts.push('date', encodePath(dateHandle(state.date).slice(6)));
-  } else if (state.jump) parts.push(encodeSegment(state.jump));
+    parts.push('date', encodeRoutePath(dateHandle(state.date).slice(6)));
+  } else if (state.jump) parts.push(encodeRouteSegment(state.jump));
   else if (state.doc?.kind === 'detail') parts.push('detail');
-  else if (state.doc?.kind === 'asset') parts.push('asset', encodePath(state.doc.path));
+  else if (state.doc?.kind === 'asset') parts.push('asset', encodeRoutePath(state.doc.path));
   else if (state.doc?.kind === 'artifact') {
     assertArtifactId(state.doc.id);
-    parts.push('artifact', encodeSegment(state.doc.id));
+    parts.push('artifact', encodeRouteSegment(state.doc.id));
     if (state.doc.filename !== undefined) {
       assertAttachmentFilename(state.doc.filename);
-      parts.push(encodeSegment(state.doc.filename));
+      parts.push(encodeRouteSegment(state.doc.filename));
     }
   }
   const search = state.filter?.type === 'entry' ? '' : state.search?.trim();

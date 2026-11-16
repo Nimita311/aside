@@ -17,7 +17,7 @@ describe('index description edits', () => {
   it('keeps canonical block prepending unchanged', () => {
     const existing = '- id: old\n  description: Keep\n';
     writeFileSync(file, existing);
-    prependIndex(file, '2026-05-05T09:00', 'New: ready');
+    prependIndex(file, '2026-05-05T09:00', 'New: ready', dir);
     expect(readFileSync(file, 'utf8')).toBe('- id: "2026-05-05T09:00"\n  description: "New: ready"\n' + existing);
   });
 
@@ -37,7 +37,7 @@ describe('index description edits', () => {
     { name: 'CRLF and an anchored sequence', content: '&items\r\n  - id: old\r\n    description: Keep\r\n' },
   ])('prepends inside $name without losing existing items or comments', ({ content }) => {
     writeFileSync(file, content);
-    prependIndex(file, 'new', 'New, ready');
+    prependIndex(file, 'new', 'New, ready', dir);
     const updated = readFileSync(file, 'utf8');
     const before = parseIndex(content.replace(/^\ufeff/, ''));
     const parsed = parseIndex(updated);
@@ -51,7 +51,7 @@ describe('index description edits', () => {
 
   it('preserves string types when prepending to a YAML 1.1 document', () => {
     writeFileSync(file, '%YAML 1.1\n---\n- id: old\n  description: Keep\n');
-    prependIndex(file, 'new', 'yes');
+    prependIndex(file, 'new', 'yes', dir);
     const parsed = parseIndex(readFileSync(file, 'utf8'));
     expect(parsed.issues).toEqual([]);
     expect(parsed.value).toEqual([{ id: 'new', description: 'yes' }, { id: 'old', description: 'Keep' }]);
@@ -59,14 +59,14 @@ describe('index description edits', () => {
 
   it('preserves string types when replacing a YAML 1.1 description', () => {
     writeFileSync(file, '%YAML 1.1\n---\n- id: target\n  description: Old\n');
-    expect(updateIndexDescription(file, 'target', 'yes')).toBe(true);
+    expect(updateIndexDescription(file, 'target', 'yes', dir)).toBe(true);
     expect(parseIndex(readFileSync(file, 'utf8')).value[0].description).toBe('yes');
   });
 
   it('preserves indentation, comments, quote style, and other items', () => {
     const untouched = "  - id: other\n    description: 'A reference to id: target'\n";
     writeFileSync(file, "# Heading\n  - description: |- # summary\n      Old\n      content\n    id: 'target' # identity\n" + untouched);
-    expect(updateIndexDescription(file, 'target', 'New: ready #1')).toBe(true);
+    expect(updateIndexDescription(file, 'target', 'New: ready #1', dir)).toBe(true);
     expect(readFileSync(file, 'utf8')).toBe("# Heading\n  - description: \"New: ready #1\" # summary\n    id: 'target' # identity\n" + untouched);
     expect(parseIndex(readFileSync(file, 'utf8')).value[0]).toEqual({ id: 'target', description: 'New: ready #1' });
   });
@@ -79,7 +79,7 @@ describe('index description edits', () => {
     '- id: target\n  description: # comment\n',
   ])('replaces an entire description value without leftover authored lines (%j)', (content) => {
     writeFileSync(file, content);
-    expect(updateIndexDescription(file, 'target', 'Replacement')).toBe(true);
+    expect(updateIndexDescription(file, 'target', 'Replacement', dir)).toBe(true);
     const updated = readFileSync(file, 'utf8');
     expect(updated).not.toContain('Old');
     expect(updated).not.toContain('content');
@@ -96,7 +96,7 @@ describe('index description edits', () => {
     '- id: target',
   ])('adds an omitted description to the exact mapping (%j)', (content) => {
     writeFileSync(file, content);
-    expect(updateIndexDescription(file, 'target', 'Replacement')).toBe(true);
+    expect(updateIndexDescription(file, 'target', 'Replacement', dir)).toBe(true);
     const parsed = parseIndex(readFileSync(file, 'utf8'));
     expect(parsed.issues).toEqual([]);
     expect(parsed.value[0]).toEqual({ id: 'target', description: 'Replacement' });
@@ -109,7 +109,7 @@ describe('index description edits', () => {
   ])('quotes commas when replacing a flow-map description without changing surrounding text (%j)', (content) => {
     const description = 'Planning, build, review';
     writeFileSync(file, content);
-    expect(updateIndexDescription(file, 'target', description)).toBe(true);
+    expect(updateIndexDescription(file, 'target', description, dir)).toBe(true);
     const updated = readFileSync(file, 'utf8');
     expect(updated).toBe(content.replace('description: Old', 'description: "Planning, build, review"'));
     const parsed = parseIndex(updated);
@@ -127,7 +127,7 @@ describe('index description edits', () => {
   ])('adds a flow-map description while preserving existing comments and separators ($before)', ({ before, after }) => {
     const untouched = '- {id: other, description: Keep}\n';
     writeFileSync(file, before + untouched);
-    expect(updateIndexDescription(file, 'target', 'Planning, build, review')).toBe(true);
+    expect(updateIndexDescription(file, 'target', 'Planning, build, review', dir)).toBe(true);
     expect(readFileSync(file, 'utf8')).toBe(after + untouched);
     const parsed = parseIndex(readFileSync(file, 'utf8'));
     expect(parsed.issues).toEqual([]);
@@ -138,10 +138,10 @@ describe('index description edits', () => {
   });
 
   it('returns false when the file or exact item is absent', () => {
-    expect(updateIndexDescription(file, 'target', 'Replacement')).toBe(false);
+    expect(updateIndexDescription(file, 'target', 'Replacement', dir)).toBe(false);
     const content = '- id: target-2\n  description: Keep\n';
     writeFileSync(file, content);
-    expect(updateIndexDescription(file, 'target', 'Replacement')).toBe(false);
+    expect(updateIndexDescription(file, 'target', 'Replacement', dir)).toBe(false);
     expect(readFileSync(file, 'utf8')).toBe(content);
   });
 
@@ -149,7 +149,7 @@ describe('index description edits', () => {
     const shared = '- id: source\n  description: &summary Old description\n';
     const untouched = '- id: other\n  description: *summary\n';
     writeFileSync(file, shared + '- id: target\n  description: *summary # target only\n' + untouched);
-    expect(updateIndexDescription(file, 'target', 'Replacement')).toBe(true);
+    expect(updateIndexDescription(file, 'target', 'Replacement', dir)).toBe(true);
     expect(readFileSync(file, 'utf8')).toBe(shared + '- id: target\n  description: Replacement # target only\n' + untouched);
     expect(parseIndex(readFileSync(file, 'utf8')).value.map((item) => item.description))
       .toEqual(['Old description', 'Replacement', 'Old description']);
@@ -158,7 +158,7 @@ describe('index description edits', () => {
   it('declines a shared anchor edit without changing other descriptions', () => {
     const content = '- id: target\n  description: &summary Old description\n- id: other\n  description: *summary\n';
     writeFileSync(file, content);
-    expect(updateIndexDescription(file, 'target', 'Replacement')).toBe(false);
+    expect(updateIndexDescription(file, 'target', 'Replacement', dir)).toBe(false);
     expect(readFileSync(file, 'utf8')).toBe(content);
     expect(parseIndex(readFileSync(file, 'utf8')).value.map((item) => item.description))
       .toEqual(['Old description', 'Old description']);
@@ -166,7 +166,7 @@ describe('index description edits', () => {
 
   it('updates an unshared description anchor', () => {
     writeFileSync(file, '- id: target\n  description: &summary Old description\n');
-    expect(updateIndexDescription(file, 'target', 'Replacement')).toBe(true);
+    expect(updateIndexDescription(file, 'target', 'Replacement', dir)).toBe(true);
     expect(readFileSync(file, 'utf8')).toContain('description: &summary Replacement');
     expect(parseIndex(readFileSync(file, 'utf8')).value[0].description).toBe('Replacement');
   });

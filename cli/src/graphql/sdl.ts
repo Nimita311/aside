@@ -1068,14 +1068,16 @@ export function graphQLSDL(): string {
       details: [String!]!
     }
 
-    "Result of opening the webapp in the default browser."
+    "Result of webapp navigation."
     enum ShowOutcome {
-      "Opened the authorization handoff in the default browser."
+      "Opened the requested URL in the host default browser."
       OPENED
+      "Returned a public URL for the HTTP MCP client to open; no host browser was opened."
+      RETURNED
       "The default browser could not be opened. Use showUrl to open in another local browser."
       UNAVAILABLE
     }
-    "Target shared by show and showUrl: an optional entry source and timeline filter plus at most one entry, asset, artifact, or detail view. Empty input selects the active instance timeline. Both automatically authorize the chosen browser and redirect to this target."
+    "Target shared by show and showUrl: an optional entry source and timeline filter plus at most one entry, asset, artifact, or detail view. Empty input selects the active instance timeline. Local show opens the host browser; HTTP MCP returns a public URL for the client to open."
     input ShowInput {
       "Exact indexed artifact attachment handle defining the timeline, including filename; for example #artifact/2026-10-12-review/decisions.json. Composes with project/action and content targets, which retain it as return context."
       source: String
@@ -1096,11 +1098,11 @@ export function graphQLSDL(): string {
       "Exact supporting attachment filename; requires artifact."
       filename: String
     }
-    "Default-browser opening status and the requested view's bookmark URL. For a URL that authorizes another browser, call Mutation.showUrl."
+    "Navigation outcome and the requested view URL."
     type ShowPayload {
-      "Clean bookmark URL for the requested view. A fresh browser needs the authorization handoff returned by Mutation.showUrl."
+      "URL for the requested view, using the request origin for HTTP MCP."
       url: String!
-      "Observed browser result."
+      "Host browser opening or a URL returned for the client."
       outcome: ShowOutcome!
       ${mutationError}
     }
@@ -1508,9 +1510,9 @@ export function graphQLSDL(): string {
     type Mutation {
       "Dispatch an action delegation immediately, bypassing its schedule. Leaves a projected occurrence unsaved until its first edit. Templates require an occurrence ID. Concurrent launches for one action are rejected. Successful exits mark the action done even if its fields or lifecycle changed during the run."
       runDelegation("Exact saved or projected action ID." id: ID!): AutomationRun
-      "Open the requested view in the system default browser. Each call creates and opens a fresh private HTML handoff that automatically installs valid browser authorization and redirects to the target, including after expiry. Use showUrl instead when the agent will open another local browser. Browser-launch failure returns UNAVAILABLE."
+      "Open the requested view in the host default browser for local CLI/stdio; HTTP MCP returns its public URL with outcome RETURNED. Browser-launch failure returns UNAVAILABLE."
       show("Timeline filter and optional content view; defaults to the timeline." input: ShowInput! = {}): ShowPayload
-      "Get a URL to open the requested view in a local browser chosen by the agent, without opening or navigating any browser. Each call creates a fresh private temporary HTML file and returns its file:// URL. In Codex, use open_in_codex with target type browser and url set to the returned file:// URL. Open it immediately as returned: it submits a one-use code to the local daemon, automatically installs valid authorization in that browser profile, and redirects to the target, including after expiry. The file is owner-only, single-use, and expires after two minutes; request a new URL for each opening. The browser must be able to read this machine's local file and reach its daemon. No token handling or separate authentication call is needed. Use show for the default browser."
+      "Return the requested view URL without opening or navigating a browser. HTTP MCP uses the public request origin; local CLI/stdio uses localhost. Open it in the client browser of choice."
       showUrl("Same target selection as show; defaults to the active instance timeline." input: ShowInput! = {}): String
       "Explicitly request Calendar permission when undecided or write-only, then return global integration status. No instance is required; never reads or writes events. Use systemInfo.calendar for passive inspection."
       requestCalendarAccess: SystemCalendarInfo

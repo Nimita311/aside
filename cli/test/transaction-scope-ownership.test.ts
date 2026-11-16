@@ -110,7 +110,7 @@ describe('complete lifecycle mutation scope', () => {
   it('rejects a foreign journal before source repair can persist effects', async () => {
     const f = fixture();
     await f.host.tool(f.root, 'create_artifact', {name: 'Files', description: 'Files'});
-    const id = f.store.getArtifactIds()[0], file = f.store.getArtifactFile(id)!;
+    const id = [...f.store.getArtifacts().keys()][0], file = f.store.getArtifactFile(id)!;
     const original = readFileSync(file, 'utf8');
     const directory = join(f.root, 'artifacts', '2026', id);
     mkdirSync(directory); writeFileSync(join(directory, 'external.txt'), 'External attachment');

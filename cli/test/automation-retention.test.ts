@@ -136,8 +136,10 @@ describe('automation diagnostic retention', () => {
       delegation: {run: {model: 'external', prompt: '#artifact/2026-10-17-instructions'}},
     }, body: ''});
     source.executionContext = readExecutionContextSnapshot(root);
+    const priorRunTime = Date.now() - 1_000;
     for (let index = 0; index < AUTOMATION_HISTORY_LIMIT + 1; index++) {
-      start(record(`prior-${index}`, 0, {key: source.key, started: new Date(Date.now() - 1_000 - index).toISOString(), root}));
+      const timestamp = new Date(priorRunTime - index).toISOString();
+      start(record(`prior-${index}`, 0, {key: source.key, started: timestamp, finished: timestamp, root}));
     }
     const worker = new Worker(new URL('../dist/automation-worker.js', import.meta.url), {workerData: {storage: storagePath, wakeBinary: '/fixtures/no-wake-helper'}});
     const workerWait = {timeout: AUTOMATION_WORKER_TIMEOUT_MS};

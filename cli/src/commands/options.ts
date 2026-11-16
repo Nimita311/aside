@@ -326,9 +326,10 @@ export function parseCli(args: string[]): ParsedCommand {
     result = snapshot(cmd, output);
   });
   configure(program);
+  const effective = savedJobArgs(args);
   try {
     if (args.length === 0) { program.outputHelp(); return snapshot(program, output); }
-    program.parse(savedJobArgs(args), { from: 'user' });
+    program.parse(effective, { from: 'user' });
   } catch (error) {
     if (!(error instanceof CommanderError)) throw error;
     if (error.code === 'commander.version') return snapshot(selected, undefined, output);
@@ -337,7 +338,7 @@ export function parseCli(args: string[]): ParsedCommand {
       if (!output) selected.outputHelp();
       return snapshot(selected, output);
     }
-    throw new CliParseError(`${error.message.replace(/^error: /, '')}\n\n${renderHelp(selected)}`, requestsJson(program, savedJobArgs(args)));
+    throw new CliParseError(`${error.message.replace(/^error: /, '')}\n\n${renderHelp(selected)}`, requestsJson(program, effective));
   }
   return result!;
 }

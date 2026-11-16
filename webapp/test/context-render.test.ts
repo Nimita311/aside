@@ -17,6 +17,30 @@ const options: RenderOptions = {
 afterEach(() => document.body.replaceChildren());
 
 describe('one context document for summary and expanded modes', () => {
+  it('uses supplied Essentials without generating discarded headers, while native readers keep theirs', () => {
+    const action: Action = { frontMatter: { name: 'Review', created: '2026-10-12', scheduled: '2026-10-19T10:00' }, body: 'The **complete** record.' };
+    const embedded = { ...options, omitContextHeader: true };
+    const summary = renderActionSummary(action, 'Review the launch.', embedded, {
+      projects: ['2026-10-12-launch'], assets: [], stats: { entries: 1, projects: { open: 1, total: 1 } },
+    }, vi.fn());
+    const detail = renderActionDetail('2026-10-12-review', action, 'Review the launch.', embedded, []);
+    for (const view of [summary, detail]) expect(view.querySelector('.entity-title, .status-pills, .summary-description, .summary-facts')).toBeNull();
+    const body = detail.querySelector('.detail-body');
+    const essentials = document.createElement('header');
+    essentials.className = 'context-essentials';
+    essentials.innerHTML = '<h2 class="entity-title"><span class="context-identity">Review</span></h2>';
+    const root = renderContextContent(summary, detail, undefined, essentials);
+    expect(root.firstElementChild).toBe(essentials);
+    expect(root.querySelectorAll('.entity-title')).toHaveLength(1);
+    expect(root.querySelector('[data-context-detail] .detail-body')).toBe(body);
+    expect(root.querySelector('.ref-row-project')).not.toBeNull();
+    expect(root.querySelector('.detail-fields')?.textContent).toContain('ScheduledOct 19, 2026, 10:00');
+    const native = renderActionDetail('2026-10-12-review', action, 'Review the launch.', options, []);
+    expect(native.querySelector('.entity-title')?.textContent).toBe('Review');
+    expect(native.querySelector('.status-pills')).not.toBeNull();
+    expect(native.querySelector('.summary-description')?.textContent).toBe('Review the launch.');
+  });
+
   it('keeps the summary and complete record free of inline panel commands', () => {
     const project: Project = { frontMatter: { name: 'Launch', created: '2026-10-12' }, body: 'The **full** plan.' };
     const open = vi.fn();

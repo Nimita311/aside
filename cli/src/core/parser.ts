@@ -21,6 +21,7 @@ import type {
   IndexItem,
   Manifest,
   InstanceConfig,
+  InstanceRecord,
   AsideConfig,
   ParseResult,
 } from './types.js';
@@ -37,6 +38,7 @@ import {
 } from './coerce.js';
 
 import { splitFrontMatter } from './markdown.js';
+import { errorMessage } from './error.js';
 export { splitFrontMatter } from './markdown.js';
 
 // An entry's preamble is a `---` line immediately followed by a ```entry fence. We
@@ -48,6 +50,17 @@ export { splitFrontMatter } from './markdown.js';
 // the front matter splits off as an empty segment, which callers drop.
 export const ENTRY_PREAMBLE = /^---[ \t\r]*\n(?:[ \t\r]*\n)*(?=```entry)/m;
 
+// Where every record parser starts: the front-matter mapping, the log that
+// collects what had to be recovered, and the body beneath it.
+function readFrontMatter(content: string): { log: IssueLog; data: Record<string, unknown>; body: string } {
+  const log = new IssueLog();
+  const { yaml, body } = splitFrontMatter(content);
+  return { log, data: asRecord(safeParseYaml(yaml, log), log), body };
+}
+
+// The metadata fence a segment starts with; group 1 is the metadata block.
+export const ENTRY_FENCE = /^\s*```entry\s*\n([\s\S]*?)```/;
+
 // The metadata block of each entry, derived the same way parseWeeklyFile finds
 // entries: split on ENTRY_PREAMBLE and take the fence each segment starts with.
 // Only the leading fence counts — a ```entry fence quoted deeper inside content
@@ -55,7 +68,7 @@ export const ENTRY_PREAMBLE = /^---[ \t\r]*\n(?:[ \t\r]*\n)*(?=```entry)/m;
 export function extractEntryBlocks(content: string): string[] {
   const blocks: string[] = [];
   for (const segment of content.split(ENTRY_PREAMBLE)) {
-    const m = segment.match(/^\s*```entry\s*\n([\s\S]*?)```/);
+    const m = segment.match(ENTRY_FENCE);
     if (m) blocks.push(m[1]);
   }
   return blocks;
@@ -76,9 +89,7 @@ export function parseWeeklyFile(
   content: string,
   filename: string,
 ): ParseResult<WeeklyValue> {
-  const log = new IssueLog();
-  const { yaml, body } = splitFrontMatter(content);
-  const data = asRecord(safeParseYaml(yaml, log), log);
+  const { log, data, body } = readFrontMatter(content);
   const meta: WeeklyFileMeta = {
     week: reqNumber(data.week, 'week', log),
     week_start: reqString(data.week_start, 'week_start', log),
@@ -117,9 +128,7 @@ export function parseWeeklyFile(
 }
 
 export function parseProjectFile(content: string): ParseResult<Project> {
-  const log = new IssueLog();
-  const { yaml, body } = splitFrontMatter(content);
-  const data = asRecord(safeParseYaml(yaml, log), log);
+  const { log, data, body } = readFrontMatter(content);
   const frontMatter: ProjectFrontMatter = {
     name: reqString(data.name, 'name', log),
     created: reqString(data.created, 'created', log),
@@ -140,7 +149,7 @@ export function parseProjectFile(content: string): ParseResult<Project> {
         description: optString(r.description, 'related_projects.description', log) ?? '',
       }))
       .filter((r): r is { project: string; description: string } => {
-        if (r.project == null || r.project === '') {
+        if (r.project === undefined) {
           log.warn('dropped_item', 'Dropped a related project with no project id', 'related_projects');
           return false;
         }
@@ -151,9 +160,7 @@ export function parseProjectFile(content: string): ParseResult<Project> {
 }
 
 export function parseActionFile(content: string): ParseResult<Action> {
-  const log = new IssueLog();
-  const { yaml, body } = splitFrontMatter(content);
-  const data = asRecord(safeParseYaml(yaml, log), log);
+  const { log, data, body } = readFrontMatter(content);
   const frontMatter: ActionFrontMatter = {
     name: reqString(data.name, 'name', log),
     created: reqString(data.created, 'created', log),
@@ -203,9 +210,7 @@ export function parseActionFile(content: string): ParseResult<Action> {
 }
 
 export function parseArtifactFile(content: string): ParseResult<Artifact> {
-  const log = new IssueLog();
-  const { yaml, body } = splitFrontMatter(content);
-  const data = asRecord(safeParseYaml(yaml, log), log);
+  const { log, data, body } = readFrontMatter(content);
   const frontMatter: ArtifactFrontMatter = {
     name: reqString(data.name, 'name', log),
     created: reqString(data.created, 'created', log),
@@ -213,7 +218,7 @@ export function parseArtifactFile(content: string): ParseResult<Artifact> {
   const attachments = asStringList(data.attachments, 'attachments', log).filter(filename => {
     try { assertAttachmentFilename(filename); return true; }
     catch (err) {
-      log.warn('invalid_attachment_filename', err instanceof Error ? err.message : String(err), 'attachments');
+      log.warn('invalid_attachment_filename', errorMessage(err), 'attachments');
       return false;
     }
   });
@@ -225,9 +230,7 @@ export function parseArtifactFile(content: string): ParseResult<Artifact> {
 // and `description` are optional. A manifest missing `id` parses best-effort with
 // a missing-field issue.
 export function parseManifest(content: string): ParseResult<Manifest> {
-  const log = new IssueLog();
-  const { yaml } = splitFrontMatter(content);
-  const data = asRecord(safeParseYaml(yaml, log), log);
+  const { log, data } = readFrontMatter(content);
   const manifest: Manifest = { id: reqString(data.id, 'id', log) };
   if (manifest.id && !isInstanceId(manifest.id)) log.error('invalid_instance_id', INSTANCE_ID_RULE, 'id');
   const version = optString(data.version, 'version', log);
@@ -241,6 +244,12 @@ export function parseManifest(content: string): ParseResult<Manifest> {
   const config = parseInstanceConfig(data.config, log);
   if (config) manifest.config = config;
   return { value: manifest, issues: log.issues };
+}
+
+// The instance record: its manifest and the instructions beneath it.
+export function parseInstanceRecord(content: string): ParseResult<InstanceRecord> {
+  const parsed = parseManifest(content);
+  return { value: { manifest: parsed.value, body: splitFrontMatter(content).body.trim() }, issues: parsed.issues };
 }
 
 // Parse the manifest's optional `config` block. Prefixes are settings, so an
@@ -263,7 +272,7 @@ function parseInstanceConfig(value: unknown, log: IssueLog): InstanceConfig | un
       const webapp = data.webapp as Record<string, unknown>;
       if (webapp.sidebar !== undefined) {
         try { config.webapp = { sidebar: assertWebappSidebar(webapp.sidebar) }; }
-        catch (error) { log.error('invalid_webapp_sidebar', error instanceof Error ? error.message : String(error), 'config.webapp.sidebar'); }
+        catch (error) { log.error('invalid_webapp_sidebar', errorMessage(error), 'config.webapp.sidebar'); }
       }
     }
   }

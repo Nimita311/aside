@@ -1,4 +1,4 @@
-import { withoutCode } from './markdown.js';
+import { maskUriTokens, unescapeMarkdown, withoutCode } from './markdown.js';
 
 export interface LocationReference {
   geo?: { latitude: number; longitude: number; altitude?: number; uncertainty?: number };
@@ -83,7 +83,7 @@ export function assertLocationHandle(value: unknown): asserts value is string {
 
 // JavaScript uses exponent notation for very small/large numbers; RFC 5870
 // accepts decimal notation only. Expand without rounding the supplied value.
-function decimal(value: number): string {
+export function decimal(value: number): string {
   const text = String(value);
   if (!/[eE]/.test(text)) return text;
   const [coefficient, exponent] = text.toLowerCase().split('e');
@@ -197,13 +197,13 @@ function titleEnd(text: string, start: number): number {
 }
 
 function referenceId(label: string): string {
-  return label.replace(/\\([!"#$%&'()*+,\-./:;<=>?@[\\\]^_`{|}~])/g, '$1').replace(/\s+/g, ' ').trim().toLowerCase();
+  return unescapeMarkdown(label).replace(/\s+/g, ' ').trim().toLowerCase();
 }
 
 function markdownDestination(handle: string): string {
   // Deliberately escaped hashes stay literal, as in the browser. Punctuation
   // escapes inside an actual destination have Markdown's normal meaning.
-  return handle.startsWith(PREFIX) ? handle.replace(/\\([!"#$%&'()*+,\-./:;<=>?@[\\\]^_`{|}~])/g, '$1') : handle;
+  return handle.startsWith(PREFIX) ? unescapeMarkdown(handle) : handle;
 }
 
 const LITERAL_HASH_ENTITY = /&#(?:0*35(?!\d)|x0*23(?![\da-f]));?|&num;/i;
@@ -374,12 +374,10 @@ function locationReferenceText(markdown: string): { destinations: string[]; pros
     if (!image) destinations.push(handle);
     mask(image ? opening - 1 : opening, end); opening = end - 1;
   }
-  // Match markdownReferenceText's external-URI masking without running its
+  // Share markdownReferenceText's external-URI masking without running its
   // code scanner again: blanked labels/tags can otherwise manufacture an
   // indented code block and hide visible text that followed them on a line.
-  const prose = masked.join('').replace(/(^|[\s(<{"'\[])([a-z][a-z0-9+.-]*:[^\s<>]+)/gi,
-    (_match, boundary: string, token: string) => boundary + ' '.repeat(token.length));
-  return { destinations, prose };
+  return { destinations, prose: maskUriTokens(masked.join('')) };
 }
 
 /** Extract authored destinations and bare references, excluding code and labels. */

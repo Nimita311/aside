@@ -32,7 +32,7 @@ function diskSnapshot(dir: string): Record<string, string | null> {
 function memorySnapshot(store: Store): unknown {
   return JSON.parse(JSON.stringify({
     entries: store.getEntries(),
-    projects: store.getProjectIds().sort().map(id => [id, store.getProject(id)]),
+    projects: [...store.getProjects().keys()].sort().map(id => [id, store.getProject(id)]),
     actions: store.getActionIds().sort().map(id => [id, store.getAction(id)]),
     indexes: [store.getNoteIndex(), store.getProjectIndex(), store.getActionIndex()],
   }));

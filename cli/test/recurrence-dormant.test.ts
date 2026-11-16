@@ -12,7 +12,7 @@ let store: Store | undefined, dir: string | undefined;
 afterEach(() => { store?.close(); if (dir) rmSync(dir, { recursive: true, force: true }); store = undefined; dir = undefined; });
 
 describe('dormant recurrence templates', () => {
-  it('round-trips an empty schedule list as a template, without backlog or projections', () => {
+  it('round-trips an empty schedule list as a template, without projections', () => {
     const parsed = parseActionFile(serializeAction({ name: 'Routine', created: '2026-10-09T09:00', recurrence: [] }, 'Reusable instructions'));
     expect(parsed.issues).toEqual([]);
     expect(parsed.value.frontMatter.recurrence).toEqual([]);
@@ -40,9 +40,7 @@ describe('dormant recurrence templates', () => {
     expect(store.getAction(template)!.frontMatter.recurrence).toEqual([]);
     expect(store.getAction(saved)).toEqual(occurrence);
     expect([...(store.getRelations().projectsByAction.get(saved) ?? [])]).toContain(project);
-    const planning = planningActions(store.getActions(), { now: new Date('2026-10-09T12:00Z') });
-    expect(planning.nodes.map(row => [row.id, row.projected])).toEqual([[saved, false]]);
-    expect(planning.issues).toEqual([]);
+    expect(planningActions(store.getActions(), { now: new Date('2026-10-09T12:00Z') })).toEqual({ nodes: [], next: null, issues: [] });
     const withoutTemplate = new Map(store.getActions()); withoutTemplate.delete(template);
     expect(recurrenceIssues(withoutTemplate)).toEqual([`${saved}: missing recurrence template ${template}.`]);
     expect(() => store!.saveAction(template, { ...action.frontMatter, recurrence: [], scheduled: '2099-01-01' }, action.body, store!.getActionFile(template)!)).toThrow('template cannot also be scheduled');

@@ -1,6 +1,6 @@
 import { DAEMON_START_TIMEOUT_MS, DAEMON_SHUTDOWN_TIMEOUT_MS, DAEMON_HANDSHAKE_TIMEOUT_MS, DAEMON_RELAUNCH_INTERVAL_MS, DAEMON_POLL_INTERVAL_MS, DAEMON_RECONNECT_RETRY_MS } from '../core/system-config.js';
-// A daemon client: locate, handshake, start (see design/daemon.md,
-// Connecting). MCP servers and CLI commands reach the daemon through this.
+// A daemon client: locate, handshake, start (see design/runtime.md,
+// Process lifetime). MCP servers and CLI commands reach the daemon through this.
 import net from 'node:net';
 import { spawn } from 'node:child_process';
 import { closeSync, existsSync, openSync, realpathSync } from 'node:fs';
@@ -135,18 +135,12 @@ export class DaemonClient {
   // already in flight on them still get their answers.
   private retired = new Set<Connection>();
   private closed = false;
-  private closeListeners = new Set<() => void>();
 
   constructor(options: ClientOptions = {}) {
     this.paths = options.paths ?? daemonPaths();
     this.launcher = options.launcher ?? spawnDaemon;
     this.startIfMissing = options.startIfMissing ?? true;
     this.initialConnection = options.initialConnection;
-  }
-
-  // Fires when the daemon connection drops.
-  onDisconnect(cb: () => void): void {
-    this.closeListeners.add(cb);
   }
 
   // The daemon this client reached, connecting first when needed.
@@ -190,7 +184,6 @@ export class DaemonClient {
 
   close(): void {
     this.closed = true;
-    this.closeListeners.clear();
     this.conn?.peer.close();
     this.conn = null;
     this.initialConnection?.peer.close();
@@ -215,11 +208,7 @@ export class DaemonClient {
         throw new Error('The aside daemon client was closed.');
       }
       this.conn = conn;
-      conn.peer.onClose(() => {
-        if (this.conn !== conn) return;
-        this.conn = null;
-        for (const cb of this.closeListeners) cb();
-      });
+      conn.peer.onClose(() => { if (this.conn === conn) this.conn = null; });
       return conn;
     }).finally(() => {
       this.connecting = null;

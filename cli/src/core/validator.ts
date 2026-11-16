@@ -1,5 +1,5 @@
 import { assertRecurrence, assertOccurrence, recurrenceIssues } from './recurrence.js';
-import { existsSync, realpathSync } from 'node:fs';
+import { existsSync } from 'node:fs';
 import { isWallMinute, schedulingIssues } from './scheduling.js';
 import { assertLocationHandle } from './location-reference.js';
 import { join, resolve } from 'node:path';
@@ -12,16 +12,18 @@ import type {
   Artifact,
   ParseIssue,
   IndexItem,
+  WeeklyValue,
 } from './types.js';
 import { extractEntryBlocks, parseEntryBlock, splitFrontMatter } from './parser.js';
 import { isAsideDir, MANIFEST_FILE, readManifestResult } from './instance.js';
 import { readInstanceData } from './reader.js';
-import type { InstanceFile, InstanceData, WeeklyValue } from './reader.js';
+import type { InstanceFile, InstanceData } from './reader.js';
 import { assertArtifactId, assertAttachmentFilename, artifactHandle, artifactAttachmentRelativePath, parseArtifactHandle, collectArtifactReferenceSources, listArtifactAttachments } from './artifact.js';
-import type { ArtifactReferenceSource } from './artifact.js';
+import { readReferenceRoots } from './attachment-metadata.js';
 import { extractContentReferences } from './content-reference.js';
 import { contentAttachmentPath } from './content-attachment.js';
 import { weekFilePath } from './record-reference.js';
+import { errorMessage } from './error.js';
 
 // The validator reads the instance through the same `readInstanceData` the MCP
 // Store uses, so the two can never disagree about which files count or what a
@@ -307,7 +309,7 @@ function checkArtifactIdentity(files: ArtFile[]): CheckResult {
     try {
       assertArtifactId(id);
     } catch (e) {
-      issues.push(`${f.relPath}: ${e instanceof Error ? e.message : String(e)}`);
+      issues.push(`${f.relPath}: ${errorMessage(e)}`);
     }
     if (f.relPath !== `artifacts/${id.slice(0, 4)}/${id}.md`) {
       issues.push(`${f.relPath}: record must be in its ID's creation year`);
@@ -361,7 +363,7 @@ function checkArtifactAttachments(dataDir: string, files: ArtFile[]): CheckResul
     const names = new Set<string>();
     for (const filename of indexed) {
       try { assertAttachmentFilename(filename); }
-      catch (err) { issues.push(`${f.relPath}: ${err instanceof Error ? err.message : String(err)}`); }
+      catch (err) { issues.push(`${f.relPath}: ${errorMessage(err)}`); }
       if (names.has(filename)) issues.push(`${f.relPath}: Duplicate attachment '${filename}'`);
       names.add(filename);
     }
@@ -374,30 +376,26 @@ function checkArtifactAttachments(dataDir: string, files: ArtFile[]): CheckResul
         if (!names.has(filename)) issues.push(`${f.relPath}: Attachment file missing from attachments index: ${filename}`);
       }
     } catch (err) {
-      issues.push(`${f.relPath}: ${err instanceof Error ? err.message : String(err)}`);
+      issues.push(`${f.relPath}: ${errorMessage(err)}`);
     }
   }
   return { name: 'Artifact attachments index matches files', passed: issues.length === 0, details: issues };
 }
 
-function checkArtifactReferences(dataDir: string, data: InstanceData): CheckResult {
-  const sources: ArtifactReferenceSource[] = [
-    ...data.weeks.flatMap((f) => f.value.entries.map((entry) => ({
-      handle: `#entry/${entry.meta.created}`,
-      markdown: entry.content,
-    }))),
-    ...data.projects.map((f) => ({ handle: `#project/${f.id}`, markdown: f.value.body })),
-    ...data.actions.map((f) => ({ handle: `#action/${f.id}`, markdown: f.value.body })),
-    ...data.artifacts.map((f) => ({ handle: `#artifact/${f.id}`, markdown: f.value.body })),
+// Every record that authors Markdown, with the file that holds it.
+function recordSources(data: InstanceData): { handle: string; markdown: string; path: string }[] {
+  return [
+    ...data.weeks.flatMap(week => week.value.entries.map(entry => ({ handle: `#entry/${entry.meta.created}`, markdown: entry.content, path: week.relPath }))),
+    ...(['project', 'action', 'artifact'] as const).flatMap(kind =>
+      data[`${kind}s`].map(file => ({ handle: `#${kind}/${file.id}`, markdown: file.value.body, path: file.relPath }))),
   ];
+}
+
+function checkArtifactReferences(dataDir: string, data: InstanceData): CheckResult {
+  const sources = recordSources(data);
   const artifacts = new Map(data.artifacts.map((f) => [f.id, f.value]));
   const { issues } = collectArtifactReferenceSources(dataDir, sources, artifacts);
-  const paths = new Map<string, string>([
-    ...data.weeks.flatMap(f => f.value.entries.map(entry => [`#entry/${entry.meta.created}`, f.relPath] as const)),
-    ...data.projects.map(f => [`#project/${f.id}`, f.relPath] as const),
-    ...data.actions.map(f => [`#action/${f.id}`, f.relPath] as const),
-    ...data.artifacts.map(f => [`#artifact/${f.id}`, f.relPath] as const),
-  ]);
+  const paths = new Map(sources.map(source => [source.handle, source.path]));
   return {
     name: 'Artifact references and content files exist',
     passed: issues.length === 0,
@@ -457,18 +455,8 @@ function checkWeeklyFrontMatterConsistency(weeks: WeekFile[]): CheckResult {
 // records/indexed regular attachments. Metadata relations have separate checks.
 function checkInlineMentions(dataDir: string, data: InstanceData): CheckResult {
   const issues: string[] = [];
-  const targets = new Map<string, string>();
-  const sources: { handle: string; markdown: string; path: string }[] = [];
-  for (const week of data.weeks) for (const entry of week.value.entries) {
-    const handle = `#entry/${entry.meta.created}`;
-    targets.set(handle, week.relPath);
-    sources.push({ handle, markdown: entry.content, path: week.relPath });
-  }
-  for (const kind of ['project', 'action', 'artifact'] as const) for (const file of data[`${kind}s`]) {
-    const handle = `#${kind}/${file.id}`;
-    targets.set(handle, file.relPath);
-    sources.push({ handle, markdown: file.value.body, path: file.relPath });
-  }
+  const sources = recordSources(data);
+  const targets = new Map(sources.map(source => [source.handle, source.path]));
   for (const artifact of data.artifacts) {
     for (const filename of [...new Set(artifact.value.frontMatter.attachments ?? [])].sort()) {
       let handle: string;
@@ -480,7 +468,7 @@ function checkInlineMentions(dataDir: string, data: InstanceData): CheckResult {
     }
   }
   const seen = new Set<string>();
-  const roots = [...new Set([resolve(dataDir), realpathSync(dataDir)])];
+  const roots = readReferenceRoots(dataDir);
   for (const source of sources) {
     for (const reference of extractContentReferences(source.markdown, source.path, roots)) {
       let handle: string;

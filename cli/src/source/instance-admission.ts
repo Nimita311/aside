@@ -2,17 +2,16 @@
 // catalogue already published by the daemon lifecycle.
 import {realpathSync, statSync} from 'node:fs';
 import {basename, dirname, resolve} from 'node:path';
-import {isInstanceId} from '../core/identity.js';
-import {checkoutInfo} from '../core/worktree.js';
+import {canonicalPath, checkoutInfo} from '../core/worktree.js';
 import {isAsideDir, readManifestResult, MANIFEST_FILE} from '../core/instance.js';
-import {cataloguedInstances, instanceAlias, type AvailableInstance} from '../core/catalogue.js';
+import {cataloguedInstances, instanceAlias, instanceIdError, type AvailableInstance} from '../core/catalogue.js';
 
 export function availableInstances(paths: string[]): AvailableInstance[] {
   const seen = new Set<string>();
   const instances: AvailableInstance[] = [];
   for (const registered of paths) {
-    let path = resolve(registered);
-    try { path = realpathSync(path); } catch { /* A registered canonical directory may be temporarily inaccessible. */ }
+    // A registered canonical directory may be temporarily inaccessible.
+    const path = canonicalPath(registered);
     if (seen.has(path)) continue;
     seen.add(path);
     if (!isAsideDir(path)) continue;
@@ -23,7 +22,7 @@ export function availableInstances(paths: string[]): AvailableInstance[] {
     instances.push({ id, name, description, path, alias: instanceAlias(id, path),
       ...(checkout.worktree ? { worktree: checkout.worktree } : {}),
       ...(checkout.error ? { calendarWarning: checkout.error } : {}),
-      ...(!isInstanceId(id) ? { error: 'aside.md needs a valid instance id (lowercase letters, numbers, and hyphens).' } : {}) });
+      ...instanceIdError(id) });
   }
   return cataloguedInstances(instances);
 }

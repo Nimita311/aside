@@ -1,5 +1,6 @@
 import { VERSION, BUILT_AT } from '../version.js';
 import type { SemanticAvailability } from '../semantic/availability.js';
+import { configuredEmbeddingModel } from '../semantic/embedding.js';
 import type { CalendarSystemInfo, CalendarSyncInfo } from '../mcp/calendar/info.js';
 import type { CalendarDiagnostic } from '../mcp/calendar/diagnostics.js';
 import type { SystemDaemonSnapshot } from './system-daemon.js';
@@ -69,7 +70,7 @@ export function systemInfoView(options: SystemInfoOptions) {
     installation: once(() => options.systemInstallation?.({signal: options.signal}) ?? null),
     search: {semantic: once(() => options.semanticAvailability
       ? options.semanticAvailability({signal: options.signal})
-      : {available: false, reason: 'INDEX_UNAVAILABLE', model: process.env.ASIDE_EMBEDDING_MODEL ?? 'qwen3-embedding:0.6b',
+      : {available: false, reason: 'INDEX_UNAVAILABLE', model: configuredEmbeddingModel(),
         message: 'Semantic search availability requires the Aside daemon.', recovery: 'Run this query through the Aside daemon.'})},
     calendar: once(async () => options.calendarStatus ? calendarSystemPayload(await options.calendarStatus()) : null),
   };

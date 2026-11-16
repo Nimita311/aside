@@ -1,5 +1,6 @@
 import {createHash} from 'node:crypto';
 import {isInstanceId} from './identity.js';
+import type {Manifest} from './types.js';
 import type {WorktreeInfo} from './worktree.js';
 
 export interface AvailableInstance {
@@ -24,6 +25,20 @@ export interface InstanceCardSummary {
   lastEdited?: string;
 }
 
+/** Linked checkouts of one instance share a family; any other path is its own. */
+export function instanceFamilyKey(worktree: Pick<WorktreeInfo, 'commonDir' | 'primaryPath'> | undefined, path: string): string {
+  return worktree ? `${worktree.commonDir}\0${worktree.primaryPath}` : path;
+}
+
+export function instanceIdError(id: string): {error?: string} {
+  return isInstanceId(id) ? {} : {error: 'aside.md needs a valid instance id (lowercase letters, numbers, and hyphens).'};
+}
+
+/** One observed instance as catalogue input: identity, checkout, and what blocks it. */
+export function observedInstance(path: string, {id, name, description}: Manifest, worktree?: WorktreeInfo, calendarWarning?: string): AvailableInstance {
+  return {path, id, name, description, ...(worktree ? {worktree} : {}), ...(calendarWarning ? {calendarWarning} : {}), ...instanceIdError(id)};
+}
+
 export function instanceAlias(id: string, path: string): string {
   return `${id}~${createHash('sha256').update(path).digest('hex').slice(0, 16)}`;
 }
@@ -41,8 +56,7 @@ export function cataloguedInstances(observed: readonly AvailableInstance[]): Ava
   for (const instance of instances) {
     if (!isInstanceId(instance.id)) continue;
     const matches = instances.filter(other => other.id === instance.id);
-    const families = new Set(matches.map(other => other.worktree
-      ? `${other.worktree.commonDir}\0${other.worktree.primaryPath}` : other.path));
+    const families = new Set(matches.map(other => instanceFamilyKey(other.worktree, other.path)));
     const conflict = families.size > 1;
     instance.address = conflict || instance.worktree?.linked ? instance.alias : instance.id;
     if (conflict) {

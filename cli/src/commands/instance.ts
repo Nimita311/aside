@@ -19,6 +19,7 @@ import { SemanticCacheRetention } from '../semantic/cache-retention.js';
 import {availableInstances} from '../source/instance-admission.js';
 import {type AvailableInstance} from '../core/catalogue.js';
 import type {Manifest} from '../core/types.js';
+import { errorMessage } from '../core/error.js';
 
 type InstanceCatalogueEntry = AvailableInstance & {manifest: Manifest};
 
@@ -99,7 +100,7 @@ async function editKnown(parsed: Parsed, add: boolean): Promise<void> {
       }
       writeKnown(paths, known);
       await retention.collect(known).catch(error => {
-        console.error(errorLine(new Error(`Semantic cache cleanup is pending: ${error instanceof Error ? error.message : String(error)}`)));
+        console.error(errorLine(new Error(`Semantic cache cleanup is pending: ${errorMessage(error)}`)));
       });
       changed = [...new Set(parsed.paths.map(instanceKey))].filter(path => previous.has(path) !== current.has(path));
     }

@@ -1,7 +1,6 @@
 // Node-only entry. None of these modules are imported by the production UI.
-export { loadFixture, FIXTURE_NAMES, SHOWCASE_IDS, MOCK_NOW } from './fixture-store.ts';
-export { scenarios } from './scenarios.ts';
-export { parseFileGrantPath, verifyFileGrant } from '../../cli/src/web/file-grants.ts';
+export { loadFixture, FIXTURE_NAMES, SHOWCASE_IDS } from './fixture-store.ts';
+export { scenarios, MOCK_NOW } from './scenarios.ts';
 import { join } from 'node:path';
 import { entityFilePath, weekFilePath } from '../../cli/src/core/record-reference.ts';
 import { executeGraphQL } from '../../cli/src/graphql/schema.ts';

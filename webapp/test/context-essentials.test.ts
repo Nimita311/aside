@@ -15,10 +15,12 @@ const mount = (data: ContextEssentials) => document.body.appendChild(renderConte
 afterEach(() => document.body.replaceChildren());
 
 describe('shared right-panel essentials', () => {
-  it.each<EssentialsKind>(['instance','project','action','entry','artifact','attachment','file','date','date-range'])('gives %s a pill identity followed by its explicit type', kind => {
+  it.each<EssentialsKind>(['instance','project','action','entry','artifact','attachment','file','date','date-range'])('gives %s a plain identity followed by its explicit type', kind => {
     const header = mount({ kind, name: 'Example', description: 'A short description.' });
     expect(header.dataset.kind).toBe(kind);
     expect(header.querySelector('.entity-title .context-identity .entity-title-label')?.textContent).toBe('Example');
+    expect(header.querySelector('.context-identity')?.classList.contains('ref-identity')).toBe(true);
+    expect(header.querySelector('.tag')).toBeNull();
     expect(header.querySelector('.context-essentials-type')?.textContent).toBe(kind === 'date-range' ? 'Date range' : kind[0].toUpperCase() + kind.slice(1));
     expect(header.children[1].className).toBe('summary-description');
     expect(header.querySelector('.summary-facts')).toBeNull();

@@ -4,15 +4,19 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { Store } from '../lib/store';
 import type { DataSource } from '../lib/io';
 import type { EntityRef } from '../lib/types';
+import type { createContextPanel } from '../src/context-panel';
 import { loadApp } from './app-harness';
 
 interface App {
-  state: { store: Store | null; instanceId: string | null; filter: EntityRef | null; panelCollapsed: boolean };
+  state: { store: Store | null; instanceId: string | null; filter: EntityRef | null };
+  setupContextPanel(): void;
   setupSearch(): void;
   handleSearch(query: string): void;
   setSearchVisible(visible: boolean): void;
   resetSearch(clearInput: boolean): void;
   dismissActionToast(): void;
+  currentContext(): { ref: EntityRef | null };
+  contextPanel?: ReturnType<typeof createContextPanel>;
 }
 
 const dismissToasts: (() => void)[] = [];
@@ -22,7 +26,10 @@ describe('search combobox state', () => {
   async function setup() {
     const markup = readFileSync('index.html', 'utf8').replace(/<link\b[^>]*>|<script\b[^>]*>[\s\S]*?<\/script>/gi, '');
     const shell = new DOMParser().parseFromString(markup, 'text/html');
-    document.body.innerHTML = shell.querySelector('.search-wrapper')!.outerHTML + '<button id="outside">Outside</button>';
+    // The shipped search is mounted in the workspace control surface, whose
+    // clicks the context panel does not treat as a dismissal.
+    document.body.innerHTML = `<div id="workspace-control-surface">${shell.querySelector('.search-wrapper')!.outerHTML}</div><button id="outside">Outside</button>` +
+      '<aside id="side-panel"><button id="btn-context-expand">Expand</button><div id="side-panel-body"></div></aside>';
     const files: Record<string, string> = { 'aside.md': '---\nid: work\nname: Work\n---\n' };
     files['projects/2026/index.yaml'] = Array.from({ length: 10 }, (_, i) => `- id: 2026-10-04-program-${i}\n  description: Program ${i}`).join('\n');
     for (let i = 0; i < 10; i++) files[`projects/2026/2026-10-04-program-${i}.md`] = `---\nname: Release program ${i}\ncreated: 2026-10-04T09:00\n---\n`;
@@ -31,9 +38,10 @@ describe('search combobox state', () => {
       async revalidate() { return 'unchanged'; }, assetUrl() { return null; }, async listYears() { return ['2026']; },
     };
     const store = new Store(source); await store.init();
-    const api = await loadApp<App>('state, setupSearch, handleSearch, setSearchVisible, resetSearch, dismissActionToast');
-    api.state.store = store; api.state.instanceId = 'work'; api.state.panelCollapsed = true;
-    dismissToasts.push(api.dismissActionToast); api.setupSearch();
+    const api = await loadApp<App>('state, setupContextPanel, setupSearch, handleSearch, setSearchVisible, resetSearch, dismissActionToast, currentContext, contextPanel');
+    api.state.store = store; api.state.instanceId = 'work';
+    api.setupContextPanel();
+    dismissToasts.push(api.dismissActionToast, () => api.contextPanel?.destroy()); api.setupSearch();
     const input = document.querySelector<HTMLInputElement>('.search-input')!;
     const popup = document.getElementById('search-results')!, listbox = document.getElementById('search-listbox')!;
     input.focus();
@@ -41,6 +49,8 @@ describe('search combobox state', () => {
     const key = (value: string) => input.dispatchEvent(new KeyboardEvent('keydown', { key: value, bubbles: true, cancelable: true }));
     return { api, store, input, popup, listbox, query, key };
   }
+  // A result row's key is `<type>:<id>`.
+  const resultRef = (option: HTMLElement) => { const [type, id] = option.dataset.key!.split(':'); return { type, id }; };
 
   it('uses a stable controlled listbox and keeps arrow-selected options owned and named', async () => {
     const { input, popup, listbox, query, key } = await setup();
@@ -72,6 +82,7 @@ describe('search combobox state', () => {
     expect(input.hasAttribute('aria-activedescendant')).toBe(false);
     const filter = api.state.filter, route = location.pathname;
     key('Enter');
+    expect(api.contextPanel!.getState().open).toBe(false); expect(api.currentContext().ref).toBeNull();
     expect(api.state.filter).toBe(filter);
     expect(location.pathname).toBe(route);
     expect(popup.hidden).toBe(true);
@@ -90,8 +101,14 @@ describe('search combobox state', () => {
     expect(listbox.querySelectorAll('[role="option"]')).toHaveLength(10);
     expect(input.getAttribute('aria-expanded')).toBe('true');
     expect(input.hasAttribute('aria-activedescendant')).toBe(false);
-    key('ArrowDown'); key('Enter');
-    expect(api.state.filter?.type).toBe('project');
+    key('ArrowDown');
+    const chosen = resultRef(document.getElementById(input.getAttribute('aria-activedescendant')!)!);
+    expect(chosen.type).toBe('project');
+    key('Enter');
+    // The chosen record opens in the context panel; the timeline keeps its filter.
+    expect(api.currentContext().ref).toEqual(chosen);
+    expect(api.contextPanel!.getState().open).toBe(true);
+    expect(api.state.filter).toBeNull();
     expect(input.value).toBe('');
     expect(input.getAttribute('aria-expanded')).toBe('false');
     expect(input.hasAttribute('aria-activedescendant')).toBe(false);
@@ -161,17 +178,27 @@ describe('search combobox state', () => {
     query('program'); key('ArrowDown');
     const option = listbox.querySelector<HTMLElement>('[role="option"]')!;
     const filter = api.state.filter, route = location.pathname, active = input.getAttribute('aria-activedescendant');
+    // An activated record opens in the context panel, so an untouched panel
+    // is the sign that a press did not activate.
+    const untouched = () => {
+      expect(api.contextPanel!.getState().open).toBe(false); expect(api.currentContext().ref).toBeNull();
+      expect(api.state.filter).toBe(filter); expect(location.pathname).toBe(route);
+    };
     for (const init of [{ button: 2 }, { button: 1 }, { button: 0, ctrlKey: true }]) {
       option.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true, ...init }));
       option.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, ...init }));
-      expect(api.state.filter).toBe(filter); expect(location.pathname).toBe(route);
+      untouched();
       expect(input.value).toBe('program'); expect(popup.hidden).toBe(false);
       expect(input.getAttribute('aria-activedescendant')).toBe(active);
     }
     option.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true, button: 0 }));
-    expect(api.state.filter).toBe(filter);
+    untouched();
+    const chosen = resultRef(option);
+    expect(chosen.type).toBe('project');
     option.click();
-    expect(api.state.filter?.type).toBe('project');
+    expect(api.currentContext().ref).toEqual(chosen);
+    expect(api.contextPanel!.getState().open).toBe(true);
+    expect(api.state.filter).toBe(filter);
     expect(input.value).toBe(''); expect(popup.hidden).toBe(true);
   });
 });

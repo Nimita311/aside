@@ -1,6 +1,6 @@
 import { LAUNCHCTL_TIMEOUT_MS, LAUNCHCTL_RETRY_MS } from '../core/system-config.js';
 // The login job: a launchd agent Aside owns that starts the daemon at login
-// (see design/daemon.md, Login job). macOS only.
+// (see reference/cli.md, Instance and daemon receipts). macOS only.
 import { execFile } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';

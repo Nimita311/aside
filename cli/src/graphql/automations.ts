@@ -1,6 +1,6 @@
 import { dirname, join } from 'node:path';
 import { GraphQLError } from 'graphql';
-import { catalogFor, type ModelCatalogSnapshot } from '../automation/models.js';
+import type { ModelCatalogSnapshot } from '../automation/models.js';
 import {resolveExecutionContext, type ExecutionContextSnapshot} from '../core/execution-context.js';
 import { compileSchedule } from '../automation/schedule.js';
 import { validateDefinition, type AutomationDeclarations, type AutomationDefinition } from '../core/automation.js';
@@ -8,6 +8,7 @@ import { AUTOMATION_DEFAULT_TIMEOUT } from '../core/system-config.js';
 import type { RecordNode } from './query.js';
 import type { ParseIssue } from '../core/types.js';
 import type { AutomationJobRuntime, AutomationLogPage, AutomationLogStream, AutomationRunRuntime, AutomationRuntimeSnapshot } from './automation-runtime.js';
+import { errorMessage } from '../core/error.js';
 
 export interface AutomationOwner {
   declarations?: AutomationDeclarations;
@@ -107,7 +108,7 @@ export class AutomationView {
     } catch (error) {
       this.options.diagnostics.push({ severity: 'error', code: 'invalid_automation',
         field: `automations.${name}`, ...(owner.filePath ? { file: owner.filePath } : {}),
-        message: error instanceof Error ? error.message : String(error) });
+        message: errorMessage(error) });
       return null;
     }
   }
@@ -206,7 +207,7 @@ export class AutomationView {
 export function executionView(root: string, options: {
   diagnostics: ParseIssue[];
   signal?: AbortSignal;
-  catalog?: (refresh: boolean) => Promise<ModelCatalogSnapshot>;
+  catalog: (refresh: boolean) => Promise<ModelCatalogSnapshot>;
   executionContext: ExecutionContextSnapshot;
 }) {
   return {
@@ -216,14 +217,13 @@ export function executionView(root: string, options: {
       try { return resolveExecutionContext(options.executionContext).cwd; }
       catch (error) {
         options.diagnostics.push({ severity: 'error', code: 'execution_config', file: join(root, '.aside'),
-          message: error instanceof Error ? error.message : String(error) });
+          message: errorMessage(error) });
         return null;
       }
     },
     models: async ({ refresh }: { refresh?: boolean | null } = {}) => {
       options.signal?.throwIfAborted();
-      const snapshot = options.catalog ? await options.catalog(refresh ?? false)
-        : await catalogFor(root, { refresh: refresh ?? false, signal: options.signal, executionContext: options.executionContext });
+      const snapshot = await options.catalog(refresh ?? false);
       options.signal?.throwIfAborted();
       options.diagnostics.push(...snapshot.diagnostics.map(message => ({ severity: 'warning' as const,
         code: 'model_discovery', file: join(root, '.aside'), message })));

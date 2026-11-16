@@ -2,9 +2,9 @@
 // Query and validation share this scanner; callers resolve targets themselves.
 import { markdownReferenceText } from './markdown.js';
 import { parseArtifactHandle } from './artifact-reference.js';
-import { ID_CHAR, resolveRelativePath, safeDecode } from './record-reference.js';
+import { NAMED_HANDLE, resolveRelativePath, safeDecode } from './record-reference.js';
 
-export type ContentReferenceKind = 'entry' | 'project' | 'action' | 'artifact';
+type ContentReferenceKind = 'entry' | 'project' | 'action' | 'artifact';
 export interface ContentReference {
   kind: ContentReferenceKind;
   id: string;
@@ -13,14 +13,13 @@ export interface ContentReference {
   filePath?: string;
 }
 
-const entityHandle = new RegExp(`^#(project|action)/(${ID_CHAR}+)$`, 'u');
 const bareHandle = /(?<![\p{L}\p{N}_/\\])#(?:entry|project|action|artifact)\/[^\s<>()[\]{}"'`]+/gu;
 
-export function parseContentHandle(target: string): ContentReference | undefined {
+function parseContentHandle(target: string): ContentReference | undefined {
   const artifact = parseArtifactHandle(target);
   if (artifact) return { kind: 'artifact', ...artifact };
   const decoded = safeDecode(target);
-  const entity = entityHandle.exec(decoded);
+  const entity = NAMED_HANDLE.exec(decoded);
   if (entity) return { kind: entity[1] as 'project' | 'action', id: entity[2] };
   const entry = /^#entry\/(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2})?)$/.exec(decoded);
   return entry ? { kind: 'entry', id: entry[1] } : undefined;

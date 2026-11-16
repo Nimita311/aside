@@ -24,13 +24,12 @@ export function nativeSeries(schedule: RecurrenceSchedule): NativeSeries[] {
   if (hours.length * minutes.length > 32 || hours.length * minutes.length > 1 && (parts.COUNT || parts.BYSETPOS)) throw new Error('This time-of-day expansion cannot be split into exact native series.');
   const result: NativeSeries[] = [];
   for (const hour of hours) for (const minute of minutes) {
-    const dtstart = schedule.dtstart.length === 10 ? schedule.dtstart : `${schedule.dtstart.slice(0, 11)}${hour.padStart(2, '0')}:${minute.padStart(2, '0')}`;
     // Earlier phases begin with their first occurrence at/after the authored anchor.
     const phaseParts = { ...parts, ...(parts.BYHOUR && { BYHOUR: hour }), ...(parts.BYMINUTE && { BYMINUTE: minute }) };
     const phase = { ...schedule, rrule: Object.entries(phaseParts).map(([k,v]) => `${k}=${v}`).join(';') };
     const next = new CompiledRecurrence(phase).occurrences('', schedule.dtstart).next().value;
     if (!next) continue;
-    const anchor = dtstart.length === 10 ? next.scheduled : next.scheduled;
+    const anchor = next.scheduled;
     if (!schedule.timezone && anchor.includes('T') && wallTimeAt(scheduleInstant(anchor)!) !== anchor) throw new Error('EventKit cannot preserve a floating recurrence anchor inside a local daylight-saving gap.');
     const rule: NativeRecurrenceRule = { frequency: frequency as NativeRecurrenceRule['frequency'], interval };
     // A translated daily period has one clock. Its valid BYSETPOS cannot be

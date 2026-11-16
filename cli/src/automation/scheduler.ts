@@ -2,7 +2,7 @@ import { AUTOMATION_MAX_TIMER_MS, AUTOMATION_CLOCK_DRIFT_MS } from '../core/syst
 import { performance } from 'node:perf_hooks';
 import { compileSchedule, type Schedule } from './schedule.js';
 import { validateDefinition, type AutomationDefinition } from '../core/automation.js';
-import { compileDelegation, type DelegationSource } from './delegation.js';
+import { compileDelegation, delegationIdentity, type DelegationSource } from './delegation.js';
 import type {ExecutionContextSnapshot} from '../core/execution-context.js';
 
 export interface AutomationSource { key: string; root: string; instance: string; definedIn: string; declaration: unknown; blocked?: string; delegation?: DelegationSource; executionContext?: ExecutionContextSnapshot }
@@ -77,7 +77,7 @@ export class AutomationScheduler {
       if (job.next !== undefined) this.push({ key: job.key, revision: job.revision, at: job.next });
     } catch (error) {
       job.next = undefined;
-      this.errors.set(job.key, { ...this.statusOf(job), error: (error as Error).message });
+      this.fail(job, error);
     }
   }
   // Native sleep/wake and clock/timezone notifications invalidate pending clocks.
@@ -86,7 +86,7 @@ export class AutomationScheduler {
     for (const job of this.jobs.values()) {
       job.next = undefined; job.pending = undefined; job.revision = ++this.sequence;
       try { job.schedule = job.delegation ? compileDelegation(job).schedule : compileSchedule(job.definition.schedule, zone); }
-      catch (error) { this.errors.set(job.key, { ...this.statusOf(job), error: (error as Error).message }); continue; }
+      catch (error) { this.fail(job, error); continue; }
       if (job.definition.enabled !== false && !this.sleeping) this.advance(job, this.clock.now());
     }
     this.arm(); this.hooks.changed?.();
@@ -97,7 +97,7 @@ export class AutomationScheduler {
     clearTimeout(this.timer); this.timer = undefined;
     if (this.closed || this.sleeping) return;
     let top = this.heap[0];
-    while (top && (this.jobs.get(top.key)?.revision !== top.revision || this.jobs.get(top.key)?.next !== top.at)) { this.pop(); top = this.heap[0]; }
+    while (top && !this.live(top)) { this.pop(); top = this.heap[0]; }
     if (!top) return;
     this.armedWall = this.clock.now(); this.armedMono = this.clock.monotonic();
     this.timer = setTimeout(() => this.fire(), Math.max(0, Math.min(AUTOMATION_MAX_TIMER_MS, top.at - this.clock.now())));
@@ -109,8 +109,8 @@ export class AutomationScheduler {
     const now = this.clock.now();
     while (this.heap[0] && this.heap[0].at <= now) {
       const deadline = this.pop()!;
-      const job = this.jobs.get(deadline.key);
-      if (!job || job.revision !== deadline.revision || job.next !== deadline.at) continue;
+      const job = this.live(deadline);
+      if (!job) continue;
       job.next = undefined;
       // Claim before launching, or even queuing, so a clock rollback cannot duplicate it.
       try {
@@ -118,7 +118,7 @@ export class AutomationScheduler {
           if (!job.active) this.launch(job, deadline.at);
           else if ((job.definition.overlap ?? 'latest') === 'latest') job.pending = deadline.at;
         }
-      } catch (error) { this.errors.set(job.key, { ...this.statusOf(job), error: (error as Error).message }); }
+      } catch (error) { this.fail(job, error); }
       this.advance(job, now);
     }
     this.arm(); this.hooks.changed?.();
@@ -126,7 +126,7 @@ export class AutomationScheduler {
   private launch(job: Job, occurrence: number): void {
     job.active = true; this.running.set(job.key, job);
     Promise.resolve().then(() => this.hooks.run(job, occurrence)).catch(error => {
-      this.errors.set(job.key, { ...this.statusOf(job), error: (error as Error).message });
+      this.fail(job, error);
     }).finally(() => {
       job.active = false; this.running.delete(job.key);
       const current = this.jobs.get(job.key);
@@ -139,9 +139,17 @@ export class AutomationScheduler {
       this.hooks.changed?.();
     });
   }
+  private fail(job: Job, error: unknown): void {
+    this.errors.set(job.key, { ...this.statusOf(job), error: (error as Error).message });
+  }
+  // The job a queued deadline still stands for; a rescheduled or removed job leaves it stale.
+  private live(deadline: Deadline): Job | undefined {
+    const job = this.jobs.get(deadline.key);
+    return job && job.revision === deadline.revision && job.next === deadline.at ? job : undefined;
+  }
   private statusOf(job: Job): AutomationStatus {
     return { key: job.key, root: job.root, definedIn: job.definedIn,
-      ...(job.delegation ? {actionId: job.delegation.id, templateId: job.delegation.action.frontMatter.occurrence?.template, original: job.delegation.action.frontMatter.occurrence?.original} : {}), schedule: job.schedule.description,
+      ...delegationIdentity(job.delegation), schedule: job.schedule.description,
       enabled: job.definition.enabled !== false, blocked: false,
       next: job.next === undefined ? undefined : new Date(job.next).toISOString(), running: job.active, pending: job.pending === undefined ? undefined : new Date(job.pending).toISOString() };
   }

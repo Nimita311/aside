@@ -1,6 +1,8 @@
 import {lstatSync, readdirSync, realpathSync} from 'node:fs';
 import {dirname, join, relative, resolve, sep} from 'node:path';
-import {artifactAttachmentPath, artifactHandle, isArtifactStagingFilename, isInside} from './artifact.js';
+import {artifactAttachmentPath, artifactHandle, isArtifactStagingFilename} from './artifact.js';
+import {isInside} from './managed-path.js';
+import {errorMessage} from './error.js';
 
 export interface AttachmentFile {
   filename: string;
@@ -32,7 +34,7 @@ export function readAttachmentFiles(dataDir: string, id: string, filenames: read
       result.path = savedFile;
     } catch (error) {
       const code = (error as NodeJS.ErrnoException).code;
-      const reason = code === 'ENOENT' ? 'indexed attachment is missing' : error instanceof Error ? error.message : String(error);
+      const reason = code === 'ENOENT' ? 'indexed attachment is missing' : errorMessage(error);
       result.error = `${reason}. Run Aside validate and repair or reimport the attachment through MCP.`;
     }
     return result;

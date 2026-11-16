@@ -1,4 +1,5 @@
 import { formatScalar } from '../core/text.js';
+import { errorMessage } from '../core/error.js';
 
 export interface HealthCheck {
   code: string;
@@ -43,6 +44,12 @@ export function publishReceipt(report: Report, command: string, lines: string[],
   failedChecks ||= report.checks.some(check => !check.passed);
   if (json) writeOutput(jsonResult(command, report.data, report.checks), true, out);
   else if (lines.length) writeOutput(lines.join('\n'), false, out);
+}
+
+/** A short action receipt: the JSON envelope, or its human text. A thunk
+ * defers text that is only worth computing for a person. */
+export function publishResult(command: string, data: unknown, text: string | (() => string), json: boolean, out?: (text: string) => void): void {
+  writeOutput(json ? jsonResult(command, data) : typeof text === 'function' ? text() : text, json, out);
 }
 
 export function jsonResult(command: string, data: unknown, checks: HealthCheck[] = [], diagnostics: unknown[] = [], ok = checks.every(check => check.passed)): string {
@@ -90,11 +97,11 @@ export function renderReport(report: Report, command: string, json = false): str
 // deliberately multi-line, so keep newlines and tabs and escape every other
 // control character that a terminal would interpret.
 export function errorLine(error: unknown): string {
-  const message = error instanceof Error ? error.message : String(error);
+  const message = errorMessage(error);
   return `Error: ${message.replace(/[\u0000-\u0008\u000b-\u001f\u007f-\u009f\u2028\u2029]/g,
     char => `\\u${char.charCodeAt(0).toString(16).padStart(4, '0')}`)}`;
 }
 
 export function errorResult(command: string, error: unknown): string {
-  return jsonResult(command, null, [], [{ code: 'command_failed', severity: 'error', message: error instanceof Error ? error.message : String(error) }], false);
+  return jsonResult(command, null, [], [{ code: 'command_failed', severity: 'error', message: errorMessage(error) }], false);
 }

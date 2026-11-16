@@ -9,7 +9,6 @@ import {readAttachmentFiles, readReferenceRoots, type AttachmentFile} from '../.
 
 export const FIXTURE_NAMES = ['showcase', 'empty', 'malformed'] as const;
 export type FixtureName = typeof FIXTURE_NAMES[number];
-export const MOCK_NOW = '2026-10-18T10:00:00-07:00';
 export const SHOWCASE_IDS = {
   project: '2026-10-12-aurora', action: '2026-10-12-review',
   entry: '2026-10-18T09:30', emptyProject: '2026-10-12-empty', emptyAction: '2026-10-12-empty',
@@ -78,21 +77,10 @@ class FixtureSource implements DataSource {
   }
 }
 
-async function listFiles(root: string, directory = ''): Promise<string[]> {
-  const files: string[] = [];
-  for (const entry of await readdir(resolve(root, directory), { withFileTypes: true })) {
-    const path = directory ? `${directory}/${entry.name}` : entry.name;
-    if (entry.isDirectory()) files.push(...await listFiles(root, path));
-    else if (entry.isFile()) files.push(path);
-  }
-  return files.sort();
-}
-
 export interface LoadedFixture {
   store: DataCore;
   snapshot: DataSnapshot;
   root: string;
-  files: string[];
   attachmentFiles: ReadonlyMap<string, readonly AttachmentFile[]>;
   referenceRoots: readonly string[];
 }
@@ -105,6 +93,5 @@ export async function loadFixture(name: FixtureName = 'showcase', options: { fix
   await store.warmSearch();
   const attachmentFiles = new Map([...store.getArtifacts()].map(([id, artifact]) =>
     [id, readAttachmentFiles(root, id, artifact.frontMatter.attachments ?? [])]));
-  return {store, snapshot: await store.snapshot(), root, files: await listFiles(root), attachmentFiles,
-    referenceRoots: readReferenceRoots(root)};
+  return {store, snapshot: await store.snapshot(), root, attachmentFiles, referenceRoots: readReferenceRoots(root)};
 }

@@ -54,10 +54,6 @@ function response(store: Store, id: string, artifact: Artifact, imports: Prepare
   return lines.join('\n');
 }
 
-export function handleCreateArtifact(store: Store, args: CreateArtifactArgs, now = new Date()): string {
-  return createArtifact(store, args, now).text;
-}
-
 // Structured outcome shared by CLI receipts and GraphQL; never recover IDs
 // by parsing the human-readable response.
 export function createArtifact(store: Store, args: CreateArtifactArgs, now = new Date()): { id: string; text: string } {

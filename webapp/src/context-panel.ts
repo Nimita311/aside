@@ -1,4 +1,4 @@
-import { activeModal, usable } from './modal';
+import { activeModal, setConcealed, usable } from './modal';
 
 export type ContextPanelMode = 'summary' | 'expanded';
 export type ContextPanelTab = 'content' | 'overview';
@@ -295,9 +295,7 @@ export function createContextPanel(host: HTMLElement, body: HTMLElement, options
       clearTimeout(hideTimer);
       const generation = ++revision;
       state.open = true;
-      host.hidden = false;
-      host.inert = false;
-      host.removeAttribute('aria-hidden');
+      setConcealed(host, false);
       changed();
       requestAnimationFrame(() => {
         if (generation === revision && state.open) host.classList.add('is-open');
@@ -420,7 +418,7 @@ export function createContextPanel(host: HTMLElement, body: HTMLElement, options
   function setup(): void {
     if (started) return;
     started = true;
-    host.hidden = true; host.inert = true; host.setAttribute('aria-hidden', 'true');
+    setConcealed(host, true);
     if (back) listen(back, 'click', () => { if (view.canBack) options.onBack?.(); });
     if (forward) listen(forward, 'click', () => { if (view.canForward) options.onForward?.(); });
     if (timeline) listen(timeline, 'click', () => { if (state.open && view.available) view.timelineAction?.onClick(); });
@@ -467,10 +465,18 @@ export function createContextPanel(host: HTMLElement, body: HTMLElement, options
         finishResize(false);
       });
     }
+    // A click's own handlers can detach or re-park its target, or open this
+    // panel, before the click reaches the document. Judge it at capture, by
+    // its target then, and only against a panel that was already open.
+    let began: { event: MouseEvent; outside: boolean } | null = null;
+    const clickStart = (event: MouseEvent) => {
+      const target = event.target;
+      began = { event, outside: state.open && target instanceof Node && !host.contains(target) && (options.shouldDismiss?.(event) ?? true) };
+    };
     const clickAway = (event: MouseEvent) => {
-      if (!state.open || session || suppressClick || activeModal() || event.defaultPrevented) return;
-      if (!(event.target instanceof Node) || host.contains(event.target)) return;
-      if (options.shouldDismiss && !options.shouldDismiss(event)) return;
+      const outside = began?.event === event && began.outside;
+      began = null;
+      if (!outside || !state.open || session || suppressClick || activeModal() || event.defaultPrevented) return;
       dismiss('outside', false);
     };
     const resizeClick = (event: MouseEvent) => {
@@ -483,9 +489,10 @@ export function createContextPanel(host: HTMLElement, body: HTMLElement, options
       event.preventDefault(); dismiss('escape');
     };
     document.addEventListener('click', resizeClick, true);
+    document.addEventListener('click', clickStart, true);
     document.addEventListener('click', clickAway);
     document.addEventListener('keydown', keydown);
-    cleanup.push(() => document.removeEventListener('click', resizeClick, true), () => document.removeEventListener('click', clickAway), () => document.removeEventListener('keydown', keydown));
+    cleanup.push(() => document.removeEventListener('click', resizeClick, true), () => document.removeEventListener('click', clickStart, true), () => document.removeEventListener('click', clickAway), () => document.removeEventListener('keydown', keydown));
     // The frame can stay in its compact configuration across many widths.
     // Track its actual geometry independently of frame state notifications.
     window.addEventListener('resize', paint);

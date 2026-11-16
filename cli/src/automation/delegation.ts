@@ -6,14 +6,22 @@ import type { AutomationSource, ScheduledJob } from './scheduler.js';
 
 export interface DelegationSource { id: string; action: Action; excludedOriginals?: string[] }
 export interface DelegationTarget { id: string; action: Action; at: number }
+// A saved occurrence delegates under its projection's handle, any other action under its own.
+const delegationHandle = (id: string, action: Action) => `#action/${action.frontMatter.occurrence ? projectionId(action.frontMatter.occurrence) : id}`;
 export function delegationKey(root: string, id: string, action: Action): string {
-  return JSON.stringify([root, `#action/${action.frontMatter.occurrence ? projectionId(action.frontMatter.occurrence) : id}`, 'delegation']);
+  return JSON.stringify([root, delegationHandle(id, action), 'delegation']);
+}
+/** The saved action a run or status belongs to, with its occurrence provenance. */
+export function delegationIdentity(delegation: DelegationSource | undefined): {actionId?: string; templateId?: string; original?: string} {
+  if (!delegation) return {};
+  const {occurrence} = delegation.action.frontMatter;
+  return {actionId: delegation.id, templateId: occurrence?.template, original: occurrence?.original};
 }
 export function delegationSource(root: string, instance: string, id: string, action: Action, excludedOriginals?: string[], blocked?: string): AutomationSource {
   action = structuredClone(action);
   const key = delegationKey(root, id, action);
   const declaration = action.frontMatter.delegation;
-  return {key, root, instance, definedIn: JSON.parse(key)[1], declaration: {
+  return {key, root, instance, definedIn: delegationHandle(id, action), declaration: {
     schedule: {at: '2000-01-01T00:00:00Z'}, run: declaration?.run,
     ...(declaration?.timeout === undefined ? {} : {timeout: declaration.timeout}),
     enabled: !action.frontMatter.resolution, overlap: 'skip',

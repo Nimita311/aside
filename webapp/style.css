@@ -30,17 +30,13 @@
   --color-tag-project-fg:   #0550ae;
   --color-tag-action-bg:    #dafbe1;
   --color-tag-action-fg:    #116329;
-  --color-tag-entry-bg:     #eef1f5;
-  --color-tag-entry-fg:     #656d76;
+  --color-tag-closed-bg:     #eef1f5;
 
-  /* status mark palette — a pill's second channel: the accent carries the
-     entity type, the icon's state and the marks (the due ring) its status.
-     The due gold reads against the action green where a red would collapse
-     for red-green color vision; red is reserved for the breach (overdue). */
+  --color-ref-selection-bg: color-mix(in srgb, var(--color-text) 12%, transparent);
+
+  /* Notices and validation feedback. */
   --color-status-due:       #9a6700;
   --color-status-overdue:   #b51d28;
-
-  /* buttons */
 
   /* misc */
   --color-backdrop:         rgba(0, 0, 0, 0.4);
@@ -49,9 +45,6 @@
   --color-shadow-lg:        rgba(31, 35, 40, 0.12);
 
   /* spacing & sizing */
-  --header-height:          48px;
-  /* --side-panel-width is set by the app at startup: the persisted width,
-     or the computed home width parked in the flow's right margin. */
   --modal-max-width:        480px;
   --search-max-width:       400px;
   /* Flow geometry. The readable content measure is shared with the document
@@ -83,8 +76,8 @@
   --font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas,
     "Liberation Mono", monospace;
   /* UI type scale: font sizes with paired whole-pixel line heights on a 4px
-     grid — fractional line boxes jitter across re-renders (spec.md,
-     Typography). The pair travels together: a rule setting a font-size above
+     grid — fractional line boxes jitter across re-renders.
+     The pair travels together: a rule setting a font-size above
      the base must set the matching line-height (px line-height inherits
      as-is and would cramp). Rendered Markdown uses GitHub's type ratios.
      Enforced by test/typography.test.ts. */
@@ -128,8 +121,7 @@ html[data-theme="dark"] {
   --color-tag-project-fg:   #79c0ff;
   --color-tag-action-bg:    rgba(63, 185, 80, 0.15);
   --color-tag-action-fg:    #7ee787;
-  --color-tag-entry-bg:     rgba(110, 118, 129, 0.15);
-  --color-tag-entry-fg:     #919ba7;
+  --color-tag-closed-bg:     rgba(110, 118, 129, 0.15);
 
   --color-status-due:       #d29922;
   --color-status-overdue:   #f85149;
@@ -188,7 +180,7 @@ a {
   color: var(--color-accent);
   text-decoration: none;
 }
-a:hover {
+a:where(:not(.tag):not(.inline-tag):not(.ref-row):not(.ref-identity)):hover {
   text-decoration: underline;
 }
 
@@ -242,50 +234,8 @@ button {
 
 
 /* ------------------------------------------------------------------
-   3. Header
+   3. App title, search, icon buttons
    ------------------------------------------------------------------ */
-
-.top-bar {
-  position: relative;
-  flex: 0 0 auto;
-  z-index: 100;
-  background-color: var(--color-bg);
-}
-
-.app-header {
-  display: flex;
-  align-items: center;
-  height: var(--header-height);
-  padding: 0 16px;
-  background-color: var(--color-bg);
-  border-bottom: 1px solid var(--color-border-subtle);
-}
-
-.header-left,
-.header-right {
-  flex: 0 0 auto;
-  display: flex;
-  align-items: center;
-  gap: 4px;
-}
-
-.header-left {
-  min-width: 120px;
-  flex-shrink: 1;
-}
-
-.header-center {
-  flex: 1 1 auto;
-  min-width: 120px;
-  display: flex;
-  justify-content: center;
-  padding: 0 16px;
-}
-
-.header-right {
-  min-width: 120px;
-  justify-content: flex-end;
-}
 
 .app-title {
   flex-shrink: 0;
@@ -414,8 +364,7 @@ button {
   background: var(--color-bg-secondary);
   border-right: 1px solid var(--color-border-subtle);
 }
-.navigation-sidebar-host[hidden], .navigation-sidebar[hidden],
-#btn-navigation-toggle[hidden] { display: none; }
+.navigation-sidebar-host[hidden], .navigation-sidebar[hidden] { display: none; }
 .navigation-sidebar { padding: 12px 8px; }
 .navigation-link {
   display: flex;
@@ -431,35 +380,8 @@ button {
 .navigation-link:hover { color: var(--color-text); background: var(--color-bg-tertiary); text-decoration: none; }
 .navigation-link[aria-current="page"] { background: var(--color-bg-tertiary); color: var(--color-text); font-weight: 600; }
 .navigation-link:focus-visible { outline: 2px solid var(--color-accent); outline-offset: -2px; }
-.navigation-entry-icon { display: flex; color: var(--color-tag-entry-fg); }
+.navigation-entry-icon { display: flex; color: var(--color-text-secondary); }
 .navigation-entry-icon svg { width: 16px; height: 16px; flex-shrink: 0; }
-.navigation-drawer {
-  position: fixed;
-  inset: 0 auto 0 0;
-  width: 240px;
-  max-width: calc(100vw - 40px);
-  height: 100%;
-  max-height: 100%;
-  margin: 0;
-  padding: 0;
-  border: 0;
-  border-right: 1px solid var(--color-border-subtle);
-  background: var(--color-bg-secondary);
-  color: var(--color-text);
-}
-.navigation-drawer[hidden] { display: none; }
-.navigation-drawer::backdrop { background: var(--color-backdrop); }
-.navigation-drawer-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  min-height: 48px;
-  padding: 8px 12px;
-  font-size: var(--font-size-base);
-  line-height: var(--line-height-base);
-  font-weight: 600;
-}
-.navigation-drawer-body { height: calc(100% - 48px); overflow-y: auto; overscroll-behavior-y: contain; }
 
 /* The right scope panel and readers float above the flow. Sidebar docking
    preserves a visible text anchor; pane bounces stay inside this scroller. */
@@ -601,10 +523,6 @@ button {
   outline-offset: -2px;
   border-radius: 0;
 }
-body.is-panel-resizing {
-  cursor: ew-resize;
-  user-select: none;
-}
 .side-panel[data-resizing="true"] { transition: none; user-select: none; }
 .side-panel[data-folded="true"] { border-left-color: transparent; box-shadow: none; }
 .side-panel[data-folded="true"] :is(.side-panel-body, .context-panel-tools, .context-panel-navigation, .context-panel-action, .context-panel-view) { visibility: hidden; }
@@ -687,15 +605,25 @@ body.is-panel-resizing {
   pointer-events: none;
   visibility: hidden;
 }
-.filter-pill.is-visible {
-  transform: translateX(0);
-}
 .filter-pill .tag {
   font-size: var(--font-size-xs);
   padding: 3px 8px;
 }
 .filter-pill-label {
   max-width: 200px;
+  padding: 3px 8px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+  border-radius: var(--radius-sm);
+}
+.filter-pill-label > .tag-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .filter-pill-clear {
   display: inline-flex;
@@ -715,12 +643,9 @@ body.is-panel-resizing {
 
 
 /* ------------------------------------------------------------------
-   6b. Document reader — full project/action bodies and assets.
-   An overlay reading surface: constant size regardless of content,
-   dimmed flow around it, dismissed by clicking outside.
+   6b. Modal backdrop — the dimmed surface behind a dialog.
    ------------------------------------------------------------------ */
 
-.doc-backdrop,
 .modal-backdrop {
   position: fixed;
   inset: 0;
@@ -741,53 +666,15 @@ body.is-panel-resizing {
     display var(--duration-normal) allow-discrete,
     overlay var(--duration-normal) allow-discrete;
 }
-.doc-backdrop[open], .modal-backdrop[open] { display: flex; }
-.doc-backdrop[hidden], .modal-backdrop[hidden] { display: none !important; }
-.doc-backdrop.is-visible, .modal-backdrop.is-visible { opacity: 1; }
-.doc-backdrop::backdrop, .modal-backdrop::backdrop { background: transparent; }
+.modal-backdrop[open] { display: flex; }
+.modal-backdrop[hidden] { display: none !important; }
+.modal-backdrop.is-visible { opacity: 1; }
+.modal-backdrop::backdrop { background: transparent; }
 
-.doc-window {
-  position: relative;
-  /* Sized so the content column lands at exactly --flow-content-width: the
-     padding, the always-present scrollbar track, and the 1px borders all sit
-     outside it, matching the flow, whose scrollbar is likewise outside its column. */
-  width: calc(var(--flow-content-width) + 2 * var(--doc-pad-x) + var(--scrollbar-width) + 2px);
-  height: calc(100vh - 96px);   /* a reading surface, not a content-sized popup */
-  display: flex;
-  flex-direction: column;
-  background-color: var(--color-bg);
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-lg);
-  box-shadow: 0 12px 48px var(--color-shadow-lg);
-}
-
-.doc-close {
-  position: absolute;
-  top: 12px;
-  right: 16px;
-  z-index: 1;
-}
-
+/* Never rendered. The workspace frame reads this horizontal padding as the
+   content inset of a full-screen record when it sizes wide blocks. */
 .doc-body {
-  flex: 1 1 auto;
-  /* `scroll`, not `auto`: the 8px track is always reserved so the content
-     column keeps its width whether or not the document scrolls (as the flow does). */
-  overflow-y: scroll;
-  overscroll-behavior-y: contain;
   padding: 40px var(--doc-pad-x) 64px;
-}
-.doc-body .entity-view {
-  max-width: var(--flow-content-width);
-  margin: 0 auto;
-}
-.doc-body .entity-title {
-  font-size: var(--font-size-xl);
-  line-height: var(--line-height-xl);
-  margin-bottom: 16px;
-}
-
-.doc-window:has(.asset-webpage) {
-  width: min(1200px, calc(100vw - 48px));
 }
 
 /* ------------------------------------------------------------------
@@ -800,36 +687,31 @@ body.is-panel-resizing {
   font-weight: 600;
   margin-bottom: 8px;
   overflow-wrap: anywhere;
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
 }
+.entity-title-label { min-width: 0; }
 
-/* Type icon in front of the title, colored by entity type */
+/* A title's leading icon shares its first text line. */
 .entity-title-icon {
   display: inline-flex;
-  margin-right: 6px;
-  vertical-align: -2px;
+  flex: none;
+  color: var(--color-text-secondary);
+  margin-top: calc((1lh - 1em) / 2);
 }
-.entity-title-icon svg {
-  width: 18px;
-  height: 18px;
-}
+.entity-title-icon svg { width: 1em; height: 1em; }
 .entity-title-icon.icon-project  { color: var(--color-tag-project-fg); }
 .entity-title-icon.icon-action   { color: var(--color-tag-action-fg); }
-.entity-title-icon.icon-entry    { color: var(--color-tag-entry-fg); }
-.entity-title-icon.icon-asset    { color: var(--color-text-secondary); }
-.entity-title-icon.icon-instance { color: var(--color-text-secondary); }
 
-/* With a detail target the whole title — icon, name, arrow — is one control
-   opening the scope's record in the reader: the control is the identity it
-   opens, the title reading as the entity's own tag writ large. Hover lifts
-   its opacity — the pill's hover — and lights the arrow */
+/* Native readers expose their detail target through the title and arrow. */
 .title-open {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
   padding: 0;
   text-align: left;
   max-width: 100%;
-  transition: opacity var(--duration-fast) var(--ease-default);
-}
-.title-open:hover {
-  opacity: 0.8;
 }
 .title-open:hover .title-detail {
   color: var(--color-accent);
@@ -866,11 +748,7 @@ body.is-panel-resizing {
   font-size: var(--font-size-xs);
 }
 
-/* Status pill row — each pill a lifecycle state or an exception, in the
-   entity-pill style: the type accent field wearing the same marks as the
-   entity's own chips (the due ring, the closed mute — shared rules under
-   "Tag pills"). No type icon; the title above carries it, in the entity's
-   state. */
+/* Native reader status facts; lifecycle also reads in the title icon. */
 .status-pills {
   display: flex;
   flex-wrap: wrap;
@@ -881,27 +759,16 @@ body.is-panel-resizing {
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  padding: 2px 10px;
-  border-radius: var(--radius-pill);
+  color: var(--color-text);
   font-size: var(--font-size-sm);
   font-weight: 500;
 }
-.status-pill.tag-project { background: var(--color-tag-project-bg); color: var(--color-tag-project-fg); }
-.status-pill.tag-action  { background: var(--color-tag-action-bg);  color: var(--color-tag-action-fg); }
-/* An exception pill flags an anomaly (scheduled but synced to no calendar),
-   not a lifecycle state: a dashed outline on no field — an absence — in the
-   muted ink. Its presence is the flag; the normal state shows no pill. */
-.status-pill.pill-exception {
-  background: transparent;
-  border: 1px dashed var(--color-border);
-  padding: 1px 9px;
-  color: var(--color-text-muted);
-}
+.status-pill.pill-exception { color: var(--color-text-secondary); }
 .detail-body {
   margin-top: 12px;
 }
 
-/* Authored one-line description from the index, below the pills */
+/* Authored one-line description from the index, below status facts. */
 .summary-description {
   margin: 0 0 8px;
   font-size: var(--font-size-sm);
@@ -935,7 +802,7 @@ body.is-panel-resizing {
 .summary-stat .stat-icon svg { display: block; width: 11px; height: 11px; }
 .summary-stat .stat-icon.icon-project { color: var(--color-tag-project-fg); }
 .summary-stat .stat-icon.icon-action  { color: var(--color-tag-action-fg); }
-.summary-stat .stat-icon.icon-entry   { color: var(--color-tag-entry-fg); }
+.summary-stat .stat-icon.icon-entry   { color: var(--color-text-secondary); }
 
 .entity-related {
   margin-top: 12px;
@@ -1007,7 +874,7 @@ body.is-panel-resizing {
 
 /* The instance summary's last-update timeline: each project/backlog row
    hangs as a node on a vertical rail, the compact age in a fixed
-   right-aligned gutter marking the rail where it changes; the pills align
+   right-aligned gutter marking the rail where it changes; the references align
    into a column after the rail and wrapped descriptions stay clear of it.
    The rail and node draw on the <li>'s pseudo-elements so the line spans the
    row padding unbroken; it starts at the first node and ends at the last */
@@ -1106,7 +973,7 @@ body.is-panel-resizing {
   color: var(--color-accent);
 }
 
-/* Timeline fold buttons sit in the pill column (gutter + rail + gap) */
+/* Timeline fold buttons sit in the reference column (gutter + rail + gap) */
 .timeline-more {
   margin-left: 50px;
 }
@@ -1129,23 +996,6 @@ body.is-panel-resizing {
 .related-more:hover {
   color: var(--color-accent);
   text-decoration: underline;
-}
-
-/* Asset rows in related lists */
-.asset-row {
-  display: inline-flex;
-  align-items: baseline;
-  gap: 6px;
-  cursor: pointer;
-  color: var(--color-accent);
-}
-.asset-row:hover .asset-row-title {
-  text-decoration: underline;
-}
-.asset-row svg {
-  vertical-align: -1px;
-  flex-shrink: 0;
-  align-self: center;
 }
 
 /* Asset path line under a document title */
@@ -1194,13 +1044,6 @@ img.asset-media {
   display: inline-block;
   margin-top: 8px;
 }
-
-/* Asset links inside rendered markdown */
-.rendered-content .asset-link svg {
-  vertical-align: -1px;
-  margin-right: 3px;
-}
-
 
 /* ------------------------------------------------------------------
    7. Entry Cards — two columns: timeline | content
@@ -1402,113 +1245,20 @@ img.asset-media {
   line-height: var(--line-height-base);
   font-weight: 600;
   white-space: nowrap;
-  cursor: pointer;
-  /* pointer-events land only on the chip's glyphs; the zero-height latch and
-     its padding stay click-through so the gutter behind reads normally */
-  pointer-events: auto;
+  /* A readout, not a control: it stays click-through like the zero-height
+     latch, so the gutter behind reads normally */
+  cursor: default;
+  pointer-events: none;
 }
-.date-latch-chip:hover {
-  color: var(--color-accent);
-}
-.date-latch-chip:focus-visible {
-  outline: 2px solid var(--color-accent);
-  outline-offset: 2px;
-  border-radius: var(--radius-sm);
-}
-.latch-calendar-icon { display: none; }
 
-/* The jump-to-date popover, floated under the latch chip. */
-.date-jump {
-  position: fixed;
-  z-index: 150;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  padding: 8px;
-  width: 232px;
-  max-width: calc(100vw - 16px);
-  max-height: calc(100vh - 16px);
-  overflow-y: auto;
-  overscroll-behavior: contain;
-  background: var(--color-surface);
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-md);
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
-  font-size: var(--font-size-sm);
-}
-.date-jump > * {
-  flex-shrink: 0;
-}
 /* The live region stays available to assistive technology while empty,
-   without adding a blank row to the navigator. */
+   without adding a blank row to the calendar. */
 .date-jump-status:empty {
   position: absolute;
   width: 1px;
   height: 1px;
   overflow: hidden;
   clip-path: inset(50%);
-}
-
-/* Quick navigator: period segments on the left, up/down steppers on the right. */
-.date-jump-nav {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-.date-jump-units {
-  display: flex;
-  flex: 1;
-  gap: 2px;
-  padding: 2px;
-  background: var(--color-bg-secondary);
-  border-radius: var(--radius-sm);
-}
-.date-jump-unit {
-  flex: 1;
-  padding: 4px 0;
-  background: none;
-  border: none;
-  border-radius: 3px;
-  color: var(--color-text-muted);
-  font: inherit;
-  font-size: var(--font-size-xs);
-  cursor: pointer;
-}
-.date-jump-unit:hover {
-  color: var(--color-text);
-}
-.date-jump-unit.is-active {
-  background: var(--color-surface);
-  color: var(--color-text);
-  font-weight: 600;
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.12);
-}
-.date-jump-steppers {
-  display: flex;
-  gap: 4px;
-}
-.date-jump-step {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 28px;
-  height: 28px;
-  padding: 0;
-  background: none;
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-sm);
-  color: var(--color-text);
-  cursor: pointer;
-}
-.date-jump-step:hover {
-  background: var(--color-bg-secondary);
-}
-/* Rule dividing the quick navigator from the date selection below. */
-.date-jump-divider {
-  height: 0;
-  margin: 0;
-  border: none;
-  border-top: 1px solid var(--color-border);
 }
 
 /* Date entry: label above the ISO date field. */
@@ -1721,15 +1471,13 @@ img.asset-media {
 }
 @media (prefers-reduced-motion: reduce) { .entity-icon { --icon-motion: 0ms; } }
 
-/* Tag pills */
+/* Entity forms: metadata pills, inline names, list rows and plain identities. */
 .tag {
   display: inline-flex;
   align-items: center;
-  gap: 3px;
+  gap: .25em;
   padding: 2px 6px;
-  font-size: 10px;
-  font-weight: 500;
-  line-height: 1.4;
+  font: 500 var(--font-size-sm)/var(--line-height-sm) var(--font-body);
   border-radius: var(--radius-pill);
   cursor: pointer;
   user-select: none;
@@ -1738,217 +1486,91 @@ img.asset-media {
   text-overflow: ellipsis;
   max-width: 100%;
   flex-shrink: 1;
-  transition: opacity var(--duration-fast) var(--ease-default);
 }
-a.tag:hover { text-decoration: none; }
-.tag svg { width: 10px; height: 10px; flex-shrink: 0; }
-.tag-text { overflow: hidden; text-overflow: ellipsis; }
-.tag-sm { height: 20px; padding: 0 5px; max-width: none; flex-shrink: 0; }
-/* Timeline metadata shares a 12px scale. The 16px pill line plus its
-   existing vertical padding matches the timestamp's 20px line box. */
-.entry-tag-row .tag,
-.entry-tag-row .tag-bubble {
-  font-size: var(--font-size-sm);
-  line-height: var(--line-height-sm);
-}
-/* The label supplies the pill's baseline; the type icon stays centered. */
+.tag .tag-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.tag.tag-project { background-color: var(--color-tag-project-bg); color: var(--color-tag-project-fg); }
+.tag.tag-action { background-color: var(--color-tag-action-bg); color: var(--color-tag-action-fg); }
 .entry-tag-row .tag { min-width: 0; align-items: first baseline; }
 .entry-tag-row .tag svg { align-self: center; }
-.tag:hover,
-.tag.is-cohovered {
+.tag.is-cohovered, .tag-bubble.is-cohovered, .filter-pill-label.is-cohovered {
   outline: 1px solid var(--color-border);
   outline-offset: 1px;
 }
 
-/* The active filter's own tag is marked in the flow: pills (and a +N bubble
-   hiding the tag) fill with a softened solid of their type color; inline
-   mentions get a soft background fill of their type color — background and
-   shadow only, so text metrics never change and nothing shifts */
-.tag-project.is-active,
-.tag-bubble-project.is-active {
-  background-color: color-mix(in srgb, var(--color-tag-project-fg) 95%, var(--color-bg));
-  color: var(--color-bg);
-}
-.tag-action.is-active,
-.tag-bubble-action.is-active {
-  background-color: color-mix(in srgb, var(--color-tag-action-fg) 95%, var(--color-bg));
-  color: var(--color-bg);
-}
-.tag-entry.is-active {
-  background-color: color-mix(in srgb, var(--color-tag-entry-fg) 95%, var(--color-bg));
-  color: var(--color-bg);
-}
-.inline-tag.is-active {
-  border-radius: 3px;
-}
-/* The box-shadow spread pads the highlight outward without touching layout */
-.inline-tag-project.is-active {
-  background-color: var(--color-tag-project-bg);
-  box-shadow: 0 0 0 2px var(--color-tag-project-bg);
-}
-.inline-tag-action.is-active {
-  background-color: var(--color-tag-action-bg);
-  box-shadow: 0 0 0 2px var(--color-tag-action-bg);
-}
-.inline-tag-entry.is-active {
-  background-color: var(--color-tag-entry-bg);
-  box-shadow: 0 0 0 2px var(--color-tag-entry-bg);
-}
-
-.tag-project {
-  background-color: var(--color-tag-project-bg);
-  color: var(--color-tag-project-fg);
-}
-.tag-action {
-  background-color: var(--color-tag-action-bg);
-  color: var(--color-tag-action-fg);
-}
-.tag-entry,
-.tag-artifact {
-  background-color: var(--color-tag-entry-bg);
-  color: var(--color-tag-entry-fg);
-}
-/* The instance pill — the whole timeline, not an entity type; neutral grey */
-.tag-instance {
-  background-color: var(--color-tag-entry-bg);
-  color: var(--color-tag-entry-fg);
-}
-/* The search dropdown's jump-to-date rows — a moment, not an entity; neutral */
-.tag-date {
-  background-color: var(--color-bg-secondary);
-  color: var(--color-text-muted);
-}
-
-/* Inline tags — colored references that flow with text */
 .inline-tag {
   display: inline;
-  font-weight: inherit;
+  color: inherit;
+  font: inherit;
   cursor: pointer;
-  line-height: inherit;
-  transition: opacity var(--duration-fast) var(--ease-default);
-}
-.inline-tag svg {
-  width: 10px;
-  height: 10px;
-  vertical-align: -1px;
-  margin-right: 2px;
-}
-.inline-tag .tag-text { }
-/* Hover marks retain full ink contrast, including on a selected fill. */
-.inline-tag:hover,
-.inline-tag.is-cohovered { text-decoration-line: underline; }
-.inline-tag-project {
-  color: var(--color-tag-project-fg);
-}
-.inline-tag-action {
-  color: var(--color-tag-action-fg);
-}
-.inline-tag-entry {
-  color: var(--color-tag-entry-fg);
-}
-.inline-tag-date, .rendered-content a.inline-tag-date,
-.inline-tag-location, .rendered-content a.inline-tag-location {
-  color: var(--color-tag-entry-fg);
-  background: var(--color-bg-secondary);
-  border-radius: 3px;
-  padding: 1px 4px;
-  box-decoration-break: clone;
+  border-radius: var(--radius-sm);
   -webkit-box-decoration-break: clone;
+  box-decoration-break: clone;
 }
+.inline-tag > .tag-text, .inline-tag > time {
+  text-decoration: underline;
+  text-decoration-color: var(--color-border);
+  text-decoration-thickness: 1px;
+  text-underline-offset: 3px;
+}
+.inline-tag.is-active > .tag-text, .inline-tag.is-active > time { text-decoration-line: none; }
+a.inline-tag.is-cohovered > .tag-text, a.inline-tag.is-cohovered > time {
+  text-decoration-line: underline;
+  text-decoration-color: currentColor;
+}
+.tag svg, .inline-tag svg { width: max(10px, .75em); height: max(10px, .75em); flex-shrink: 0; }
+.inline-tag svg { vertical-align: -.05em; margin-right: .25em; color: var(--color-text-secondary); }
 .inline-tag-location.is-unresolved { cursor: default; }
-.inline-tag-location.is-unresolved:hover { text-decoration: none; }
 
-/* The icon carries the lifecycle — waiting, done, cancelled, recurring —
-   and the pill the rest: urgency is the due ring below, closed work the
-   mute below that; upcoming work and live projects are the clean pill.
-   A deadline rings the pill — urgency drawn as a circle around it, so it
-   composes with whatever state the icon shows. The ring is
-   the same weight whether or not the pill is highlighted — the fill marks
-   the highlight, the ring only the deadline (a +N bubble standing in for a
-   hidden active due tag carries it too). */
-.tag.tag-status-due,
-.tag-bubble.tag-status-due,
-.status-pill.tag-status-due { box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--color-status-due) 45%, transparent); }
-/* An inline mention has no field to ring, and a box around flowing text
-   breaks across line wraps — so the ring flattens into its bottom stroke: a
-   thin underline in the same due gold, at the same weight highlighted or not.
-   It reads as the same mark laid into the text line. */
-.inline-tag.tag-status-due {
-  text-decoration-line: underline;
-  text-decoration-color: color-mix(in srgb, var(--color-status-due) 45%, transparent);
-  text-decoration-thickness: 1px;
-  text-underline-offset: 2px;
+.ref-row, .ref-identity { color: var(--color-text); text-decoration: none; }
+.ref-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  min-width: 0;
+  margin-inline: -6px;
+  padding: 6px;
+  border-radius: var(--radius-sm);
+  font: 400 var(--font-size-base)/var(--line-height-base) var(--font-body);
 }
+.ref-row .tag-text { min-width: 0; overflow-wrap: anywhere; }
+.ref-row-copy { min-width: 0; flex: 1; }
+.ref-row .related-desc { font-size: var(--font-size-sm); line-height: var(--line-height-sm); }
+.ref-row svg { color: var(--color-text-secondary); }
+a.ref-row.is-cohovered { background: color-mix(in srgb, var(--color-text) 4%, transparent); }
+.ref-identity {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  min-width: 0;
+  font: inherit;
+}
+.ref-identity .tag-text { min-width: 0; overflow-wrap: anywhere; }
+.ref-identity svg { color: var(--color-text-secondary); }
+.ref-row > svg, .ref-identity > svg, .ref-identity .context-identity-icon {
+  flex: none;
+  width: 1em;
+  height: 1em;
+  margin-top: calc((1lh - 1em) / 2);
+}
+.ref-identity .context-identity-icon { display: inline-flex; }
+.ref-identity .context-identity-icon svg { width: 1em; height: 1em; }
+.inline-tag-project svg, .ref-row-project svg, .ref-identity.icon-project svg { color: var(--color-tag-project-fg); }
+.inline-tag-action svg, .ref-row-action svg, .ref-identity.icon-action svg { color: var(--color-tag-action-fg); }
+.ref-note { color: var(--color-text-secondary); font-size: var(--font-size-xs); line-height: var(--line-height-xs); white-space: nowrap; }
+.ref-explanation { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 
-/* A breached deadline — overdue — escalates the same signal instead of
-   minting a new mark: the ring turns the overdue red and bleeds into the
-   field as a soft wash, the name's ink reddening with it, while the icon
-   keeps the full type color — the vivid reference the alarm reads against.
-   An inline mention, field-less as ever, reddens its ink and underline. */
-.tag.tag-status-overdue,
-.tag-bubble.tag-status-overdue,
-.status-pill.tag-status-overdue {
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--color-status-overdue) 60%, transparent);
-  background-color: color-mix(in srgb, var(--color-status-overdue) 14%, var(--color-bg));
+/* Selection adds a field without changing reference ink or text metrics. */
+.tag.is-active, .tag-bubble.is-active, .inline-tag.is-active, a.ref-row.is-active {
+  background-image: linear-gradient(var(--color-ref-selection-bg), var(--color-ref-selection-bg));
 }
-.tag.tag-status-overdue:not(.is-active) .tag-text,
-.status-pill.tag-status-overdue .tag-text {
-  color: var(--color-status-overdue);
-}
-.inline-tag.tag-status-overdue {
-  color: var(--color-status-overdue);
-  text-decoration-line: underline;
-  text-decoration-color: color-mix(in srgb, var(--color-status-overdue) 60%, transparent);
-  text-decoration-thickness: 1px;
-  text-underline-offset: 2px;
-}
-
-/* The filter fill never downplays a breach: an overdue pill (or its stand-in
-   bubble) fills with the overdue solid instead of the type color, a mention
-   with the wash — the same shape as the closed-grey rule below. */
-.tag.is-active.tag-status-overdue,
-.tag-bubble.is-active.tag-status-overdue {
-  background-color: color-mix(in srgb, var(--color-status-overdue) 95%, var(--color-bg));
-}
-.inline-tag.is-active.tag-status-overdue {
-  background-color: color-mix(in srgb, var(--color-status-overdue) 14%, var(--color-bg));
-  box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-status-overdue) 14%, var(--color-bg));
-}
-
-/* Closed work — a done or cancelled action, an ended project, all carrying
-   tag-status-closed — mutes: the pill field greys and the name's ink goes
-   fully grey (the secondary text tone — the entry pills' ink — quiet but
-   comfortably legible on the grey field), while the icon keeps the full type
-   color — the vivid icon is the reference the grey name mutes against, and
-   alone says what it is. Inline mentions have no field; their name takes
-   the same grey, their icon the same full color. */
-.tag.tag-status-closed:not(.is-active) .tag-text,
-.inline-tag.tag-status-closed .tag-text,
-.status-pill.tag-status-closed .tag-text {
-  color: var(--color-text-secondary);
-}
-.tag.tag-status-closed:not(.is-active),
-.status-pill.tag-status-closed { background-color: var(--color-tag-entry-bg); }
-
-/* The active filter's highlight never resurrects closed work: a closed
-   pill (or the +N bubble standing in for it) fills with the muted grey
-   solid instead of the type color, an inline mention with the entry grey —
-   the cancelled strike reads on either. */
-.tag.is-active.tag-status-closed,
-.tag-bubble.is-active.tag-status-closed {
-  background-color: color-mix(in srgb, var(--color-tag-entry-fg) 95%, var(--color-bg));
-}
-.inline-tag.is-active.tag-status-closed {
-  background-color: var(--color-tag-entry-bg);
-  box-shadow: 0 0 0 2px var(--color-tag-entry-bg);
-}
-/* A cancelled name additionally strikes through — dropped, not finished */
-.tag-status-cancelled .tag-text {
-  /* The strike drawn soft — half the ink, hairline — a calm mark, not a scribble */
-  text-decoration: line-through;
-  text-decoration-color: color-mix(in srgb, currentColor 50%, transparent);
+.inline-tag.is-active { box-shadow: 0 0 0 2px var(--color-ref-selection-bg); }
+.tag.tag-status-closed { background-color: var(--color-tag-closed-bg); }
+:where(.tag, .ref-row, .ref-identity, .status-pill).tag-status-closed .tag-text { color: var(--color-text-secondary); }
+:where(.tag, .ref-row, .ref-identity, .status-pill).tag-status-cancelled .tag-text {
+  text-decoration-line: line-through;
   text-decoration-thickness: 1px;
 }
+@media (pointer: coarse) { .ref-row { min-height: 44px; padding-block: 12px; } }
 
 /* Settings sections */
 .settings-section {
@@ -1975,7 +1597,7 @@ a.tag:hover { text-decoration: none; }
    Keep the adaptation local; do not load GitHub CSS at runtime.
    Aside's font, theme, native references, and Mermaid are app integrations.
    Intentional layout deviations are marked below and documented in
-   spec.md#markdown-rendering; other differences are not implicitly intended. */
+   design/interfaces.md#presentation; other differences need explicit rationale. */
 .rendered-content {
   font-size: var(--font-size-md);
   color: var(--color-text);
@@ -2168,14 +1790,8 @@ a.tag:hover { text-decoration: none; }
   font-weight: 600;
 }
 
-.rendered-content a {
+.rendered-content a:where(:not(.inline-tag):not(.tag):not(.ref-row):not(.ref-identity)) {
   color: var(--color-accent);
-  text-decoration: none;
-}
-.rendered-content a:not(.inline-tag):not(.tag) {
-  text-decoration: underline;
-}
-.rendered-content a:hover {
   text-decoration: underline;
 }
 
@@ -2201,9 +1817,9 @@ a.tag:hover { text-decoration: none; }
 }
 .wide-block::-webkit-scrollbar { display: none; height: 0; }
 .wide-block.is-fit { overflow: clip; }
-:is(.entry-content, .doc-body .rendered-content) > .wide-block,
-:is(.entry-content, .doc-body .rendered-content) > .mermaid-diagram > .wide-block,
-:is(.entry-content, .doc-body .rendered-content) > .mermaid-diagram > .mermaid-source > .wide-block {
+.entry-content > .wide-block,
+.entry-content > .mermaid-diagram > .wide-block,
+.entry-content > .mermaid-diagram > .mermaid-source > .wide-block {
   --wide-left: var(--wide-content-left, 0px);
   --wide-right: var(--wide-content-right, 0px);
 }
@@ -2369,22 +1985,15 @@ a.tag:hover { text-decoration: none; }
               border-color var(--duration-fast) var(--ease-default);
   user-select: none;
 }
+.btn:disabled { opacity: .5; cursor: default; }
+/* A form's submitting action, filled like the calendar's selected day. */
+.btn-primary { color: var(--color-bg); background-color: var(--color-accent); }
+.btn-primary:hover:not(:disabled) { background-color: var(--color-accent-hover); }
 
 
 /* ------------------------------------------------------------------
    10. Responsive
    ------------------------------------------------------------------ */
-
-/* Too narrow to float with a margin: the reader fills the screen. */
-@media (max-width: 960px) {
-  .doc-window, .doc-window:has(.asset-webpage) {
-    width: 100vw;
-    height: 100dvh;
-    border: none;
-    border-radius: 0;
-    box-shadow: none;
-  }
-}
 
 /* Long timestamp styles keep the reading column wide by moving above entries. */
 :root[data-timeline-layout="stacked"] .entry-card { flex-direction: column; }
@@ -2413,18 +2022,9 @@ a.tag:hover { text-decoration: none; }
   width: 16px;
   color: var(--color-text-muted);
 }
-:root[data-timeline-layout="stacked"] .date-latch-chip:hover { color: var(--color-accent); }
 :root[data-timeline-layout="stacked"] .latch-date-row {
   visibility: hidden;
   background: none;
-}
-:root[data-timeline-layout="stacked"] .latch-calendar-icon {
-  position: absolute;
-  bottom: 4px;
-  left: 0;
-  display: flex;
-  width: 12px;
-  height: 12px;
 }
 :root[data-timeline-layout="stacked"] .instance-row { display: block; }
 :root[data-timeline-layout="stacked"] .instance-date {
@@ -2486,26 +2086,8 @@ a.tag:hover { text-decoration: none; }
 
 /* Mobile */
 @media (max-width: 640px) {
-  .app-header {
-    padding: 0 12px;
-    gap: 4px;
-  }
-
-  .header-left {
-    min-width: 0;
-  }
-
   .app-title {
     font-size: var(--font-size-base);
-  }
-
-  .header-center {
-    min-width: 100px;
-    padding: 0 8px;
-  }
-
-  .header-right {
-    min-width: auto;
   }
 
   .search-input {
@@ -2550,11 +2132,8 @@ a.tag:hover { text-decoration: none; }
     overflow: visible;
   }
 
-  .app-header,
   .navigation-sidebar-host,
-  .navigation-drawer,
   .side-panel,
-  .doc-backdrop,
   .modal-backdrop,
   .date-latch {
     display: none !important;
@@ -2585,19 +2164,12 @@ a.tag:hover { text-decoration: none; }
   padding: 2px 5px;
   border-radius: var(--radius-pill);
   font-family: var(--font-mono);
-  font-size: 10px;
+  font-size: var(--font-size-sm);
   font-weight: 500;
-  /* Match the default tag height. Timeline rules override both pills and
-     bubbles together to retain their shared 20px metadata row. */
-  line-height: 1.4;
+  line-height: var(--line-height-sm);
   cursor: pointer;
   user-select: none;
   transition: opacity var(--duration-fast) var(--ease-default);
-}
-.tag-bubble:hover,
-.tag-bubble.is-cohovered {
-  outline: 1px solid var(--color-border);
-  outline-offset: 1px;
 }
 .tag-bubble-project {
   background: var(--color-tag-project-bg);
@@ -2655,7 +2227,15 @@ a.tag:hover { text-decoration: none; }
   background: var(--color-accent-subtle-bg);
   box-shadow: inset 3px 0 0 var(--color-accent);
 }
-.search-result-item .tag-sm { margin-top: 2px; }
+.search-result-type {
+  display: inline-flex;
+  flex: none;
+  color: var(--color-text-secondary);
+  margin-top: calc((1lh - 1em) / 2);
+}
+.search-result-type svg { width: 1em; height: 1em; }
+.search-result-type.icon-project { color: var(--color-tag-project-fg); }
+.search-result-type.icon-action { color: var(--color-tag-action-fg); }
 .search-result-text {
   flex: 1;
   min-width: 0;
@@ -2686,12 +2266,6 @@ a.tag:hover { text-decoration: none; }
 }
 .search-result-snippet {
   font-style: italic;
-}
-
-/* Icon inside tags */
-.tag svg, .inline-tag svg {
-  vertical-align: -1px;
-  flex-shrink: 0;
 }
 
 /* Scroll sentinel / loading / end */
@@ -2751,7 +2325,7 @@ a.tag:hover { text-decoration: none; }
    The overlay never shifts the flow or a deep link's measured destination. */
 .instance-startup-notice { position: absolute; inset: 0; z-index: 80; background: var(--color-bg); }
 .instance-startup-notice:empty { display: none; }
-.side-panel-body > .app-notice, #doc-body > .app-notice { margin: 24px 0; }
+.side-panel-body > .app-notice { margin: 24px 0; }
 @media (prefers-reduced-motion: reduce) {
   .app-notice[data-kind="loading"] .app-notice-indicator,
   .scroll-sentinel.loading::after { animation: none; }
@@ -2771,13 +2345,9 @@ a.tag:hover { text-decoration: none; }
 .instance-chooser { width: min(var(--flow-max-width), 100%); margin: 0 auto; padding: 0 var(--flow-pad-x) 48px var(--flow-gutter); overflow: auto; }
 .instance-chooser[hidden] { display: none; }
 .instance-chooser:not([hidden]) ~ .side-panel,
-.instance-chooser:not([hidden]) ~ .filter-pill,
 .flow-scroll:has(> .instance-startup-notice) ~ .side-panel,
-.flow-scroll:has(> .instance-startup-notice) ~ .filter-pill,
 .flow-scroll:has(> .flow > .instance-recovery) ~ .side-panel,
-.flow-scroll:has(> .flow > .instance-recovery) ~ .filter-pill,
-.flow-scroll:has(> .flow > .app-notice) ~ .side-panel,
-.flow-scroll:has(> .flow > .app-notice) ~ .filter-pill { display: none !important; }
+.flow-scroll:has(> .flow > .app-notice) ~ .side-panel { display: none !important; }
 #instance-list { list-style: none; padding: 0; margin: 0; }
 .instance-row { position: relative; display: grid; grid-template-columns: 0 minmax(0, 1fr); padding: 8px 0; border-bottom: 1px solid var(--color-border-subtle); }
 .instance-row:has(a.instance-open:hover), .instance-row:has(a.instance-open:focus-visible) { background: var(--color-accent-subtle-bg); }
@@ -2797,14 +2367,14 @@ a.instance-open:hover { color: inherit; text-decoration: none; }
 .instance-type-icon svg { display: block; width: 16px; height: 16px; }
 .instance-checkout { color: var(--color-text-muted); font: var(--font-size-sm)/var(--line-height-sm) var(--font-mono); overflow-wrap: anywhere; }
 .instance-description { display: block; margin-top: 2px; color: var(--color-text-muted); font-size: var(--font-size-sm); line-height: var(--line-height-sm); overflow-wrap: anywhere; }
-.instance-error { display: block; margin-top: 4px; color: var(--color-error); font-size: var(--font-size-sm); }
+.instance-error { display: block; margin-top: 4px; color: var(--color-status-overdue); font-size: var(--font-size-sm); }
 .instance-row-worktree .instance-card-body { margin-left: 24px; border-left: 1px solid var(--color-border-subtle); padding-left: 24px; }
 .instance-row-worktree .instance-identity strong { font: var(--font-size-sm)/var(--line-height-sm) var(--font-mono); font-weight: 400; color: var(--color-text-muted); padding-right: 0; }
 .instance-row-worktree .instance-identity { min-height: 24px; }
 .instance-card-actions { position: absolute; top: -4px; right: 0; z-index: 2; display: flex; gap: 2px; }
 .instance-remove, .instance-calendar-icon { position: relative; display: inline-flex; align-items: center; justify-content: center; flex: none; width: 32px; height: 32px; padding: 0; border: 0; border-radius: 6px; background: none; color: var(--color-text-muted); cursor: pointer; }
 .instance-remove svg, .instance-calendar-icon svg { width: 16px; height: 16px; }
-.instance-remove:hover { color: var(--color-error); background: var(--color-bg-secondary); }
+.instance-remove:hover { color: var(--color-status-overdue); background: var(--color-bg-secondary); }
 .instance-calendar-icon:hover { background: var(--color-bg-secondary); }
 .instance-remove:disabled, .instance-add-card:disabled { opacity: .5; cursor: default; }
 .instance-duplicate-error { position: relative; z-index: 2; display: inline-flex; align-items: center; gap: 5px; width: fit-content; padding: 0; border: 0; background: none; color: var(--color-status-due); font: var(--font-size-xs)/var(--line-height-xs) var(--font-mono); cursor: pointer; }
@@ -2829,13 +2399,12 @@ a.instance-open:hover { color: inherit; text-decoration: none; }
 #instance-add-help { margin: 4px 0 8px; color: var(--color-text-muted); font-size: var(--font-size-sm); }
 .instance-add-input { display: flex; align-items: center; gap: 8px; }
 #instance-add-path { flex: 1; min-width: 0; padding: 5px 8px; border: 1px solid var(--color-border); border-radius: var(--radius-md); background: var(--color-bg); color: var(--color-text); font: var(--font-size-sm)/var(--line-height-sm) var(--font-mono); }
-#instance-add-path[aria-invalid="true"] { border-color: var(--color-error); }
+#instance-add-path[aria-invalid="true"] { border-color: var(--color-status-overdue); }
 .instance-add-actions { display: flex; justify-content: flex-end; align-items: center; gap: 8px; margin-top: 12px; }
-#instance-add-error { margin: 6px 0 0; color: var(--color-error); font-size: var(--font-size-sm); }
+#instance-add-error { margin: 6px 0 0; color: var(--color-status-overdue); font-size: var(--font-size-sm); }
 #instance-add-error:empty { display: none; }
 #instance-forget-path { overflow-wrap: anywhere; font: var(--font-size-sm)/var(--line-height-sm) var(--font-mono); }
 #instance-forget-cache-help { margin-top: 8px; color: var(--color-text-muted); font-size: var(--font-size-sm); }
-.instance-context-divider { color: var(--color-text-muted); margin: 0 2px; }
 .instance-switcher { min-width: 0; position: relative; }
 .instance-switch-trigger { display: inline-flex; align-items: center; gap: 8px; max-width: 100%; padding: 6px; border: 0; border-radius: 6px; background: none; color: var(--color-text); font: inherit; font-size: var(--font-size-base); font-weight: 600; cursor: pointer; }
 .instance-switch-trigger:hover, .instance-switch-trigger[aria-expanded="true"] { background: var(--color-bg-secondary); }
@@ -2884,10 +2453,6 @@ a.instance-open:hover { color: inherit; text-decoration: none; }
   .instance-switch-menu { position: fixed; left: 12px; top: calc(var(--header-height) - 4px); max-width: calc(100vw - 24px); }
 }
 @media (max-width: 480px) {
-  :root { --header-height: 88px; }
-  .app-header { flex-wrap: wrap; align-content: center; gap: 6px 4px; padding: 6px 12px; }
-  .app-header .header-center { order: 1; flex: 1 0 100%; padding: 0; }
-  .header-left { flex: 1; }
   .instance-chooser { padding: 0 12px 24px; }
   .instance-card-body { padding-right: 64px; }
   .instance-row-worktree .instance-card-body { margin-left: 16px; padding-left: 16px; }
@@ -2903,13 +2468,12 @@ a.instance-open:hover { color: inherit; text-decoration: none; }
 .flow-scroll[hidden] { display: none; }
 
 /* Native reference links retain chip styling and clear keyboard focus. */
-a.title-open { display: inline-block; color: inherit; }
-a.asset-row { color: inherit; }
-.tag:hover, .title-open:hover, .asset-row:hover { text-decoration: none; }
-a.tag:focus-visible, a.inline-tag:focus-visible, a.title-open:focus-visible,
-a.asset-row:focus-visible, .tag-bubble:focus-visible, .related-more:focus-visible, .filter-pill-label:focus-visible {
+a.title-open { color: inherit; }
+a.title-open:hover { text-decoration: none; }
+a.tag:focus-visible, a.inline-tag:focus-visible, a.ref-row:focus-visible, a.title-open:focus-visible,
+.tag-bubble:focus-visible, .related-more:focus-visible, .filter-pill-label:focus-visible {
   outline: 2px solid var(--color-accent);
-  outline-offset: 2px;
+  outline-offset: 3px;
 }
 
 .schedule-time { color: var(--color-text-secondary); font-size: var(--font-size-xs); overflow-wrap: anywhere; }
@@ -2930,7 +2494,7 @@ a.asset-row:focus-visible, .tag-bubble:focus-visible, .related-more:focus-visibl
 
 .data-diagnostics { padding: 6px 16px; color: var(--color-text-secondary); font-size: var(--font-size-sm); line-height: var(--line-height-sm); border-bottom: 1px solid var(--color-border-subtle); }
 .data-diagnostics > summary { cursor: pointer; }
-.data-diagnostics-files, #data-diagnostics-files { max-height: 35vh; overflow: auto; }
+#data-diagnostics-files { max-height: 35vh; overflow: auto; }
 .data-file-notice ul { margin: 6px 0; padding-left: 20px; }
 
 .search-index-progress:empty { display: none; }
@@ -2972,8 +2536,7 @@ a.asset-row:focus-visible, .tag-bubble:focus-visible, .related-more:focus-visibl
 }
 .workspace-frame[data-reader="html"] { max-width: none; }
 .workspace-frame [hidden] { display: none !important; }
-.workspace-frame > .flow-scroll,
-.workspace-frame #doc-backdrop {
+.workspace-frame > .flow-scroll {
   position: absolute;
   inset: 0;
   width: 100%;
@@ -2986,30 +2549,8 @@ a.asset-row:focus-visible, .tag-bubble:focus-visible, .related-more:focus-visibl
   padding-bottom: 150px;
 }
 .workspace-frame .flow { padding-bottom: 150px; }
-.workspace-frame #doc-backdrop {
-  z-index: 30;
-  display: block;
-  max-width: none;
-  max-height: none;
-  margin: 0;
-  padding: 0;
-  border: 0;
-  background: var(--color-bg);
-  opacity: 1;
-  transition: none;
-}
-.workspace-frame .doc-window,
-.workspace-frame .doc-window:has(.asset-webpage) {
-  width: 100%;
-  height: 100%;
-  border: 0;
-  border-radius: 0;
-  box-shadow: none;
-}
-.workspace-frame .doc-body { padding-bottom: 150px; }
 .workspace-frame[data-reader="record"] > .flow-scroll,
 .workspace-frame[data-reader="html"] > .flow-scroll { visibility: hidden; pointer-events: none; }
-.workspace-frame[data-reader="html"] .doc-body { padding: 0; overflow: hidden; }
 .workspace-frame[data-reader="html"] .html-page { width: 100%; height: 100%; }
 .workspace-frame[data-reader="html"] .html-page > .asset-webpage {
   width: 100%;
@@ -3076,12 +2617,11 @@ a.asset-row:focus-visible, .tag-bubble:focus-visible, .related-more:focus-visibl
   border: 0;
   border-radius: var(--radius-pill);
   box-shadow: none;
-  background: var(--color-tag-project-bg);
+  background: transparent;
   transform: none;
   transition: none;
   visibility: visible;
 }
-.workspace-filter-group .filter-pill .tag { padding: 3px 8px; }
 .workspace-filter-group .filter-pill-label { min-width: 0; max-width: 210px; }
 .workspace-filter-group .filter-pill-clear { flex-shrink: 0; margin-right: 3px; }
 .workspace-filter-group .flow-search-chip { max-width: 100%; }
@@ -3108,7 +2648,6 @@ a.asset-row:focus-visible, .tag-bubble:focus-visible, .related-more:focus-visibl
 .control-pill-view:hover, .control-pill-actions button[aria-expanded="true"] { background: var(--color-bg-tertiary); }
 .control-pill-actions .btn-icon { width: 32px; height: 32px; flex: 0 0 auto; border-radius: 50%; }
 .control-pill-divider { width: 1px; height: 18px; background: var(--color-border-subtle); }
-.control-pill .workspace-filter-group { padding: 5px 6px 4px; }
 .workspace-frame .connection-indicator[hidden] { display: none !important; }
 .workspace-popover-dismiss { position: absolute; inset: 0; z-index: 140; border: 0; background: transparent; }
 .workspace-popover {
@@ -3150,7 +2689,7 @@ a.asset-row:focus-visible, .tag-bubble:focus-visible, .related-more:focus-visibl
 .workspace-sidebar-section .navigation-link { overflow-wrap: anywhere; }
 .workspace-frame .workspace-filter-group #source-filter { flex-wrap: wrap; gap: 6px; color: var(--color-text-secondary); background: transparent; }
 .context-filter-chip { display: inline-flex; align-items: center; min-width: 0; max-width: 100%; border-radius: var(--radius-pill); background: var(--color-bg-tertiary); }
-#source-filter .filter-pill-label { display: inline-flex; align-items: center; gap: 5px; background: transparent; color: inherit; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+#source-filter .filter-pill-label { display: inline-flex; align-items: flex-start; gap: 8px; background: transparent; color: inherit; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 #source-filter .filter-pill-label > .tag-text { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 #source-filter .filter-pill-label > svg { flex-shrink: 0; }
 @media (max-width: 640px) {
@@ -3179,23 +2718,16 @@ a.asset-row:focus-visible, .tag-bubble:focus-visible, .related-more:focus-visibl
 @media print {
   .workspace-frame { height: auto; max-width: none; overflow: visible; }
   .workspace-frame > .flow-scroll,
-  .workspace-frame > .instance-chooser,
-  .workspace-frame #doc-backdrop { position: static; width: auto; height: auto; }
-  .workspace-frame #doc-backdrop:not([hidden]) { display: block !important; }
-  .workspace-frame .doc-window { display: block; height: auto; }
-  .workspace-frame .doc-body { overflow: visible; padding: 0; }
+  .workspace-frame > .instance-chooser { position: static; width: auto; height: auto; }
+  .workspace-frame .doc-body { padding: 0; }
   .workspace-frame .flow { padding-bottom: 0; }
 }
 .workspace-frame[data-frame="compact"] .workspace-popover {
   bottom: calc(var(--workspace-pill-height, 44px) + max(18px, env(safe-area-inset-bottom)) + 10px);
 }
-.workspace-popover[data-page="summary"] .workspace-popover-body { padding: 0; overflow: hidden; }
-.workspace-popover[data-page="summary"] .side-panel-body { max-height: calc(var(--workspace-popover-height, 60dvh) - 52px); overflow-y: auto; }
 @media (max-width: 640px) {
   .workspace-frame[data-frame="compact"] .workspace-popover { bottom: calc(var(--workspace-pill-height, 44px) + max(12px, env(safe-area-inset-bottom)) + 10px); }
 }
-.workspace-frame .workspace-filter-group .filter-pill:has(.tag-action) { background: var(--color-tag-action-bg); }
-.workspace-frame .workspace-filter-group .filter-pill:has(.tag-entry) { background: var(--color-tag-entry-bg); }
 /* Obscure a live webpage behind controls without hiding its browsing context:
    hidden/inert are reserved for actual page departure and revoke query grants. */
 .workspace-frame [data-controls-obscured],
@@ -3218,43 +2750,39 @@ a.asset-row:focus-visible, .tag-bubble:focus-visible, .related-more:focus-visibl
 .workspace-timeline-controls .workspace-filter-group { padding: 0 0 8px; }
 .workspace-timeline-controls .filter-pill-label { max-width: 100%; }
 .workspace-frame .navigation-footer { padding-top: 8px; }
-.date-latch-chip:not([role="button"]) { cursor: default; pointer-events: none; }
-.date-latch-chip:not([role="button"]):hover { color: inherit; }
 
-.timeline-calendar, .date-jump {
+.timeline-calendar {
   --cal-surface: var(--color-bg-secondary);
   --cal-adjacent: color-mix(in srgb, var(--color-text-muted) 58%, var(--cal-surface));
   font-size: var(--font-size-sm);
   line-height: var(--line-height-base);
 }
 .timeline-calendar { width: 100%; }
-.date-jump { --cal-surface: var(--color-surface); width: 320px; gap: 0; padding: 12px; }
 .workspace-popover .timeline-calendar { --cal-surface: var(--color-surface); }
-.timeline-calendar .date-jump-cal, .date-jump .date-jump-cal { display: block; }
-.timeline-calendar .cal-header, .date-jump .cal-header,
-.timeline-calendar .cal-weekdays, .date-jump .cal-weekdays,
-.timeline-calendar .cal-grid, .date-jump .cal-grid { max-width: 304px; margin-inline: auto; }
-.timeline-calendar .cal-header, .date-jump .cal-header { display: flex; align-items: center; gap: 4px; margin-bottom: 4px; }
-.timeline-calendar .cal-title, .date-jump .cal-title {
+.timeline-calendar .date-jump-cal { display: block; }
+.timeline-calendar .cal-header,
+.timeline-calendar .cal-weekdays,
+.timeline-calendar .cal-grid { max-width: 304px; margin-inline: auto; }
+.timeline-calendar .cal-header { display: flex; align-items: center; gap: 4px; margin-bottom: 4px; }
+.timeline-calendar .cal-title {
   flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   text-align: left; font-size: var(--font-size-sm); line-height: var(--line-height-base); font-weight: 600;
 }
 .cal-controls { display: flex; align-items: center; gap: 0; flex: 0 0 auto; }
-.timeline-calendar .cal-nav, .date-jump .cal-nav { width: 24px; height: 28px; font-size: var(--font-size-lg); line-height: var(--line-height-lg); }
+.timeline-calendar .cal-nav { width: 24px; height: 28px; font-size: var(--font-size-lg); line-height: var(--line-height-lg); }
 .cal-today { height: 28px; padding: 3px 0 3px 5px; border: 0; background: none; color: var(--color-text); font: inherit; cursor: pointer; }
 .cal-today:hover { text-decoration: underline; }
-.timeline-calendar .cal-weekdays, .date-jump .cal-weekdays { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 0; margin-bottom: 2px; }
-.timeline-calendar .cal-weekdays span, .date-jump .cal-weekdays span { font-size: var(--font-size-xs); line-height: var(--line-height-base); color: var(--color-text-muted); }
-.timeline-calendar .cal-grid, .date-jump .cal-grid { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); column-gap: 0; row-gap: 2px; }
-.timeline-calendar .cal-day, .date-jump .cal-day {
+.timeline-calendar .cal-weekdays { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 0; margin-bottom: 2px; }
+.timeline-calendar .cal-weekdays span { font-size: var(--font-size-xs); line-height: var(--line-height-base); color: var(--color-text-muted); }
+.timeline-calendar .cal-grid { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); column-gap: 0; row-gap: 2px; }
+.timeline-calendar .cal-day {
   position: relative; min-width: 0; height: var(--calendar-day-height); aspect-ratio: auto; padding: 0;
   display: flex; align-items: center; justify-content: center;
   border: 0; border-radius: 0; background: none; box-shadow: none; color: var(--color-text);
   font-size: var(--font-size-sm); line-height: var(--line-height-base); font-weight: 400;
 }
-.timeline-calendar .cal-day:is(.is-selected, .is-current, .is-today),
-.date-jump .cal-day:is(.is-selected, .is-current, .is-today) { background: none; box-shadow: none; color: var(--color-text); font-weight: 400; }
-.timeline-calendar .cal-day::after, .date-jump .cal-day::after { content: none; display: none; }
+.timeline-calendar .cal-day:is(.is-selected, .is-current, .is-today) { background: none; box-shadow: none; color: var(--color-text); font-weight: 400; }
+.timeline-calendar .cal-day::after { content: none; display: none; }
 .cal-day-shade {
   position: absolute; inset: 1px; pointer-events: none; border-radius: calc(var(--calendar-radius) - 1px);
   background: color-mix(in srgb, var(--color-accent) calc(var(--cal-density, 0) * 100%), var(--cal-surface));
@@ -3268,12 +2796,12 @@ a.asset-row:focus-visible, .tag-bubble:focus-visible, .related-more:focus-visibl
 .cal-day.range-start .cal-range-outline { border-left: 1px solid var(--color-text-muted); border-radius: var(--calendar-radius) 0 0 var(--calendar-radius); }
 .cal-day.range-end .cal-range-outline { border-right: 1px solid var(--color-text-muted); border-radius: 0 var(--calendar-radius) var(--calendar-radius) 0; }
 .cal-day.range-start.range-end .cal-range-outline { border-radius: var(--calendar-radius); }
-.timeline-calendar .cal-day:hover, .date-jump .cal-day:hover { outline: 1px solid var(--color-border); outline-offset: -1px; border-radius: var(--calendar-radius); }
-.timeline-calendar .date-jump-entry, .date-jump .date-jump-entry {
+.timeline-calendar .cal-day:hover { outline: 1px solid var(--color-border); outline-offset: -1px; border-radius: var(--calendar-radius); }
+.timeline-calendar .date-jump-entry {
   display: flex; flex-direction: row; align-items: center; gap: 4px; max-width: 304px; margin: 8px auto 0;
   border-top: 1px solid var(--color-border-subtle); padding-top: 6px;
 }
-.timeline-calendar .date-jump-input, .date-jump .date-jump-input { min-width: 0; width: 100%; font-size: var(--font-size-sm); line-height: var(--line-height-base); }
+.timeline-calendar .date-jump-input { min-width: 0; width: 100%; font-size: var(--font-size-sm); line-height: var(--line-height-base); }
 .date-jump-submit { flex: 0 0 auto; width: 24px; height: 28px; padding: 0; background: none; border: 0; border-radius: var(--radius-sm); color: var(--color-text-secondary); font: inherit; cursor: pointer; }
 .date-jump-submit:hover { color: var(--color-text); background: var(--color-bg-tertiary); }
 .date-jump-error { color: var(--color-status-overdue); margin-top: 4px; font-size: var(--font-size-sm); line-height: var(--line-height-base); }
@@ -3296,20 +2824,11 @@ a.asset-row:focus-visible, .tag-bubble:focus-visible, .related-more:focus-visibl
   font-size: var(--font-size-md); line-height: var(--line-height-md); font-weight: 500;
 }
 .context-essentials .context-identity {
-  display: inline-flex; align-items: center; gap: 5px; max-width: 100%; padding: 2px 6px;
-  background: var(--color-tag-entry-bg); color: var(--color-tag-entry-fg);
-  border-radius: var(--radius-pill); vertical-align: middle;
-  font-size: var(--font-size-md); line-height: var(--line-height-md); font-weight: 500; cursor: auto; user-select: text;
+  max-width: 100%;
+  cursor: auto;
+  user-select: text;
 }
-/* This pill identifies the record; the fixed toolbar owns its commands. */
-.context-essentials .context-identity:hover { outline: none; }
-.context-essentials .context-identity.tag-project { background: var(--color-tag-project-bg); color: var(--color-tag-project-fg); }
-.context-essentials .context-identity.tag-action { background: var(--color-tag-action-bg); color: var(--color-tag-action-fg); }
-.context-essentials .context-identity.tag-status-closed { background: var(--color-tag-entry-bg); }
-.context-essentials .context-identity.tag-status-overdue { background: color-mix(in srgb, var(--color-status-overdue) 14%, var(--color-bg)); }
-.context-essentials .entity-title-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.context-essentials .context-identity-icon { display: inline-flex; flex: none; }
-.context-essentials .context-identity-icon svg { width: 14px; height: 14px; }
+.context-essentials .entity-title-label { overflow-wrap: anywhere; }
 .context-essentials-type { flex: none; color: var(--color-text-muted); font-size: var(--font-size-sm); line-height: 20px; white-space: nowrap; }
 .context-essentials .summary-description { margin: 0; font-size: var(--font-size-sm); line-height: 20px; color: var(--color-text-muted); }
 .context-essentials-path { margin: 0; color: var(--color-text-muted); font: var(--font-size-xs)/18px var(--font-mono); overflow-wrap: anywhere; }
@@ -3321,8 +2840,5 @@ a.asset-row:focus-visible, .tag-bubble:focus-visible, .related-more:focus-visibl
 .context-essential-fact.is-standalone .context-essential-value { margin-top: 0; }
 .context-essential-icon { display: inline-flex; flex: none; color: var(--color-text-muted); }
 .context-essential-icon svg { width: 13px; height: 13px; }
-.context-essential-fact.is-due .context-essential-icon { color: var(--color-status-due); }
-.context-essential-fact.is-overdue .context-essential-icon,
-.context-essential-fact.is-overdue .context-essential-value { color: var(--color-status-overdue); }
 .context-essential-annotation { margin-top: 4px; color: var(--color-text-muted); font-size: var(--font-size-xs); line-height: 16px; overflow-wrap: anywhere; }
 .context-essentials [hidden] { display: none !important; }

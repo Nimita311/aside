@@ -20,7 +20,7 @@
 // layers, and fills or empties the body. Every state of a drawing has the
 // same elements, so a state change rewrites only class and style attributes,
 // and the CSS transitions in style.css animate the morph. A few icons have a
-// second drawing for pill size (13px and below), where detail closes up.
+// second drawing for 13px and below, where detail closes up.
 //
 // Kept free of imports so the design demo can embed it as is.
 
@@ -115,6 +115,7 @@ const ACTION_STATES: Record<string, Pose> = {
   cancelled: { marks: ['slash'] },
   recurring: { marks: ['arrow'], edge: ['51 9', 51] },
 };
+const RIBBONED: Record<string, Mark> = { check: { d: 'm8 9.5 3 3 5-5', on: 'rib' } };
 const PROJECT_STATES: Record<string, Pose> = { live: { marks: [] }, ended: { marks: ['check'], filled: true } };
 
 const ICONS: Record<IconKind, Icon> = {
@@ -139,7 +140,7 @@ const ICONS: Record<IconKind, Icon> = {
         worktree: { marks: ['rings', 'branch'] },
       },
     },
-    // At pill size the cover drops its spine and the open notebook its page
+    // At 13px and below the cover drops its spine and the open notebook its page
     // lines; a worktree is Lucide's git branch on its own.
     small: {
       layers: [
@@ -171,17 +172,17 @@ const ICONS: Record<IconKind, Icon> = {
   },
   project: {
     initial: 'live',
-    full: { layers: [{ id: 'rib', d: BOOKMARK }], marks: { check: { d: 'm8 9.5 3 3 5-5', on: 'rib' } }, states: PROJECT_STATES },
-    // The settling tick grows bolder at pill size, where the standard one
+    full: { layers: [{ id: 'rib', d: BOOKMARK }], marks: RIBBONED, states: PROJECT_STATES },
+    // The settling tick grows bolder at 13px and below, where the standard one
     // shrinks to a hairline.
-    small: { layers: [{ id: 'rib', d: BOOKMARK }], marks: { check: { d: 'm8 9.5 3 3 5-5', on: 'rib', weight: 'bold' } }, states: PROJECT_STATES },
+    small: { layers: [{ id: 'rib', d: BOOKMARK }], marks: { check: { ...RIBBONED.check, weight: 'bold' } }, states: PROJECT_STATES },
   },
   action: {
     initial: 'scheduled',
     full: { layers: [{ id: 'ring', d: RING }], marks: RINGED, states: ACTION_STATES, edges: true },
     small: {
       layers: [{ id: 'ring', d: RING }],
-      marks: { ...RINGED, check: { d: 'm7.5 12 3 3 6-6', on: 'ring', weight: 'bold' } },
+      marks: { ...RINGED, check: { ...RINGED.check, weight: 'bold' } },
       states: ACTION_STATES, edges: true,
     },
   },
@@ -279,9 +280,10 @@ export function iconStates(kind: IconKind): string[] {
   return Object.keys(ICONS[kind].full.states);
 }
 
-// The rendered sizes, matching the CSS that sizes each placement.
-export const ICON_SIZE = { pill: 10, stat: 11, row: 12, tile: 13, identity: 14, list: 16, title: 18 } as const;
-const PILL_MAX = 13;
+// Initial sizes before mounted references take their dimensions from CSS.
+export const ICON_SIZE = { pill: 10, stat: 11, row: 14, tile: 13, identity: 14, list: 16, title: 20 } as const;
+const SMALL_MAX = 13;
+const drawingAt = (kind: IconKind, size: number): Drawing => size <= SMALL_MAX && ICONS[kind].small || ICONS[kind].full;
 
 const style = (props: Record<string, string | number | undefined>): string => {
   const text = Object.entries(props).filter(([, value]) => value !== undefined).map(([key, value]) => `${key}:${value}`).join(';');
@@ -294,8 +296,7 @@ let nextMask = 0;
 // — never user data — so the markup is safe to set as innerHTML.
 export function iconMarkup(kind: IconKind, state: string, size: number): string {
   const icon = ICONS[kind];
-  const small = size <= PILL_MAX && icon.small;
-  const drawing = small || icon.full;
+  const drawing = drawingAt(kind, size);
   const name = state in drawing.states ? state : icon.initial;
   const pose = drawing.states[name];
   const layerOf = new Map(drawing.layers.map(layer => [layer.id, layer]));
@@ -345,13 +346,15 @@ export function setEntityIcon(host: Element, kind: IconKind, state: string, size
   const template = document.createElement('template');
   template.innerHTML = iconMarkup(kind, state, size);
   const next = template.content.firstElementChild as SVGSVGElement;
-  if (!current || current.dataset.icon !== kind || current.getAttribute('width') !== String(size)) {
+  if (!current || current.dataset.icon !== kind || drawingAt(kind, Number(current.getAttribute('width'))) !== drawingAt(kind, size)) {
     if (current) current.replaceWith(next);
     else host.prepend(next);
     return;
   }
   const before = [current, ...current.querySelectorAll('*')];
   const after = [next, ...next.querySelectorAll('*')];
+  current.setAttribute('width', String(size));
+  current.setAttribute('height', String(size));
   before.forEach((node, index) => {
     for (const name of ['class', 'style', 'data-state']) {
       const value = after[index].getAttribute(name);

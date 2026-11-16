@@ -111,7 +111,7 @@ export function formatStamp(stamp: string, value: DateTimeFormat, zone?: ZoneClo
 }
 
 export function calendarLabel(stamp: string, options: Intl.DateTimeFormatOptions): string {
-  return formatted(stamp, { calendar: 'gregory', ...options });
+  return formatted(stamp, options);
 }
 
 export function formatMonth(stamp: string, prefs: DateTimePreferences): string {

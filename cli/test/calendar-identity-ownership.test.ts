@@ -61,7 +61,7 @@ describe('Calendar identity transition ownership', () => {
     // Even an adapter receipt observed before its private identity reset cannot
     // acknowledge the owner's new-generation replay intent.
     vi.spyOn(f.sync, 'status').mockReturnValueOnce({id, status: 'synced', eventId: 'old-event'});
-    await f.owner.changed(f.store);
+    await f.owner.reconcile(f.store);
     expect(forward.mock.calls[0][0].map(action => action.id)).toEqual([id]);
     expect(f.upsert).toHaveBeenCalledOnce();
     expect(f.upsert.mock.calls[0][0]).toMatchObject({marker: buildMarker('current', id, 'active')});
@@ -93,7 +93,7 @@ describe('Calendar identity transition ownership', () => {
       return result;
     });
     f.changeIdentity('intermediate');
-    await f.owner.changed(f.store);
+    await f.owner.reconcile(f.store);
     expect(f.upsert.mock.calls.map(([args]) => args.marker)).toEqual([
       buildMarker('intermediate', id, 'active'), buildMarker('latest', id, 'active'),
     ]);
@@ -107,11 +107,11 @@ describe('Calendar identity transition ownership', () => {
     await f.owner.reconcile(f.store);
     const forward = vi.spyOn(f.sync, 'syncActions');
     rmSync(f.manifest); mkdirSync(f.manifest); f.store.rebuild();
-    await f.owner.changed(f.store);
+    await f.owner.reconcile(f.store);
     expect(forward).not.toHaveBeenCalled();
     expect(f.upsert).not.toHaveBeenCalled();
     rmSync(f.manifest, {recursive: true}); f.changeIdentity('previous');
-    await f.owner.changed(f.store);
+    await f.owner.reconcile(f.store);
     expect(forward.mock.calls[0][0]).toEqual([]);
     expect(f.upsert).not.toHaveBeenCalled();
     expect(f.store.getAction(id)!.frontMatter.scheduled).toBe('2026-06-01T09:00');
@@ -126,7 +126,7 @@ describe('Calendar identity transition ownership', () => {
     expect(forward).not.toHaveBeenCalled();
 
     f.changeIdentity('previous');
-    await f.owner.changed(f.store);
+    await f.owner.reconcile(f.store);
 
     expect(forward.mock.calls[0][0]).toEqual([]);
     expect(f.upsert).not.toHaveBeenCalled();
@@ -142,7 +142,7 @@ describe('Calendar identity transition ownership', () => {
     f.store.saveAction(id, {...action.frontMatter, scheduled: '2026-06-01T12:00'}, action.body, f.store.getActionFile(id)!);
     f.changeIdentity('previous');
 
-    await f.owner.changed(f.store);
+    await f.owner.reconcile(f.store);
 
     expect(forward.mock.calls[0][0].map(action => action.id)).toEqual([id]);
     expect(f.upsert).toHaveBeenCalledOnce();

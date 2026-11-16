@@ -37,7 +37,7 @@ describe('lifecycle repair after confirmed partial writes', () => {
     const {home, root, host, store, lifecycle} = await fixture();
     await host.tool(root, 'create_artifact', {name: 'Files', description: 'Files'});
     await vi.advanceTimersByTimeAsync(5);
-    const id = store.getArtifactIds()[0], source = join(home, 'incoming.txt');
+    const id = [...store.getArtifacts().keys()][0], source = join(home, 'incoming.txt');
     writeFileSync(source, 'Durably saved attachment');
     const previousHash = store.getSourceVersion(), previousRevision = store.getRevision();
     const perform = (host as any).performMutation.bind(host);
@@ -74,7 +74,7 @@ describe('lifecycle repair after confirmed partial writes', () => {
     const {root, host, store, lifecycle} = await fixture();
     await host.tool(root, 'create_artifact', {name: 'Files', description: 'Files'});
     await vi.advanceTimersByTimeAsync(5);
-    const id = store.getArtifactIds()[0];
+    const id = [...store.getArtifacts().keys()][0];
     // A missing index row reports a partial outcome without throwing, after
     // the record edit itself has already published its new loaded state.
     writeFileSync(join(root, 'artifacts', '2026', 'index.yaml'), '');

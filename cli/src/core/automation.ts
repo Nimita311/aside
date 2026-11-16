@@ -54,6 +54,12 @@ function text(value: unknown, field: string): asserts value is string {
 function args(value: unknown, field: string): void {
   if (value !== undefined && (!Array.isArray(value) || value.some(arg => typeof arg !== 'string' || arg.includes('\0')))) throw new Error(`${field} must be a list of strings`);
 }
+// A named zone only: fixed offsets are refused, and Intl rejects unknown names.
+export function assertTimeZone(value: string): void {
+  if (/^[+-]/.test(value)) throw new Error('timezone must be an IANA time zone');
+  new Intl.DateTimeFormat('en', { timeZone: value });
+}
+export { keys as assertKnownKeys, text as assertNonblankText, args as assertArgList };
 export function modelSelector(value: unknown, field = 'model'): asserts value is string {
   text(value, field);
   if (!/^[_A-Za-z][_0-9A-Za-z]*$/.test(value) || value.startsWith('__') || ['true', 'false', 'null'].includes(value)) {
@@ -61,6 +67,10 @@ export function modelSelector(value: unknown, field = 'model'): asserts value is
   }
 }
 export function isBuiltinModelName(value: string): boolean { return /^(CODEX|CLAUDE)_/.test(value); }
+// Own entries only: a selection must not resolve through the mapping's prototype.
+export function namedModel(config: ExecutionConfig, name: string): ModelDefinition | undefined {
+  return config.models && Object.hasOwn(config.models, name) ? config.models[name] : undefined;
+}
 export function assertArtifactPrompt(value: unknown, field = 'run.prompt'): asserts value is string {
   if (typeof value !== 'string') throw new Error(`${field} must be a primary artifact handle (#artifact/YYYY-MM-DD-slug)`);
   text(value, field);
@@ -119,8 +129,7 @@ export function validateDefinition(value: unknown): AutomationDefinition {
   if (kind === 'rrule') text(schedule.dtstart, 'schedule.dtstart');
   if (schedule.timezone !== undefined) {
     text(schedule.timezone, 'schedule.timezone');
-    if (/^[+-]/.test(schedule.timezone)) throw new Error('timezone must be an IANA time zone');
-    new Intl.DateTimeFormat('en', { timeZone: schedule.timezone });
+    assertTimeZone(schedule.timezone);
   }
   validateRunDefinition(def.run);
   return structuredClone(value) as AutomationDefinition;

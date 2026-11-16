@@ -4,6 +4,7 @@ import { existsSync, readFileSync, realpathSync } from 'node:fs';
 import { basename, dirname, join, relative, resolve } from 'node:path';
 import { parseConfig } from './parser.js';
 import { isAsideDir, readManifest } from './instance.js';
+import { errorMessage } from './error.js';
 
 export interface WorktreeInfo {
   root: string;
@@ -14,7 +15,8 @@ export interface WorktreeInfo {
 }
 export interface CheckoutInfo { worktree?: WorktreeInfo; error?: string }
 
-function canonical(path: string): string {
+// One spelling per directory: its real path, or the resolved path while it is unreachable.
+export function canonicalPath(path: string): string {
   try { return realpathSync(path); } catch { return resolve(path); }
 }
 
@@ -22,7 +24,7 @@ function canonical(path: string): string {
 // is read separately so editing .aside takes effect immediately.
 const topology = new Map<string, { at: number; value: CheckoutInfo; primaryRoot?: string }>();
 export function checkoutInfo(path: string): CheckoutInfo {
-  path = canonical(path);
+  path = canonicalPath(path);
   let cached = topology.get(path);
   if (!cached || Date.now() - cached.at > 1000) {
     const git = (...args: string[]) => execFileSync('git', ['-C', path, ...args], {
@@ -34,23 +36,23 @@ export function checkoutInfo(path: string): CheckoutInfo {
     let primaryRoot: string | undefined;
     try {
       // Separate results preserve newlines and trailing spaces in Git paths.
-      const gitPath = (flag: string) => canonical(git('rev-parse', '--path-format=absolute', flag).replace(/\n$/, ''));
+      const gitPath = (flag: string) => canonicalPath(git('rev-parse', '--path-format=absolute', flag).replace(/\n$/, ''));
       const root = gitPath('--show-toplevel'), gitDir = gitPath('--git-dir'), commonDir = gitPath('--git-common-dir');
       const records = git('worktree', 'list', '--porcelain', '-z').split('\0\0').map(record => record.split('\0'));
       const primary = records[0]?.find(field => field.startsWith('worktree '))?.slice(9);
       if (!primary || records[0].includes('bare')) throw new Error('Git has no primary working checkout.');
-      primaryRoot = canonical(primary);
-      const record = records.find(fields => fields.some(field => field.startsWith('worktree ') && canonical(field.slice(9)) === root));
+      primaryRoot = canonicalPath(primary);
+      const record = records.find(fields => fields.some(field => field.startsWith('worktree ') && canonicalPath(field.slice(9)) === root));
       if (!record) throw new Error('Git did not list the current working checkout.');
       const branch = record?.find(field => field.startsWith('branch refs/heads/'))?.slice(18);
-      value = { worktree: { root, commonDir, primaryPath: canonical(join(primaryRoot, relative(root, path))),
+      value = { worktree: { root, commonDir, primaryPath: canonicalPath(join(primaryRoot, relative(root, path))),
         linked: gitDir !== commonDir, label: branch ?? `Detached ${basename(root)}` } };
     } catch (error) {
       // Ordinary non-Git instances are supported. Failed inspection of a Git
       // checkout must not accidentally enable calendar writes in a worktree.
       let ancestor = path;
       while (!existsSync(join(ancestor, '.git')) && dirname(ancestor) !== ancestor) ancestor = dirname(ancestor);
-      value = existsSync(join(ancestor, '.git')) ? { error: `Cannot verify Git checkout for ${path}: ${error instanceof Error ? error.message : String(error)}. Calendar sync is disabled.` } : {};
+      value = existsSync(join(ancestor, '.git')) ? { error: `Cannot verify Git checkout for ${path}: ${errorMessage(error)}. Calendar sync is disabled.` } : {};
     }
     cached = { at: Date.now(), value, primaryRoot };
     if (topology.size > 1024) topology.clear();
@@ -73,7 +75,7 @@ export function checkoutInfo(path: string): CheckoutInfo {
 // callers; different IDs or instances at different relative paths stay distinct.
 export function instanceFamily(path: string): string {
   const info = checkoutInfo(path).worktree;
-  return info ? `${info.commonDir}\0${info.primaryPath}` : canonical(path);
+  return info ? `${info.commonDir}\0${info.primaryPath}` : canonicalPath(path);
 }
 
 export function primaryCounterpart(path: string): string | undefined {
@@ -87,7 +89,7 @@ export function primaryCounterpart(path: string): string | undefined {
 export function withPrimaryInstances(paths: string[]): string[] {
   const instances = new Set<string>();
   for (const path of paths) {
-    instances.add(canonical(path));
+    instances.add(canonicalPath(path));
     const primary = primaryCounterpart(path);
     if (primary) instances.add(primary);
   }
@@ -97,17 +99,9 @@ export function withPrimaryInstances(paths: string[]): string[] {
 // Forgetting a real primary also forgets its registered counterpart checkouts.
 // A displayed worktree representative has no ownership over its siblings.
 export function withoutInstanceFamilies(known: string[], removed: string[]): string[] {
-  const keys = new Set(removed.map(canonical));
-  const primaries = removed.map(path => ({ path: canonical(path), info: checkoutInfo(path).worktree, id: readManifest(path).id }))
+  const keys = new Set(removed.map(canonicalPath));
+  const primaries = removed.map(path => ({ path: canonicalPath(path), info: checkoutInfo(path).worktree, id: readManifest(path).id }))
     .filter(primary => primary.info && !primary.info.linked);
-  return known.filter(path => !keys.has(canonical(path)) && !primaries.some(primary =>
+  return known.filter(path => !keys.has(canonicalPath(path)) && !primaries.some(primary =>
     readManifest(path).id === primary.id && instanceFamily(path) === instanceFamily(primary.path)));
-}
-
-export function worktreeCalendarReason(path: string): string | null {
-  const info = checkoutInfo(path);
-  if (info.error) return info.error;
-  return info.worktree?.linked
-    ? `Calendar sync is disabled in this Git worktree. Move changes into the primary checkout for calendar sync: ${info.worktree.primaryPath}`
-    : null;
 }

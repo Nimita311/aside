@@ -16,16 +16,14 @@ await ctx.watch();
 await iframeClient.watch();
 const child = spawn(process.execPath, [bundle, 'show', '--url', ...process.argv.slice(2), '--app-dir', webappDir], { stdio: 'inherit' });
 let stopping = false;
-child.on('exit', async code => {
-  if (stopping || code === 0) return;
+const stop = async code => {
   await ctx.dispose();
   await iframeClient.dispose();
-  process.exit(code ?? 1);
-});
-for (const signal of ['SIGINT', 'SIGTERM']) process.on(signal, async () => {
+  process.exit(code);
+};
+child.on('exit', code => { if (!stopping && code !== 0) void stop(code ?? 1); });
+for (const signal of ['SIGINT', 'SIGTERM']) process.on(signal, () => {
   stopping = true;
   child.kill(signal);
-  await ctx.dispose();
-  await iframeClient.dispose();
-  process.exit(0);
+  void stop(0);
 });

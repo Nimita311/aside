@@ -150,7 +150,7 @@ describe('known identity read failures', () => {
     const f = fixture(); let known = [f.a, f.b]; const h = hostFor(() => known); h.host.load(f.b);
     const { loaded, action } = await queueAction(h.host, f.a); known = [f.a]; h.host.refreshIdentities(); await h.host.flush();
     await loaded.sync.syncActions([], [action]); expect(loaded.sync.status(actionId)?.status).toBe('disabled'); assertNoHelper(h.calls);
-    h.host.unload(f.b); h.host.refreshIdentities(); await h.host.flush(); await loaded.sync.syncActions([], [action]);
+    h.host.unloadKey(f.b); h.host.refreshIdentities(); await h.host.flush(); await loaded.sync.syncActions([], [action]);
     expect(loaded.sync.status(actionId)?.status).toBe('synced');
   });
 });

@@ -131,10 +131,10 @@ export const catalogue: CatalogueBranch[] = [
     leaf('switcher', 'Menu'),
     leaf('switcher-empty', 'No matches'),
   ]),
-  branch('browser-access', 'Browser access', [
-    leaf('auth-checking', 'Checking'),
-    leaf('auth-required', 'Required'),
-    leaf('auth-offline', 'Offline'),
+  branch('deployment-access', 'Deployment access', [
+    leaf('access-loading', 'Connecting'),
+    leaf('access-denied', 'Denied'),
+    leaf('access-offline', 'Offline'),
   ]),
 ];
 

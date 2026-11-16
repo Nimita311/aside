@@ -26,7 +26,8 @@ const kinds: ReadonlyArray<readonly [SourceRecordKind, IndexKind]> = [
 const incomplete = new Set(['read_error', 'rebuild_failed', 'invalid_yaml', 'unterminated_entry_block']);
 const noIssues: readonly ParseIssue[] = Object.freeze([]);
 const complete: SourceHealth = Object.freeze({complete: true, issues: noIssues});
-const sourceDiagnostic = (issue: ParseIssue) => !issue.code.startsWith('artifact_reference_')
+/** Issues read from source files, as opposed to those derived from references between them. */
+export const sourceDiagnostic = (issue: ParseIssue) => !issue.code.startsWith('artifact_reference_')
   && issue.code !== 'artifact_attachment_read_error';
 
 /** Classify parser omissions next to source publication, where layout and

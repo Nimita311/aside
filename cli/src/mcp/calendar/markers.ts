@@ -3,7 +3,7 @@ import { formatUtcTimestamp } from '../../core/date.js';
 
 // Marker URLs are the sole action↔event link (event `url` field) and the
 // lifecycle signal in both directions. Pure helpers here; forward/reverse logic
-// builds on them. See design/calendar.md (Linking).
+// builds on them. See reference/urls.md (Calendar markers).
 import { isInstanceId, INSTANCE_ID_RULE } from '../../core/identity.js';
 
 // The lifecycle a marker encodes. `active` (scheduled, unresolved) is the bare
@@ -16,7 +16,7 @@ export function buildMarker(instance: string, actionId: string, state: MarkerSta
   return state === 'active' ? base : `${base}/${state}`;
 }
 
-export interface ParsedMarker {
+interface ParsedMarker {
   instance: string;
   actionId: string;
   state: MarkerState;
@@ -42,16 +42,11 @@ const SUFFIX_ALIASES: Record<string, MarkerState> = {
 export function parseMarker(url: string): ParsedMarker | null {
   const m = url.match(/^aside:\/\/([^/]+)\/action\/([^/]+)(?:\/([^/]+))?\/?$/);
   if (!m) return null;
-  const [, encInstance, encActionId, rawSuffix] = m;
-  let instance: string;
+  const [, instance, encActionId, rawSuffix] = m;
+  if (!isInstanceId(instance)) return null;
   let actionId: string;
-  try {
-    instance = encInstance;
-    if (!isInstanceId(instance)) return null;
-    actionId = decodeURIComponent(encActionId);
-  } catch {
-    return null; // malformed percent-encoding
-  }
+  try { actionId = decodeURIComponent(encActionId); }
+  catch { return null; } // malformed percent-encoding
   let state: MarkerState = 'active';
   if (rawSuffix) {
     const norm = SUFFIX_ALIASES[rawSuffix.toLowerCase()];
@@ -100,9 +95,7 @@ export function normalizeScheduled(scheduled: string): string {
 // event anchored at midnight.
 export function startFromScheduled(scheduled: string): { start: string; allDay: boolean } {
   if (!isSchedulingDate(scheduled)) throw new Error(`scheduled: invalid date or wall time "${scheduled}"`);
-  if (scheduled.includes('T')) {
-    const m = scheduled.match(/^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2})/);
-    return { start: m ? m[1] : scheduled, allDay: false };
-  }
+  // A valid timed value is already exactly minute precision.
+  if (scheduled.includes('T')) return { start: scheduled, allDay: false };
   return { start: `${scheduled}T00:00`, allDay: true };
 }

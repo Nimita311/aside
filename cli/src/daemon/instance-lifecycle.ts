@@ -1,7 +1,9 @@
 import type {Store} from '../source/store.js';
 import type {ParseIssue} from '../core/types.js';
-import {isAsideDir, readManifestResult, InstancePathError} from '../core/instance.js';
+import {isAsideDir, instancePathError} from '../core/instance.js';
 import {MutationWriteError, assertMutationOwnership, trackOwnedMutation, beforeMutationWrite, type MutationResult} from '../source/mutation-result.js';
+import {errorMessage} from '../core/error.js';
+import {retryTiming} from '../core/async.js';
 
 export interface InstanceLifecycleOptions {
   reconciliationIntervalMs?: number;
@@ -67,23 +69,17 @@ export class InstanceLifecycle {
   private readonly features = new Map<string, InstanceLifecycleFeature>();
   private readonly interval?: ReturnType<typeof setInterval>;
   private readonly debounceMs: number;
-  private readonly retryMinMs: number;
-  private readonly retryMaxMs: number;
+  private readonly retryDelay: (failures: number) => number;
   private closed = false;
   private readonly maintenance = new Map<string, {run: () => void; interval: number; failures: number; error?: unknown; timer?: ReturnType<typeof setTimeout>}>();
 
   constructor(private readonly options: InstanceLifecycleOptions = {}) {
-    const interval = options.reconciliationIntervalMs ?? 60_000;
-    this.debounceMs = options.debounceMs ?? 100;
-    this.retryMinMs = options.retryMinMs ?? 1_000;
-    this.retryMaxMs = options.retryMaxMs ?? 30_000;
-    if (![interval, this.debounceMs].every(value => Number.isSafeInteger(value) && value >= 0)
-      || ![this.retryMinMs, this.retryMaxMs].every(value => Number.isSafeInteger(value) && value > 0)
-      || this.retryMaxMs < this.retryMinMs) throw new Error('Invalid instance lifecycle intervals.');
-    if (interval) {
+    const timing = retryTiming(options, 'Invalid instance lifecycle intervals.');
+    this.debounceMs = timing.debounceMs; this.retryDelay = timing.retryDelay;
+    if (timing.intervalMs) {
       this.interval = setInterval(() => {
         for (const source of this.sources.values()) this.attempt(source);
-      }, interval);
+      }, timing.intervalMs);
       this.interval.unref?.();
     }
   }
@@ -154,7 +150,7 @@ export class InstanceLifecycle {
       // with lifecycle even if refresh failed before publishing its fence.
       store.recordRebuildFailure(error);
       this.invalidate(store);
-      return error instanceof Error ? error.message : String(error);
+      return errorMessage(error);
     }
   }
 
@@ -199,10 +195,9 @@ export class InstanceLifecycle {
     if (!source || !this.active(source)) throw new Error('Instance lifecycle is closed.');
     const path = store.getDataDir();
     if (!isAsideDir(path)) {
-      const issue = readManifestResult(path).issues.find(issue => issue.code === 'read_error');
+      const error = instancePathError(path);
       this.invalidate(store);
-      if (issue) throw new Error(issue.message);
-      throw new InstancePathError(`Not an aside instance (no aside.md manifest): ${path}`);
+      throw error;
     }
   }
 
@@ -240,7 +235,7 @@ export class InstanceLifecycle {
     const work = [...this.sources.get(store)?.features.values() ?? [], ...[...this.maintenance].map(([name, state]) => ({name, error: state.error}))];
     return work.flatMap(feature => feature.error === undefined ? [] : [{
       severity: 'warning' as const, code: 'instance_feature_failed', field: feature.name,
-      message: `${feature.name} maintenance is pending: ${feature.error instanceof Error ? feature.error.message : String(feature.error)}`,
+      message: `${feature.name} maintenance is pending: ${errorMessage(feature.error)}`,
     }]);
   }
 
@@ -372,7 +367,6 @@ export class InstanceLifecycle {
       state.work = work;
   }
   private active(source: LoadedSource): boolean {return !this.closed && this.sources.get(source.store) === source;}
-  private retryDelay(failures: number): number {return Math.min(this.retryMaxMs, this.retryMinMs * 2 ** Math.min(Math.max(0, failures - 1), 30));}
   private retry(source: LoadedSource): void {if (this.active(source)) this.schedule(source, this.retryDelay(++source.failures));}
   private schedule(source: LoadedSource, delay: number): void {
     if (!this.active(source)) return;

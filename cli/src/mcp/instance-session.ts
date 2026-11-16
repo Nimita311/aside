@@ -146,11 +146,16 @@ export class InstanceSession {
       throw error;
     }
     this.addIssues(admitted.issues);
+    return { instance: this.activate(admitted.path, admitted.record), created: false, activated: true };
+  }
+
+  // Make an admitted instance the active selection, or leave the selection as it was.
+  private activate(path: string, record: ParseResult<InstanceRecord>): InstanceInfo {
     const previous = this.registry.selection();
     try {
-      this.metadata.set(admitted.path, admitted.record);
-      this.registry.activateAdmitted(admitted.path);
-      return { instance: this.info(this.registry.activeInstance!), created: false, activated: true };
+      this.metadata.set(path, record);
+      this.registry.activateAdmitted(path);
+      return this.info(this.registry.activeInstance!);
     } catch (error) {this.registry.restore(previous); throw error;}
   }
 
@@ -171,19 +176,14 @@ export class InstanceSession {
       throw error;
     }
     this.addIssues(result.issues);
-    if (!result.admitted) {
-      const failure = `${result.error ?? 'Lifecycle admission did not complete.'}\n${recovery()}`;
-      return {instance: this.info(result.path, () => result.record), created: true, activated: false, error: failure, changes: result.changes};
-    }
-    const previous = this.registry.selection();
+    // The files exist either way; the receipt says why the instance is not active.
+    const unactivated = (error: string): InstanceReceipt =>
+      ({instance: this.info(result.path, () => result.record), created: true, activated: false, error, changes: result.changes});
+    if (!result.admitted) return unactivated(`${result.error ?? 'Lifecycle admission did not complete.'}\n${recovery()}`);
     try {
-      this.metadata.set(result.path, result.record);
-      this.registry.activateAdmitted(result.path);
-      return { instance: this.info(this.registry.activeInstance!), created: true, activated: true, tutorialProjectId: result.tutorialProjectId, changes: result.changes };
+      return { instance: this.activate(result.path, result.record), created: true, activated: true, tutorialProjectId: result.tutorialProjectId, changes: result.changes };
     } catch (error) {
-      this.registry.restore(previous);
-      const failure = `Created instance ${formatScalar(result.path)}\nLifecycle metadata and activation: unconfirmed — ${(error as Error).message}\n${recovery()}`;
-      return {instance: this.info(result.path, () => result.record), created: true, activated: false, error: failure, changes: result.changes};
+      return unactivated(`Created instance ${formatScalar(result.path)}\nLifecycle metadata and activation: unconfirmed — ${(error as Error).message}\n${recovery()}`);
     }
   }
 }

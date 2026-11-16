@@ -77,10 +77,10 @@ describe('show command', () => {
     expect(close).toHaveBeenCalledOnce();
   });
 
-  it('opens a private handoff while printing only the bookmark URL', async () => {
-    request.mockResolvedValueOnce({ port: 24800, route: '', url: 'http://localhost:24800/', launchUrl: 'file:///private/handoff.html' });
+  it('opens the returned HTTP URL', async () => {
+    request.mockResolvedValueOnce({ port: 24800, route: '', url: 'http://localhost:24800/' });
     await runShow([], context);
-    expect(context.open).toHaveBeenCalledWith('file:///private/handoff.html');
+    expect(context.open).toHaveBeenCalledWith('http://localhost:24800/');
     expect(context.out).toHaveBeenCalledWith('Opened browser: http://localhost:24800/');
   });
 
@@ -97,12 +97,12 @@ describe('show command', () => {
     await runShow(['#action/2026-10-05-review', '--source', source], context);
     expect(request).toHaveBeenLastCalledWith('show', { instance: work, args: { action: '2026-10-05-review', detail: true, source } });
     await runShow(['--source', source, '--dir', work, '--url'], context);
-    expect(request).toHaveBeenLastCalledWith('show', { instance: work, args: { source }, navigate: false }, { read: true });
+    expect(request).toHaveBeenLastCalledWith('show', { instance: work, args: { source } }, { read: true });
   });
 
   it.each([false, true])('prints the selector URL without opening a browser and closes the connection (json: %s)', async json => {
     await runShow(['--url', ...(json ? ['--json'] : [])], context);
-    expect(request).toHaveBeenCalledExactlyOnceWith('serve', { navigate: false });
+    expect(request).toHaveBeenCalledExactlyOnceWith('serve', {});
     expect(context.open).not.toHaveBeenCalled();
     if (json) expect(JSON.parse(vi.mocked(context.out!).mock.calls[0][0])).toMatchObject({ command: 'show', data: { url: 'http://localhost:24800/', reused_tab: false } });
     else expect(context.out).toHaveBeenCalledWith('http://localhost:24800/');
@@ -112,7 +112,7 @@ describe('show command', () => {
   it('requests a validated object URL without navigating an open tab', async () => {
     await runShow(['#action/2026-10-05-review', '--url'], context);
     expect(request).toHaveBeenCalledExactlyOnceWith('show', {
-      instance: work, args: { action: '2026-10-05-review', detail: true }, navigate: false,
+      instance: work, args: { action: '2026-10-05-review', detail: true },
     }, { read: true });
     expect(context.open).not.toHaveBeenCalled();
     expect(context.out).toHaveBeenCalledWith('http://localhost:24800/work/action/2026-10-05-review/detail');
@@ -122,7 +122,7 @@ describe('show command', () => {
   it('accepts an explicit directory for a timeline URL and passes the webapp override', async () => {
     await runShow(['--url', '--dir', work, '--app-dir=../webapp'], context);
     expect(request).toHaveBeenCalledExactlyOnceWith('show', {
-      instance: work, args: {}, appDir: join(root, 'webapp'), navigate: false,
+      instance: work, args: {}, appDir: join(root, 'webapp'),
     }, { read: true });
     expect(context.open).not.toHaveBeenCalled();
     expect(close).toHaveBeenCalledOnce();
@@ -219,8 +219,7 @@ it('opens an artifact through the real daemon and validates missing objects befo
     const context = { cwd: root, client: () => new DaemonClient({ paths }), open, out };
     await runShow([`aside://work/artifact/${id}`], context);
     expect(open).toHaveBeenCalledOnce();
-    expect(open.mock.calls[0][0]).toMatch(/^file:\/\//);
-    expect(readFileSync(new URL(open.mock.calls[0][0]), 'utf8')).toContain('/-/auth/complete');
+    expect(open.mock.calls[0][0]).toMatch(/^http:\/\/localhost:/);
     const url = out.mock.calls[0][0].replace('Opened browser: ', '');
     expect(url).toMatch(new RegExp(`/work/artifact/${id}$`));
     const response = await fetch(url);
@@ -282,14 +281,14 @@ it.skipIf(!existsSync(bundle) || process.platform === 'win32')('the shipped show
     const port = (await host.web()).port;
     const selector = await run('show');
     expect(selector.stderr).toBe('');
-    expect(readFileSync(receipt, 'utf8')).toMatch(/^file:\/\//);
+    expect(readFileSync(receipt, 'utf8')).toMatch(/^http:\/\/localhost:/);
     expect(selector.stdout).toContain(`http://localhost:${port}/`);
     const created = await run('artifact', 'create', '--dir', work, '--name', 'Brief', '--description', 'Show the brief');
     const handle = created.stdout.match(/#artifact\/[^\s]+/)![0];
     const object = await run('show', handle, '--dir', work);
     expect(object.stderr).toBe('');
     expect(object.stdout).toContain('Opened browser:');
-    expect(readFileSync(receipt, 'utf8')).toMatch(/^file:\/\//);
+    expect(readFileSync(receipt, 'utf8')).toMatch(/^http:\/\/localhost:/);
     const objectUrl = object.stdout.trim().replace('Opened browser: ', '');
     expect(objectUrl).toContain(`/artifact/${handle.slice('#artifact/'.length)}`);
     rmSync(receipt);

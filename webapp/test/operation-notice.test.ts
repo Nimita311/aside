@@ -5,7 +5,7 @@ import { showNotice, showDelayedLoading } from '../src/notice';
 import { loadApp } from './app-harness';
 import { snapshotFixture } from './snapshot-fixture';
 
-import { EventStream as Events, stubBrowserFetch } from './auth-fixture';
+import { EventStream as Events, stubBrowserFetch } from './connection-fixture';
 
 interface App {
   controlFor(id: string | null): void;

@@ -1,15 +1,13 @@
 import type { DateTimePreferences } from './preferences';
 import { formatDate } from './date-display';
 import { scrubLatchDate } from './render';
-import { ICON_SIZE, iconMarkup } from './entity-icons';
 import { toDateStr } from '../lib/types';
 
 // A zero-height sticky row at the top of the flow: the date readout in the
-// gutter, a calendar button beside complete stacked timestamps, plus the
-// scroll-scrubbed retraction of the week seams approaching it. app.ts mounts
-// it on every flow render, registers markers as entries append, and drives
-// updates from the scroll/resize handlers; the odometer roll itself is
-// scrubLatchDate in render.ts.
+// gutter, plus the scroll-scrubbed retraction of the week seams approaching
+// it. app.ts mounts it on every flow render, registers markers as entries
+// append, and drives updates from the scroll/resize handlers; the odometer
+// roll itself is scrubLatchDate in render.ts.
 
 // Live media query, evaluated per frame via .matches — never re-created on
 // the scroll path. Shared with app.ts (duration scaling, jump scrolling).
@@ -36,6 +34,7 @@ let latchSuppressed = false;
 // flow subtree every frame.
 let flowMarkers: HTMLElement[] = [];
 const latchPreferences = new WeakMap<HTMLElement, () => DateTimePreferences>();
+const READOUT_NAME = 'Timeline date';
 
 export function suppressLatch(on: boolean): void {
   latchSuppressed = on;
@@ -58,9 +57,8 @@ export function currentFlowDate(): string {
 // Mount the latched date readout: a zero-height sticky row at the top of the
 // flow column, so it overlays the gutter without occupying flow space and
 // tracks the column across layouts. Recreated on every flow render (the flow
-// is cleared wholesale). `onChipActivate` handles a click or keyboard
-// activation of the chip — it doubles as the jump-to-date trigger.
-export function mountLatch(flow: HTMLElement, onChipActivate?: () => void, preferences: () => DateTimePreferences = () => ({ timeFormat: 'locale' })): void {
+// is cleared wholesale).
+export function mountLatch(flow: HTMLElement, preferences: () => DateTimePreferences = () => ({ timeFormat: 'locale' })): void {
   const latch = document.createElement('div');
   latch.className = 'date-latch';
   latch.id = 'date-latch';
@@ -68,21 +66,7 @@ export function mountLatch(flow: HTMLElement, onChipActivate?: () => void, prefe
   latch.hidden = true;
   const chip = latch.appendChild(document.createElement('div'));
   chip.className = 'date-latch-chip';
-  chip.setAttribute('aria-label', onChipActivate ? 'Jump to date' : 'Timeline date');
-  if (onChipActivate) {
-    chip.setAttribute('role', 'button');
-    chip.setAttribute('tabindex', '0');
-    chip.setAttribute('aria-expanded', 'false');
-    chip.title = 'Jump to date';
-    chip.addEventListener('click', onChipActivate);
-    chip.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onChipActivate(); }
-    });
-    const icon = chip.appendChild(document.createElement('span'));
-    icon.className = 'latch-calendar-icon';
-    icon.setAttribute('aria-hidden', 'true');
-    icon.innerHTML = iconMarkup('date', 'day', ICON_SIZE.row);
-  }
+  chip.setAttribute('aria-label', READOUT_NAME);
   chip.appendChild(document.createElement('div')).className = 'latch-date-row';
   flow.appendChild(latch);
 }
@@ -105,8 +89,7 @@ export function updateLatchNow(): void {
   if (markers.length === 0) {
     latch.hidden = true;
     delete latch.dataset.date;
-    chip.setAttribute('aria-label', chip.getAttribute('role') === 'button' ? 'Jump to date' : 'Timeline date');
-    if (chip.getAttribute('role') === 'button') chip.title = 'Jump to date';
+    chip.setAttribute('aria-label', READOUT_NAME);
     chip.querySelectorAll<HTMLElement>('.latch-date-row')
       .forEach((row) => { row.innerHTML = ''; });
     return;
@@ -138,9 +121,8 @@ export function updateLatchNow(): void {
 
   const date = markers[current].dataset.date!;
   const prefs = latchPreferences.get(latch)?.() ?? { timeFormat: 'locale' as const };
-  const label = `${chip.getAttribute('role') === 'button' ? 'Jump to date' : 'Timeline date'}: ${formatDate(date, prefs.dateFormat)}`;
+  const label = `${READOUT_NAME}: ${formatDate(date, prefs.dateFormat)}`;
   if (chip.getAttribute('aria-label') !== label) chip.setAttribute('aria-label', label);
-  if (chip.getAttribute('role') === 'button' && chip.title !== label) chip.title = label;
   latch.dataset.date = date;
   const next = markers[current + 1];
   let ghostY = Infinity;

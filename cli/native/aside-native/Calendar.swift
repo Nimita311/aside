@@ -9,7 +9,7 @@
 // calendar-read-only / event-recurring) so the MCP classifies failures without
 // parsing the message; uncoded errors are transient. The process is long-lived;
 // it lives and dies with the MCP (stdin close ends the loop). See
-// cli/calendar-impl.md for the full design.
+// design/planning.md for synchronization constraints.
 
 import EventKit
 import CoreLocation
@@ -26,7 +26,6 @@ import Darwin
 // *our* identity and embedded NSCalendarsFullAccessUsageDescription and binds the
 // grant to aside-cal — identically whoever launches us. The stub supervises the
 // disclaimed child over the inherited stdio, so Node talks to it transparently.
-// See cli/calendar-impl.md.
 @_silgen_name("responsibility_spawnattrs_setdisclaim")
 func responsibility_spawnattrs_setdisclaim(_ attr: UnsafeMutablePointer<posix_spawnattr_t?>, _ disclaim: Int32) -> Int32
 

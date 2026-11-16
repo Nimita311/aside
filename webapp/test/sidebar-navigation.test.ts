@@ -4,14 +4,18 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { EntityRef } from '../lib/types';
 import type { DocRef } from '../src/route';
 import type { RemoteStore } from '../lib/remote-store';
+import type { createContextPanel } from '../src/context-panel';
 import { snapshotFlow } from '../src/flip';
 import type { WebappSidebarSection } from '../../cli/src/core/types';
 import { loadApp } from './app-harness';
 import { snapshotFixture } from './snapshot-fixture';
-import { stubBrowserFetch } from './auth-fixture';
+import { stubBrowserFetch } from './connection-fixture';
 
 interface App {
   state: { filter: EntityRef | null; search: string; doc: DocRef | null; store: RemoteStore | null };
+  setupContextPanel(): void;
+  inspectContext(target: { ref: EntityRef | null; doc: DocRef | null }): Promise<void>;
+  contextPanel?: ReturnType<typeof createContextPanel>;
   setupNavigationSidebar(): void;
   setupModals(): void;
   applyAnimSpeed(): void;
@@ -24,13 +28,13 @@ interface App {
   handleSearch(term: string): void;
   updateDiagnostics(): void;
   syncNavigationSidebar(): void;
-  navigationSidebar?: { dispose(): void; openSearch(): void; isSearchOpen(): boolean };
+  navigationSidebar?: { dispose(): void; openSearch(): void };
   stopControl?: () => void;
 }
 
 let app: App | undefined;
 afterEach(() => {
-  app?.stopControl?.(); app?.clearInstanceView(); app?.navigationSidebar?.dispose(); app = undefined;
+  app?.stopControl?.(); app?.clearInstanceView(); app?.navigationSidebar?.dispose(); app?.contextPanel?.destroy(); app = undefined;
   vi.restoreAllMocks(); vi.unstubAllGlobals();
   document.body.replaceChildren(); localStorage.clear(); history.replaceState(null, '', '/');
 });
@@ -53,7 +57,6 @@ async function setup(route = filtered, holdSnapshot = false, initialSidebar: Web
     if (!match[2]) return Response.json({ id, name: id, path: `/fixture/${id}` });
     if (match[2] === 'sidebar') {
       expect(init?.method).toBe('POST');
-      expect(new Headers(init?.headers).get('X-Aside-Control')).toBe('1');
       const { sidebar, expectedSidebar } = JSON.parse(init?.body as string);
       expect(expectedSidebar).toEqual(sidebars.get(id) ?? []);
       sidebars.set(id, sidebar); sidebarWrites(id, sidebar);
@@ -66,8 +69,8 @@ async function setup(route = filtered, holdSnapshot = false, initialSidebar: Web
     if (holdSnapshot) return new Promise<Response>(resolve => { finishSnapshot = () => resolve(Response.json(data)); });
     return Response.json(data);
   });
-  app = await loadApp<App>('state, setupNavigationSidebar, setupModals, applyAnimSpeed, connectToInstance, clearInstanceView, handleLocationChange, openDetail, closeDoc, setupSearch, handleSearch, updateDiagnostics, syncNavigationSidebar, stopControl, navigationSidebar');
-  app.applyAnimSpeed(); app.setupModals(); app.setupNavigationSidebar();
+  app = await loadApp<App>('state, setupContextPanel, inspectContext, contextPanel, setupNavigationSidebar, setupModals, applyAnimSpeed, connectToInstance, clearInstanceView, handleLocationChange, openDetail, closeDoc, setupSearch, handleSearch, updateDiagnostics, syncNavigationSidebar, stopControl, navigationSidebar');
+  app.applyAnimSpeed(); app.setupContextPanel(); app.setupModals(); app.setupNavigationSidebar();
   const connecting = app.connectToInstance('work');
   const entries = document.getElementById('nav-entries') as HTMLAnchorElement;
   const search = document.getElementById('btn-pill-search') as HTMLButtonElement;
@@ -99,12 +102,11 @@ describe('sidebar application navigation', () => {
   it('marks Entries active for a filtered flow and restores it after reading a body', async () => {
     const { api, connecting, entries } = await setup(); await connecting;
     expect(entries.getAttribute('aria-current')).toBe('page');
-    api.openDetail();
-    await vi.waitFor(() => expect(document.querySelector<HTMLElement>('#doc-backdrop')!.hidden).toBe(false));
-    expect(document.querySelector('#doc-backdrop')!.tagName).toBe('SECTION');
+    api.contextPanel!.open(); api.openDetail();
+    expect(api.contextPanel!.getState()).toMatchObject({ open: true, mode: 'expanded' });
     expect(entries.hasAttribute('aria-current')).toBe(false);
     api.closeDoc();
-    await vi.waitFor(() => expect(api.state.doc).toBeNull());
+    expect(api.contextPanel!.getState().open).toBe(false);
     expect(entries.getAttribute('aria-current')).toBe('page');
     expect(api.state.search).toBe('calmer');
   });
@@ -150,6 +152,16 @@ describe('sidebar application navigation', () => {
     expect(document.getElementById('workspace-pill-label')!.textContent).toBe('Launch dashboard');
   });
 
+  it('names an inspected attachment in the active label', async () => {
+    const { api, connecting } = await setup(); await connecting;
+    vi.spyOn(api.state.store!, 'getArtifactDisplayName').mockReturnValue('Launch dashboard');
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    await api.inspectContext({ ref: null, doc: { kind: 'artifact', id: '2026-10-04-report', filename: 'daily.html' } });
+    api.openDetail();
+    expect(api.contextPanel!.getState()).toMatchObject({ open: true, mode: 'expanded' });
+    expect(document.getElementById('workspace-pill-label')!.textContent).toBe('daily.html · Launch dashboard');
+  });
+
   it('renders explicit ordered sections and distinguishes timeline navigation from an entity body', async () => {
     const sections: WebappSidebarSection[] = [
       { items: [{ label: 'Project body', entity: `#project/${project}` }] },
@@ -158,14 +170,18 @@ describe('sidebar application navigation', () => {
     const { api, connecting } = await setup('/work/', false, sections); await connecting;
     expect([...document.querySelectorAll('#workspace-sections h2')].map(node => node.textContent)).toEqual(['Focus']);
     expect([...document.querySelectorAll('#workspace-sections a')].map(node => node.textContent)).toEqual(['Project body', 'Project entries']);
+    // An entity shortcut inspects its record beside the unchanged flow.
     document.getElementById('btn-workspace-views')!.click();
     document.querySelector<HTMLAnchorElement>('#workspace-sections a')!.click();
-    await vi.waitFor(() => expect(api.state.doc).toEqual({ kind: 'detail' }));
-    expect(api.state.filter).toEqual({ type: 'project', id: project });
+    await vi.waitFor(() => expect(document.querySelector('#side-panel-body .entity-title')?.textContent).toBe('Good program'));
+    expect(api.contextPanel!.getState().open).toBe(true);
+    expect(api.state.filter).toBeNull(); expect(api.state.doc).toBeNull();
+    // A timeline shortcut filters the flow and leaves the inspected record.
     document.getElementById('btn-workspace-views')!.click();
     document.querySelectorAll<HTMLAnchorElement>('#workspace-sections a')[1].click();
-    await vi.waitFor(() => expect(api.state.doc).toBeNull());
-    expect(api.state.filter).toEqual({ type: 'project', id: project });
+    await vi.waitFor(() => expect(api.state.filter).toEqual({ type: 'project', id: project }));
+    expect(api.contextPanel!.getState().open).toBe(false);
+    expect(api.state.doc).toBeNull();
     expect(document.querySelectorAll('#workspace-sections [aria-current="page"]')).toHaveLength(1);
   });
 
@@ -189,21 +205,22 @@ describe('sidebar application navigation', () => {
   it.each([false, true])('dismisses Search when a lookup jumps within the existing flow (from body=%s)', async fromBody => {
     const { api, connecting } = await setup(); await connecting;
     if (fromBody) {
-      api.openDetail();
-      await vi.waitFor(() => expect(document.getElementById('doc-backdrop')!.hidden).toBe(false));
+      api.contextPanel!.open(); api.openDetail();
+      expect(api.contextPanel!.getState()).toMatchObject({ open: true, mode: 'expanded' });
     }
     api.setupSearch(); api.navigationSidebar!.openSearch();
     api.handleSearch('entry:calmer');
     const result = document.querySelector<HTMLElement>('[data-key="entry:2026-10-04T10:00"]');
     expect(result).not.toBeNull();
-    expect(api.navigationSidebar!.isSearchOpen()).toBe(true);
+    const popover = document.getElementById('workspace-popover')!;
+    expect(popover.hidden).toBe(false); expect(popover.dataset.page).toBe('search');
     result!.click();
     await vi.waitFor(() => expect(location.pathname).toBe(`/work/project/${project}/2026-10-04T10:00`));
     expect(api.state.filter).toEqual({ type: 'project', id: project });
     expect(api.state.search).toBe('calmer');
-    expect(api.state.doc).toBeNull();
+    expect(api.state.doc).toBeNull(); expect(api.contextPanel!.getState().open).toBe(false);
     expect(document.getElementById('filter-pill')!.hidden).toBe(false);
-    expect(api.navigationSidebar!.isSearchOpen()).toBe(false);
+    expect(popover.hidden).toBe(true);
     expect(document.getElementById('flow-scroll')!.inert).toBe(false);
     expect(document.activeElement?.closest('[hidden], [inert]')).toBeNull();
   });

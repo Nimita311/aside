@@ -60,7 +60,7 @@ describe('action location model and API', () => {
       expect(() => handleCapture(store, { content: 'Note', description: 'Note', projects: [{ name: 'Project', description: 'Project' }],
         actions: [{ name: 'Visit', description: 'Visit', location } as NewAction] }, now)).toThrow(/location/);
       expect(store.getActionIds()).toEqual([]);
-      expect(store.getProjectIds()).toEqual([]);
+      expect([...store.getProjects().keys()]).toEqual([]);
       expect(store.getEntries()).toEqual([]);
     },
   );

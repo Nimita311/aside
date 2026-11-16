@@ -3,22 +3,25 @@ import { readFileSync } from 'node:fs';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { EntityRef } from '../lib/types';
 import type { RemoteStore } from '../lib/remote-store';
-import type { ViewState } from '../src/route';
+import type { DocRef, ViewState } from '../src/route';
+import type { createContextPanel } from '../src/context-panel';
 import { loadApp } from './app-harness';
 import { snapshotFixture } from './snapshot-fixture';
-import { stubBrowserFetch } from './auth-fixture';
+import { stubBrowserFetch } from './connection-fixture';
 
 interface App {
   state: { filter: EntityRef | null; search: string; doc: ViewState['doc']; store: RemoteStore | null; weekStartsOn: number };
+  setupContextPanel(): void;
   setupNavigationSidebar(): void;
   setupModals(): void;
   setupDateTimeSettings(): void;
   applyAnimSpeed(): void;
   connectToInstance(id: string): Promise<void>;
-  applyView(view: ViewState): Promise<void>;
+  inspectContext(target: { ref: EntityRef | null; doc: DocRef | null }): Promise<void>;
   clearInstanceView(): void;
+  contextPanel?: ReturnType<typeof createContextPanel>;
   navigationSidebar?: { dispose(): void; layout(): void; closePopover(): void; openSearch(): void };
-  datePicker: { close(): void; refresh(options?: { invalidateCounts?: boolean }): void; dispose?(): void };
+  datePicker: { refresh(options?: { invalidateCounts?: boolean }): void; dispose?(): void };
   stopControl?: () => void;
 }
 
@@ -30,7 +33,7 @@ let app: App | undefined;
 let restoreFrameNavigation: (() => void) | undefined;
 
 afterEach(() => {
-  app?.stopControl?.(); app?.datePicker.close(); app?.clearInstanceView(); app?.navigationSidebar?.dispose(); app?.datePicker.dispose?.();
+  app?.stopControl?.(); app?.clearInstanceView(); app?.navigationSidebar?.dispose(); app?.contextPanel?.destroy(); app?.datePicker.dispose?.();
   app = undefined;
   restoreFrameNavigation?.(); restoreFrameNavigation = undefined;
   vi.useRealTimers(); vi.restoreAllMocks(); vi.unstubAllGlobals();
@@ -75,8 +78,8 @@ async function setup(initialWidth = 1920) {
     return Response.json(data);
   });
 
-  app = await loadApp<App>('state, setupNavigationSidebar, setupModals, setupDateTimeSettings, applyAnimSpeed, connectToInstance, applyView, clearInstanceView, stopControl, navigationSidebar, datePicker');
-  app.applyAnimSpeed(); app.setupModals(); app.setupNavigationSidebar(); app.setupDateTimeSettings();
+  app = await loadApp<App>('state, setupContextPanel, setupNavigationSidebar, setupModals, setupDateTimeSettings, applyAnimSpeed, connectToInstance, inspectContext, clearInstanceView, stopControl, contextPanel, navigationSidebar, datePicker');
+  app.applyAnimSpeed(); app.setupContextPanel(); app.setupModals(); app.setupNavigationSidebar(); app.setupDateTimeSettings();
   await app.connectToInstance('work');
   await vi.waitFor(() => expect(document.querySelector('#timeline-calendar-inline .cal-day')).not.toBeNull());
   return { api: app, resize(next: number) { width = next; app!.navigationSidebar!.layout(); } };
@@ -147,28 +150,29 @@ describe('calendar application navigation', () => {
     await vi.waitFor(() => expect(day().dataset.count).toBe('1'));
   });
 
-  it('retains the previous timeline while reading another project and restores it on a calendar day jump', async () => {
+  it('lands a calendar day in the filtered timeline while another project is inspected', async () => {
     const { api } = await setup();
-    await api.applyView({ filter: { type: 'project', id: otherProject }, search: '', doc: { kind: 'detail' } });
-    expect(api.state.filter).toEqual({ type: 'project', id: otherProject });
-    expect(element('doc-backdrop').hidden).toBe(false);
+    await api.inspectContext({ ref: { type: 'project', id: otherProject }, doc: null });
+    element('btn-context-expand').click();
+    expect(api.contextPanel!.getState()).toMatchObject({ open: true, mode: 'expanded' });
+    expect(element('side-panel-body').querySelector('.entity-title')?.textContent).toBe('Other program');
+    // Inspecting a record leaves the timeline's own filters in place.
     expectRetainedFilters();
-    const next = document.querySelector<HTMLButtonElement>('#timeline-calendar-inline .cal-nav[aria-label="Next month"]')!;
-    next.click();
-    expect(api.state.doc).toEqual({ kind: 'detail' });
-    expect(api.state.filter).toEqual({ type: 'project', id: otherProject });
-    document.querySelector<HTMLButtonElement>('#timeline-calendar-inline .cal-nav[aria-label="Previous month"]')!.click();
     document.querySelector<HTMLButtonElement>('#timeline-calendar-inline .cal-day[data-date="2026-10-03"]')!.click();
-    await vi.waitFor(() => expect(api.state.doc).toBeNull());
-    await vi.waitFor(() => expect(document.querySelector('.is-target')?.getAttribute('data-entry-id')).toBe('2026-10-03T09:00'));
+    await vi.waitFor(() => expect(document.querySelector('#flow .is-target')?.getAttribute('data-entry-id')).toBe('2026-10-03T09:00'));
+    expect(location.pathname + location.search).toBe(`/work/project/${project}/date/2026-10-03?search=calmer`);
     expect(api.state.filter).toEqual({ type: 'project', id: project });
     expect(api.state.search).toBe('calmer');
-    expect(element('doc-backdrop').hidden).toBe(true);
+    expectRetainedFilters();
+    expect(api.contextPanel!.getState().open).toBe(false);
   });
 
-  it('retains timeline controls in the pill over full-page HTML and returns to that flow with Today', async () => {
+  it('keeps timeline controls in the pill over a full-screen webpage and returns to that flow with Today', async () => {
     const { api } = await setup();
-    await api.applyView({ filter: null, search: '', doc: { kind: 'asset', path: 'assets/dashboard.html' } });
+    await api.inspectContext({ ref: null, doc: { kind: 'asset', path: 'assets/dashboard.html' } });
+    element('btn-context-expand').click(); element('btn-context-fullscreen').click();
+    expect(api.contextPanel!.getState().fullscreen).toBe(true);
+    expect(element('side-panel-body').querySelector('iframe.asset-webpage')).not.toBeNull();
     expect(element('workspace-frame').dataset.reader).toBe('html');
     expect(element('navigation-sidebar-host').hidden).toBe(true);
     expect(element('control-pill').hidden).toBe(false);
@@ -176,11 +180,20 @@ describe('calendar application navigation', () => {
     expect(element('workspace-popover').dataset.page).toBe('calendar');
     expect(element('workspace-popover-body').contains(element('workspace-timeline-controls'))).toBe(true);
     expectRetainedFilters();
+    // Month navigation only turns the calendar's page beneath the document.
+    document.querySelector<HTMLButtonElement>('#timeline-calendar-inline .cal-nav[aria-label="Next month"]')!.click();
+    expect(document.querySelector('#timeline-calendar-inline .cal-title')?.textContent).toBe('Nov 2026');
+    expect(api.contextPanel!.getState().fullscreen).toBe(true);
+    expect(location.pathname + location.search).toBe(initialRoute);
     document.querySelector<HTMLButtonElement>('#timeline-calendar-inline .cal-today')!.click();
-    await vi.waitFor(() => expect(api.state.doc).toBeNull());
+    // Today is past the newest entry, so the jump lands on that entry.
+    await vi.waitFor(() => expect(document.querySelector('#flow .is-target')?.getAttribute('data-entry-id')).toBe('2026-10-04T10:00'));
+    expect(location.pathname + location.search).toBe(`/work/project/${project}/date/2026-10-31?search=calmer`);
     expect(api.state.filter).toEqual({ type: 'project', id: project });
     expect(api.state.search).toBe('calmer');
     expect(element('workspace-popover').hidden).toBe(true);
+    // The full-screen document yields to the flow the jump landed in.
+    await vi.waitFor(() => expect(api.contextPanel!.getState().open).toBe(false));
     expect(element('workspace-frame').dataset.reader).toBe('flow');
   });
 });

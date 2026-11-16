@@ -125,7 +125,7 @@ describe('GraphQL collection patches', () => {
     const source = readFileSync(file, 'utf8').replace(/projects: \[[^\n]*\]/, `projects: [123, ${projects[0]}]`);
     writeFileSync(file, source);
     expect(() => handleUpdateEntry(store, {id: entry, projectEdits: {add: [{name: 'Must not create', description: 'No'}]}})).toThrow('list of text IDs');
-    expect(readFileSync(file, 'utf8')).toBe(source); expect(store.getProjectIds()).toEqual(projects);
+    expect(readFileSync(file, 'utf8')).toBe(source); expect([...store.getProjects().keys()]).toEqual(projects);
   });
 
   it.each([
@@ -177,9 +177,9 @@ describe('GraphQL collection patches', () => {
   });
 
   it('validates all target additions before creating any new record', async () => {
-    const before = store.getProjectIds();
+    const before = [...store.getProjects().keys()];
     const result = await graph('updateEntry', {projects: {add: [{create: {name: 'Must not create', description: 'No'}}, {existingId: 'missing'}]}});
     expect(result.errors).toBeDefined();
-    const fresh = new Store(dir); expect(fresh.getProjectIds()).toEqual(before); fresh.close();
+    const fresh = new Store(dir); expect([...fresh.getProjects().keys()]).toEqual(before); fresh.close();
   });
 });

@@ -54,7 +54,7 @@ export function formatDaemonStatus(snapshot: Snapshot, json = false): { output: 
         annotations: [...(instance.loaded ? ['loaded'] : []),
           ...(instance.sessions ? [`${instance.sessions} active session${instance.sessions === 1 ? '' : 's'}`] : [])],
       })) }], checks: [] };
-  report.checks.push({ code: 'daemon_connection', label: running ? 'Daemon connection' : unavailable ? 'Daemon connection' : 'Daemon stopped (starts when needed)',
+  report.checks.push({ code: 'daemon_connection', label: running || unavailable ? 'Daemon connection' : 'Daemon stopped (starts when needed)',
     passed: !unavailable, ...(unavailable ? { problems: ['Lifetime lock held, but the daemon does not answer.'], fixes: ['Inspect the log and retry aside daemon status.'] } : {}) });
   if (jobFileExists) report.checks.push({ code: 'login_job', label: 'Login job file', passed: !!job,
     ...(!job ? { problems: ['The saved job could not be read or recognized.'], fixes: ['aside daemon install'] } : {}) });

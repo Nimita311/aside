@@ -60,28 +60,19 @@ export function projectMarks(fm: ProjectFrontMatter): RefStatus[] {
 
 // The single grouping status, from the front matter alone: an open action
 // files by its place on the calendar — Scheduled or Backlog. A deadline never
-// regroups it: due is orthogonal to both, and the chip's due ring already
-// shows it. The panel files a dated action under Scheduled whether or not
+// regroups it: a deadline remains a separate fact. The panel files a dated
+// action under Scheduled whether or not
 // the date has passed — the waiting mark is time-aware, the grouping is
 // not, so a lapsed scheduled action stays in Scheduled (below the now tick)
-// while its chip's ring takes clock hands.
+// while its reference icon shows clock hands.
 export function actionStatus(fm: ActionFrontMatter): RefStatus {
   if (fm.resolution) return fm.resolution;
   return fm.scheduled ? 'scheduled' : 'backlog';
 }
 
-export function projectStatus(fm: ProjectFrontMatter): RefStatus {
-  return projectMarks(fm)[0] ?? 'open';
-}
-
-// A status pill on the panel summary and the record detail — a lifecycle
-// state or an exception, never a fact. The label carries time only as the
-// distance to a pending event, because that distance is the magnitude of the
-// status (due in 3 hours and due in 2 months are different states); time
-// since a past event is a fact and reads in the updated line instead. `marks`
-// are the chip channels the pill paints (the due ring, the closed mute); an
-// `exception` pill flags an anomaly rather than a state, and styles as an
-// absence.
+// Lifecycle, calendar and deadline information for summary/detail facts.
+// Marks retain their semantics for icons and accessible descriptions.
+// Exceptions describe anomalies such as a missing calendar.
 export interface SummaryPill {
   label: string;
   marks: RefStatus[];
@@ -93,21 +84,24 @@ export interface SummaryPill {
   hover?: { prefix: string; stamp: string; timezone?: string; suffix?: string };
 }
 
-// The pill row of an action: the deadline and the calendar are independent
-// states, each its own pill — never merged, so each state reads on its own
-// field. A deadline reads 'Due in 3d', escalating to 'Overdue 3d' once
-// breached (relativeDate's bare past count reads wrong after 'Due'). The
-// calendar pill reads 'Scheduled in 2h' while the event is ahead or running
+// An action's status facts, led by the marker of an unsaved projection.
+export function actionStatusPills(fm: ActionFrontMatter, now: ClockNow, projected = false): SummaryPill[] {
+  return [...(projected ? [{ label: 'Projected', marks: [] }] : []), ...actionPills(fm, now)];
+}
+
+// Deadline and calendar facts remain independent. A deadline reads 'Due in
+// 3d', or 'Overdue 3d' once breached. The calendar reads 'Scheduled in 2h'
+// while the event is ahead or running
 // ('Scheduled 2h ago' mid-event); once it lapses unresolved it is its own
 // state — 'Slipped 2mo': waiting to be rescheduled; never scheduled at all
-// reads 'Backlog' — beside the due pill, not riding it. A resolution stands
+// reads 'Backlog' — beside the deadline, not riding it. A resolution stands
 // alone, as does a recurrence template (wearing its recurring mark). A live
-// schedule synced to no calendar adds the one exception pill; a slipped one
+// schedule synced to no calendar adds the one exception; a slipped one
 // doesn't — rescheduling, not syncing, is its fix (the synced norm shows
 // nothing either way).
 export function actionPills(fm: ActionFrontMatter, now: ClockNow): SummaryPill[] {
   if (fm.recurrence) return [{ label: 'Recurrence template', marks: ['recurring'] }];
-  // The hover behind any pill stating the scheduled time — a resolution's
+  // The hover behind a fact stating the scheduled time — a resolution's
   // stamp is the scheduled time too, the design's done time.
   const scheduledHover = (prefix: string) => {
     const suffix = fm.duration ? ` · ${formatDuration(fm.duration)}` : '';

@@ -104,7 +104,7 @@ describe('writes with external metadata edits before watcher rebuild', () => {
     expect(persisted.meta.projects).toEqual([otherProjectId]);
     expect(store.getEntries().find(entry => entry.meta.created === entryId)).toEqual(persisted);
     expect([...(store.getRelations().projectsByAction.get(actionId) ?? [])]).toEqual([otherProjectId]);
-    expect(store.getActionsForProject(projectId)).toEqual([]);
+    expect([...(store.getRelations().actionsByProject.get(projectId) ?? [])]).toEqual([]);
     expect((await read(`{ entry(id: "${entryId}") { content projects { nodes { id } } } }`)).entry)
       .toEqual({ content: 'Revised entry.', projects: { nodes: [{ id: otherProjectId }] } });
   });

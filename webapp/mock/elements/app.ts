@@ -62,14 +62,6 @@ for (const [label, classes] of calendarStates) {
   button.setAttribute('aria-pressed', String(classes.includes('is-selected')));
   sample.append(button, text('span', label, 'element-label')); $('calendar-states').append(sample);
 }
-for (const button of document.querySelectorAll<HTMLButtonElement>('.date-jump-unit')) {
-  button.addEventListener('click', () => {
-    for (const sibling of document.querySelectorAll('.date-jump-unit')) {
-      sibling.classList.toggle('is-active', sibling === button);
-      sibling.setAttribute('aria-pressed', String(sibling === button));
-    }
-  });
-}
 
 for (const [kind, message, description] of [
   ['loading', 'Loading workspace…', 'Your records are on their way.'],

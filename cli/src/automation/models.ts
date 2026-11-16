@@ -9,6 +9,7 @@ import {resolveExecutionContext, type ExecutionContextSnapshot} from '../core/ex
 import { MODEL_CATALOG_LOCK_TIMEOUT_MS, MODEL_DISCOVERY_MAX_BYTES, MODEL_DISCOVERY_MAX_MODELS, MODEL_DISCOVERY_TERMINATE_TIMEOUT_MS, MODEL_DISCOVERY_TIMEOUT_MS } from '../core/system-config.js';
 import { daemonPaths } from '../daemon/paths.js';
 import { FileLock } from '../daemon/filelock.js';
+import { abortable } from '../core/async.js';
 
 export type ModelEngine = 'codex' | 'claude';
 export interface VendorModel { model: string; label?: string }
@@ -24,15 +25,9 @@ interface SavedCatalog { version: 1; root: string; bindings: Record<string, Bind
 export type ModelDiscovery = (engine: ModelEngine, command: string, cwd: string, signal: AbortSignal, env: NodeJS.ProcessEnv) => Promise<VendorModel[]>;
 export interface ModelCatalogOptions { discover?: ModelDiscovery; stateDirectory?: string; env?: () => NodeJS.ProcessEnv }
 
+const ENGINES = ['codex', 'claude'] as const;
 const hash = (value: string) => createHash('sha256').update(value).digest('hex');
-function abortable<T>(work: Promise<T>, signal: AbortSignal): Promise<T> {
-  if (signal.aborted) { void work.catch(() => {}); return Promise.reject(new Error('Model discovery interrupted')); }
-  return new Promise((resolveResult, reject) => {
-    const abort = () => { signal.removeEventListener('abort', abort); reject(new Error('Model discovery interrupted')); };
-    signal.addEventListener('abort', abort, { once: true });
-    work.then(resolveResult, reject).finally(() => signal.removeEventListener('abort', abort)).catch(() => {});
-  });
-}
+const interruptible = <T>(work: Promise<T>, signal: AbortSignal) => abortable(work, signal, () => new Error('Model discovery interrupted'));
 
 // Spawn and discovery use the same PATH and effective working directory.
 export function executablePath(command: string, cwd: string, env: NodeJS.ProcessEnv = process.env): string | undefined {
@@ -63,9 +58,9 @@ function readSaved(root: string, directory: string): SavedCatalog {
     if (!value || value.version !== 1 || value.root !== resolve(root) || !value.bindings || typeof value.bindings !== 'object' || Array.isArray(value.bindings)
       || !value.catalogs || typeof value.catalogs !== 'object' || Array.isArray(value.catalogs)) throw new Error('Invalid model cache');
     for (const [name, binding] of Object.entries(value.bindings)) {
-      if (!['codex', 'claude'].includes(binding.engine) || modelEnumName(binding.engine, binding.model) !== name || typeof binding.label !== 'string') throw new Error('Invalid model binding');
+      if (!ENGINES.includes(binding.engine) || modelEnumName(binding.engine, binding.model) !== name || typeof binding.label !== 'string') throw new Error('Invalid model binding');
     }
-    for (const engine of ['codex', 'claude'] as const) {
+    for (const engine of ENGINES) {
       if (!value.catalogs[engine]) continue;
       for (const model of validateVendorModels(value.catalogs[engine]!)) {
         const binding = value.bindings[modelEnumName(engine, model.model)];
@@ -126,11 +121,11 @@ function fileStamp(path: string): string {
   try { const stat = statSync(path); return `${realpathSync(path)}:${stat.dev}:${stat.ino}:${stat.size}:${stat.mtimeMs}:${stat.ctimeMs}`; } catch { return `${path}:absent`; }
 }
 function fingerprint(root: string, cwd: string, config: ExecutionConfig, env: NodeJS.ProcessEnv, commands: Partial<Record<ModelEngine, string>>, executionRevision: string, publication = false): string {
-  const files = [join(env.CODEX_HOME ?? join(env.HOME ?? homedir(), '.codex'), 'config.toml'),
-    join(env.CLAUDE_CONFIG_DIR ?? join(env.HOME ?? homedir(), '.claude'), 'settings.json')];
+  const home = () => env.HOME ?? homedir(), codexHome = env.CODEX_HOME ?? join(home(), '.codex');
+  const files = [join(codexHome, 'config.toml'), join(env.CLAUDE_CONFIG_DIR ?? join(home(), '.claude'), 'settings.json')];
   // Vendor initialization can update these without changing execution settings.
   // They invalidate cached reads, but do not make their own probe obsolete.
-  if (!publication) files.push(join(env.CODEX_HOME ?? join(env.HOME ?? homedir(), '.codex'), 'auth.json'), join(env.HOME ?? homedir(), '.claude.json'));
+  if (!publication) files.push(join(codexHome, 'auth.json'), join(home(), '.claude.json'));
   for (let directory = cwd;; directory = dirname(directory)) {
     files.push(join(directory, '.codex', 'config.toml'), join(directory, '.claude', 'settings.json'), join(directory, '.claude', 'settings.local.json'));
     if (dirname(directory) === directory) break;
@@ -160,7 +155,7 @@ export class ModelCatalog {
     const key = cachePath(root, directory);
     this.contexts.set(key, options.executionContext.revision);
     assertExecutionCwd(cwd);
-    const commands = Object.fromEntries((['codex', 'claude'] as const).map(engine => [engine, executablePath(engine, cwd, env)])) as Partial<Record<ModelEngine, string>>;
+    const commands = Object.fromEntries(ENGINES.map(engine => [engine, executablePath(engine, cwd, env)])) as Partial<Record<ModelEngine, string>>;
     const version = fingerprint(root, cwd, config, env, commands, options.executionContext.revision);
     const publication = fingerprint(root, cwd, config, env, commands, options.executionContext.revision, true);
     const cached = this.entries.get(key);
@@ -170,7 +165,7 @@ export class ModelCatalog {
         const currentEnv = this.options.env?.() ?? process.env;
         if (this.contexts.get(key) !== options.executionContext.revision) return undefined;
         const context = resolveExecutionContext(options.executionContext);
-        const installed = Object.fromEntries((['codex', 'claude'] as const).map(engine => [engine, executablePath(engine, context.cwd, currentEnv)]));
+        const installed = Object.fromEntries(ENGINES.map(engine => [engine, executablePath(engine, context.cwd, currentEnv)]));
         return fingerprint(root, context.cwd, context.config, currentEnv, installed, options.executionContext.revision, guard);
       } catch { return undefined; }
     };
@@ -179,7 +174,7 @@ export class ModelCatalog {
     const existing = this.pending.get(pendingKey);
     if (existing?.controller.signal.aborted) {
       const finished = existing.work.then(() => {}, () => {});
-      await (options.signal ? abortable(finished, options.signal) : finished);
+      await (options.signal ? interruptible(finished, options.signal) : finished);
       return this.for(root, options);
     }
     let request = existing;
@@ -232,7 +227,7 @@ export class ModelCatalog {
     catch { saved = { version: 1, root, bindings: {}, catalogs: {} }; diagnostics.push('Cannot read the persisted model catalog'); }
     const previous = structuredClone(saved);
     const states = new Map<ModelEngine, string | undefined>();
-    await Promise.all((['codex', 'claude'] as const).map(async engine => {
+    await Promise.all(ENGINES.map(async engine => {
       const command = commands[engine];
       if (!command) return;
       const controller = new AbortController();
@@ -245,7 +240,7 @@ export class ModelCatalog {
         const work = (this.options.discover ?? discoverModels)(engine, command, cwd, controller.signal, env);
         // Real adapters settle only after their subprocess has been closed.
         // Injected transports may ignore cancellation, so bound those waits.
-        const models = validateVendorModels(await (this.options.discover ? abortable(work, controller.signal) : work));
+        const models = validateVendorModels(await (this.options.discover ? interruptible(work, controller.signal) : work));
         const next: Record<string, Binding> = {};
         for (const model of models) {
           const name = modelEnumName(engine, model.model), existing = next[name] ?? saved.bindings[name];
@@ -266,10 +261,10 @@ export class ModelCatalog {
       try { saved = readSaved(root, directory); } catch { saved = previous; }
       const reason = error instanceof Error && /^(Ambiguous vendor model enum name: [A-Z0-9_]+|Model cache exceeds its size limit)$/.test(error.message) ? error.message : 'Cannot persist the model catalog';
       diagnostics.push(reason);
-      for (const engine of ['codex', 'claude'] as const) if (commands[engine]) states.set(engine, reason);
+      for (const engine of ENGINES) if (commands[engine]) states.set(engine, reason);
     }
     const models: ModelOption[] = [];
-    for (const engine of ['codex', 'claude'] as const) {
+    for (const engine of ENGINES) {
       if (!commands[engine]) continue;
       const reason = states.get(engine);
       for (const model of saved.catalogs[engine] ?? []) models.push({ name: modelEnumName(engine, model.model), label: model.label ?? model.model, builtin: true, engine, model: model.model, availability: reason ? 'UNKNOWN' : 'AVAILABLE', ...(reason ? { reason } : {}) });
@@ -294,15 +289,19 @@ export const catalogFor = (root: string, options: CatalogOptions) => catalog.for
 const discoverModels: ModelDiscovery = (engine, command, cwd, signal, env) => engine === 'codex'
   ? discoverCodexModels(command, cwd, signal, env) : discoverClaudeModels(command, cwd, signal, env);
 
+// Signal a detached child's whole process group; on Windows, the child alone.
+// The group may already be gone.
+export function killProcessGroup(child: ChildProcess, signal: NodeJS.Signals): void {
+  if (!child.pid) return;
+  try { if (process.platform !== 'win32') process.kill(-child.pid, signal); else child.kill(signal); } catch {}
+}
+
 async function terminate(child: ChildProcess): Promise<void> {
   if (!child.pid) return;
-  const kill = (signal: NodeJS.Signals) => {
-    try { if (process.platform !== 'win32' && child.pid) process.kill(-child.pid, signal); else child.kill(signal); } catch {}
-  };
-  child.stdin?.end(); kill('SIGTERM');
+  child.stdin?.end(); killProcessGroup(child, 'SIGTERM');
   await new Promise<void>(resolveDone => {
     let timer: ReturnType<typeof setTimeout> | undefined;
-    const closed = () => { clearTimeout(timer); child.removeListener('close', closed); kill('SIGKILL'); resolveDone(); };
+    const closed = () => { clearTimeout(timer); child.removeListener('close', closed); killProcessGroup(child, 'SIGKILL'); resolveDone(); };
     child.once('close', closed);
     // The leader may already have exited while a descendant holds its stdio.
     // Always signal its process group, and do not wait for a past close event.
@@ -390,7 +389,7 @@ export async function discoverClaudeModels(command: string, cwd: string, signal:
   signal.addEventListener('abort', abort, { once: true });
   if (signal.aborted) abort();
   try {
-    const models = await abortable(request.supportedModels(), controller.signal);
+    const models = await interruptible(request.supportedModels(), controller.signal);
     return validateVendorModels(models.flatMap(model => [
       { model: model.value, label: model.displayName },
       ...(model.resolvedModel !== undefined && model.resolvedModel !== model.value

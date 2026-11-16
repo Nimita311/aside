@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { Store } from '../src/source/store.js';
 import {sourceLifecycleFixture} from './source-lifecycle-fixture.js';
-import { handleCreateArtifact, handleUpdateArtifact } from '../src/mcp/tools/artifact.js';
+import { createArtifact, handleUpdateArtifact } from '../src/mcp/tools/artifact.js';
 import { handleQueryArtifacts } from '../src/mcp/tools/query.js';
 import { handleCapture } from '../src/mcp/tools/capture.js';
 import { artifactHandle } from '../src/core/artifact.js';
@@ -45,7 +45,7 @@ describe('artifact writes', () => {
   let data: string;
   let store: Store;
   let owner: ReturnType<typeof sourceLifecycleFixture> | undefined;
-  const create = (extra = {}) => handleCreateArtifact(store, { name: 'Design review', description: 'Current design', ...extra }, NOW);
+  const create = (extra = {}) => createArtifact(store, { name: 'Design review', description: 'Current design', ...extra }, NOW).text;
   const source = (name: string, bytes: string | Buffer) => {
     const path = join(root, name);
     writeFileSync(path, bytes);
@@ -69,12 +69,12 @@ describe('artifact writes', () => {
 
   function unchanged(operation: () => unknown, message: RegExp): void {
     const before = snapshot(data);
-    const ids = store.getArtifactIds();
+    const ids = [...store.getArtifacts().keys()];
     const artifacts = ids.map(id => store.getArtifact(id));
     const index = JSON.stringify(store.getArtifactIndex());
     expect(operation).toThrow(message);
     expect(snapshot(data)).toEqual(before);
-    expect(store.getArtifactIds()).toEqual(ids);
+    expect([...store.getArtifacts().keys()]).toEqual(ids);
     expect(ids.map(id => store.getArtifact(id))).toEqual(artifacts);
     expect(JSON.stringify(store.getArtifactIndex())).toBe(index);
   }
@@ -207,7 +207,7 @@ describe('artifact writes', () => {
     const dest = join(data, 'artifacts', '2026', ID);
     expect(readFileSync(join(dest, 'brief.bin'))).toEqual(readFileSync(second));
     expect(readFileSync(join(dest, 'other.bin'))).toEqual(readFileSync(first));
-    expect(store.getArtifactIds()).toEqual([ID]);
+    expect([...store.getArtifacts().keys()]).toEqual([ID]);
     expect(store.getArtifact(ID)!.frontMatter.created).toBe(originalCreated);
     handleUpdateArtifact(store, { id: ID, body: '# Revised review', description: 'Updated summary' });
     expect(handleQueryArtifacts(store, { detail: 'metadata' })).not.toContain('target:');

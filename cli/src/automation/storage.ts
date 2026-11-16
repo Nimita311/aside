@@ -13,12 +13,14 @@ export interface RunRecord {
   definition: AutomationDefinition; latenessMs: number; cwd?: string; prompt?: string; model?: ResolvedModel & { name: string };
   command?: string; args?: string[]; pid?: number; exitCode?: number | null; signal?: string | null; error?: string;
 }
+const RUN_ID = /^[a-zA-Z0-9][a-zA-Z0-9_-]*$/;
 export class RunStorage {
   readonly session = randomUUID();
   private claims = new Map<string, number>();
   private protected = new Set<string>();
   constructor(private root: string) { this.root = resolve(root); }
   private directory(key: string): string { return join(this.root, createHash('sha256').update(key).digest('hex').slice(0, 32)); }
+  private runPath(run: RunRecord): string { return join(this.directory(run.key), run.id); }
   lastClaim(key: string): number | undefined {
     if (!this.claims.has(key)) {
       try {
@@ -36,17 +38,17 @@ export class RunStorage {
     this.claims.set(key, occurrence); return true;
   }
   start(run: RunRecord): string {
-    const path = join(this.directory(run.key), run.id);
+    const path = this.runPath(run);
     mkdirSync(path, { recursive: true, mode: 0o700 });
     this.save(run); return path;
   }
   save(run: RunRecord): void {
-    writeFileCrashSafe(join(this.directory(run.key), run.id, 'run.json'), JSON.stringify(run, null, 2) + '\n');
+    writeFileCrashSafe(join(this.runPath(run), 'run.json'), JSON.stringify(run, null, 2) + '\n');
   }
   // Delegation completion can still save its result after the subprocess has
   // finished. Keep that record until its final host callback has settled.
   protect(run: RunRecord): () => void {
-    const path = join(this.directory(run.key), run.id);
+    const path = this.runPath(run);
     this.protected.add(path);
     return () => this.protected.delete(path);
   }
@@ -79,7 +81,7 @@ export class RunStorage {
     for (const bucket of buckets) {
       const directory = join(this.root, bucket);
       if (!this.ordinaryDirectory(directory)) continue;
-      const completed = this.subdirs(directory).filter(id => /^[a-zA-Z0-9][a-zA-Z0-9_-]*$/.test(id)).flatMap(id => {
+      const completed = this.subdirs(directory).filter(id => RUN_ID.test(id)).flatMap(id => {
         const path = join(directory, id);
         try {
           const run = JSON.parse(readManagedText(this.root, join(path, 'run.json'))) as RunRecord;
@@ -105,7 +107,7 @@ export class RunStorage {
         this.removeEmpty(path);
       }
       if (root === undefined) {
-        for (const id of this.subdirs(directory).filter(id => /^[a-zA-Z0-9][a-zA-Z0-9_-]*$/.test(id))) this.removeEmpty(join(directory, id));
+        for (const id of this.subdirs(directory).filter(id => RUN_ID.test(id))) this.removeEmpty(join(directory, id));
       }
       this.removeEmpty(directory);
     }

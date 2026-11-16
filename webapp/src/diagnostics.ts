@@ -1,5 +1,6 @@
 import type { FileDiagnostic } from '../../cli/src/core/data-snapshot';
 import { showActionFailure } from './toast';
+import { errorMessage } from '../../cli/src/core/error';
 
 export function fileDiagnosticNotice(diagnostic: FileDiagnostic, retry: () => Promise<void>): HTMLElement {
   const notice = document.createElement('div'); notice.className = 'history-notice data-file-notice'; notice.dataset.path = diagnostic.path;
@@ -15,18 +16,26 @@ export function fileDiagnosticNotice(diagnostic: FileDiagnostic, retry: () => Pr
   const button = document.createElement('button'); button.type = 'button'; button.className = 'history-retry notice-action'; button.textContent = 'Retry';
   button.setAttribute('aria-label', `Retry ${diagnostic.path}`);
   button.addEventListener('click', async () => {
+    const focused = document.activeElement === button;
     button.disabled = true; button.textContent = 'Retrying…';
     try { await retry(); }
     catch (error) {
       if (button.isConnected && !notice.closest('[hidden], [inert]')) {
         details.querySelector('.retry-reason')?.remove();
         const reason = document.createElement('p'); reason.className = 'retry-reason';
-        reason.textContent = error instanceof Error ? error.message : String(error);
+        reason.textContent = errorMessage(error);
         details.append(reason);
         showActionFailure('Could not retry this file. Try again.');
       }
     }
-    finally { if (button.isConnected) { button.disabled = false; button.textContent = 'Retry'; } }
+    finally {
+      if (button.isConnected) {
+        button.disabled = false; button.textContent = 'Retry';
+        // Disabling drops the button's focus, and a caller may park it on an
+        // ancestor meanwhile: take it back unless the user has moved elsewhere.
+        if (focused && (document.activeElement ?? document.body).contains(button)) button.focus({ preventScroll: true });
+      }
+    }
   });
   notice.append(details, button); return notice;
 }

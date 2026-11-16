@@ -1,7 +1,9 @@
 import { DAEMON_REQUEST_DRAIN_TIMEOUT_MS, DAEMON_DRAIN_POLL_INTERVAL_MS, DIAGNOSTIC_CLEANUP_INTERVAL_MS, MINUTE_MS } from '../core/system-config.js';
 // The daemon process: one per user, serving every agent session and CLI
-// command over a Unix socket (see design/daemon.md).
+// command over a Unix socket (see design/runtime.md).
 import { z } from 'zod';
+import { daemonBackend } from '../mcp/server.js';
+import { DaemonClient } from './client.js';
 import { validateToolArgs } from '../mcp/schemas.js';
 import net from 'node:net';
 import { chmodSync, existsSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
@@ -11,6 +13,7 @@ import {pickInstance} from '../web/picker.js';
 import {registrationPath} from '../source/instance-admission.js';
 import {InstancePathError, isAsideDir, shouldRetainKnownInstance} from '../core/instance.js';
 import { withPrimaryInstances, withoutInstanceFamilies } from '../core/worktree.js';
+import { instanceFamilyKey } from '../core/catalogue.js';
 import { daemonPaths, ensureDirs, type DaemonPaths } from './paths.js';
 import { FileLock } from './filelock.js';
 import { Peer, RpcFailure, ERR_METHOD_NOT_FOUND, ERR_SHUTTING_DOWN } from './jsonrpc.js';
@@ -21,6 +24,7 @@ import { ownHello, type HelloResult, type Status, type StopResult, type KnownEdi
 import { collectSystemDaemon } from '../graphql/system-daemon.js';
 import { SemanticCacheRetention } from '../semantic/cache-retention.js';
 import {InstanceOperationError} from '../core/instance-operation-error.js';
+import { errorMessage } from '../core/error.js';
 
 const graphqlSessionSchema = z.object({
   workspace: z.array(z.string()), encountered: z.array(z.string()), active: z.string().nullable(), discovery: z.boolean(), cwd: z.string(),
@@ -87,6 +91,7 @@ export class Daemon {
     this.host.onTabsChanged = () => this.reconsider();
     this.host.setKnownPaths(() => this.known);
     this.host.configureWeb({
+      mcp: () => daemonBackend(new DaemonClient({ paths: this.paths, startIfMissing: false })),
       pick: kind => (options.picker ?? pickInstance)(kind),
       summary: path => this.host.summary(path),
       years: path => this.host.years(path),
@@ -113,7 +118,7 @@ export class Daemon {
         try { this.host.load(path); this.reconsider(); }
         catch (error) { if (error instanceof InstancePathError) this.requestRegistryCheck(); throw error; }
       },
-    }, options.webPort, this.paths.state);
+    }, options.webPort);
   }
 
   // Take the lifetime lock and start serving. False when another daemon holds
@@ -130,8 +135,7 @@ export class Daemon {
       await this.semanticCaches.register(this.known);
       if (this.cacheRegistryReadable) await this.semanticCaches.collect(() => this.known);
     }).catch(() => {});
-    this.host.refreshIdentities();
-    this.host.refreshSemanticRegistrations();
+    this.refreshRegistrations();
     this.loadKnown();
     const server = net.createServer((socket) => this.accept(socket));
     this.server = server;
@@ -275,7 +279,7 @@ export class Daemon {
         const schemaRead = method === 'graphql.schema';
         params = (schemaRead ? z.object({session: graphqlSessionSchema}).strict() : z.object({
           mode: z.enum(['query', 'mutation']), args: z.unknown(),
-          session: graphqlSessionSchema,
+          session: graphqlSessionSchema, navigationOrigin: z.string().url().optional(),
         }).strict()).parse(params);
         if (!schemaRead) params.args = validateToolArgs(params.mode === 'query' ? 'query' : 'mutate', params.args);
         const registry = new InstanceRegistry();
@@ -296,27 +300,24 @@ export class Daemon {
               ...this.host.availableInstances(registry.all()).map(instance => instance.path),
               ...registry.all().filter(path => this.host.metadata(path).issues.some(issue => issue.code === 'read_error'))]);
           },
-          family: path => {
-            const instance = this.host.availableInstances([path])[0];
-            return instance?.worktree ? `${instance.worktree.commonDir}\0${instance.worktree.primaryPath}` : path;
-          },
+          family: path => instanceFamilyKey(this.host.availableInstances([path])[0]?.worktree, path),
         }, params.session.configIssues, params.session.discovery, params.session.cwd);
         const result = schemaRead
           ? await this.host.graphqlSchema(session, this.querySignals.get(peer)?.signal)
-          : await this.host.graphql(session, params.mode, params.args, this.querySignals.get(peer)?.signal, path => this.use(peer, path), () => this.requestRegistryCheck());
+          : await this.host.graphql(session, params.mode, params.args, this.querySignals.get(peer)?.signal, path => this.use(peer, path), () => this.requestRegistryCheck(), params.navigationOrigin);
         return { result, session: session.state() };
       }
       case 'show': {
-        params = z.object({ instance: z.string(), args: z.unknown().optional(), appDir: z.string().optional(), navigate: z.boolean().optional() }).strict().parse(params);
+        params = z.object({ instance: z.string(), args: z.unknown().optional(), appDir: z.string().optional() }).strict().parse(params);
         params.args = validateToolArgs('show', params.args);
         const path = this.use(peer, params.instance);
-        return this.host.show(path, params.args ?? {}, params.appDir, params.navigate !== false);
+        return this.host.show(path, params.args ?? {}, params.appDir);
       }
       case 'serve': {
-        params = z.object({ instance: z.string().optional(), appDir: z.string().optional(), navigate: z.boolean().optional() }).strict().parse(params);
+        params = z.object({ instance: z.string().optional(), appDir: z.string().optional() }).strict().parse(params);
         return params.instance
-          ? this.host.show(this.use(peer, params.instance), {}, params.appDir, params.navigate !== false)
-          : this.host.serve(params.appDir, params.navigate !== false);
+          ? this.host.show(this.use(peer, params.instance), {}, params.appDir)
+          : this.host.serve(params.appDir);
       }
       default: throw new RpcFailure(`unknown method ${method}`, ERR_METHOD_NOT_FOUND);
     }
@@ -344,11 +345,15 @@ export class Daemon {
   }
 
   // Record that a connection uses an instance and register it for ongoing sync.
+  private claim(peer: Peer, path: string): void {
+    this.note(path);
+    this.connections.get(peer)?.add(path);
+  }
+
   private admitInstance(peer: Peer, path: string) {
     try {
       const result = this.host.admitInstance(this.canonical(path));
-      this.note(result.path);
-      this.connections.get(peer)?.add(result.path);
+      this.claim(peer, result.path);
       return result;
     } catch (error) {
       if (error instanceof InstanceOperationError && error.reason === 'NOT_INSTANCE') this.requestRegistryCheck();
@@ -360,17 +365,13 @@ export class Daemon {
     if (typeof instance !== 'string' || instance === '') throw new Error('No instance named for this operation.');
     const path = this.canonical(instance);
     this.host.load(path);
-    this.note(path);
-    this.connections.get(peer)?.add(path);
+    this.claim(peer, path);
     return path;
   }
 
   private created(peer: Peer, path: string, options: {partial?: boolean} = {}) {
     const key = this.canonical(path), issues = this.host.created(key, options);
-    if (!options.partial) {
-      this.note(key);
-      this.connections.get(peer)?.add(key);
-    }
+    if (!options.partial) this.claim(peer, key);
     return issues;
   }
 
@@ -417,7 +418,7 @@ export class Daemon {
     if (this.stopping) return;
     try {this.pruneKnown(false); this.loadKnown();}
     catch (error) {
-      log(`registration reconciliation error: ${error instanceof Error ? error.message : String(error)}`);
+      log(`registration reconciliation error: ${errorMessage(error)}`);
       this.retryKnownLoads();
     }
   }
@@ -467,6 +468,12 @@ export class Daemon {
     return known;
   }
 
+  // Identity and semantic registration both follow the known list.
+  private refreshRegistrations(): void {
+    this.host.refreshIdentities();
+    this.host.refreshSemanticRegistrations();
+  }
+
   private saveKnown(known = this.known): void {
     writeKnown(this.paths, known);
     this.cacheRegistryReadable = true;
@@ -489,8 +496,7 @@ export class Daemon {
     for (const used of this.connections.values()) {
       for (const path of used) if (!shouldRetainKnownInstance(path)) used.delete(path);
     }
-    this.host.refreshIdentities();
-    this.host.refreshSemanticRegistrations();
+    this.refreshRegistrations();
     if (collectCaches) void this.collectSemanticCaches();
   }
 
@@ -501,8 +507,7 @@ export class Daemon {
     this.known.push(...added);
     this.saveKnown();
     void this.cacheOperation(() => this.semanticCaches.register(added));
-    this.host.refreshIdentities();
-    this.host.refreshSemanticRegistrations();
+    this.refreshRegistrations();
     this.loadKnown();
   }
 
@@ -550,11 +555,9 @@ export class Daemon {
           for (const path of automatic) preparedAutomatic.add(path);
           continue;
         }
-        writeKnown(this.paths, known);
+        this.saveKnown(known);
         this.known = known;
-        this.cacheRegistryReadable = true;
-        this.host.refreshIdentities();
-        this.host.refreshSemanticRegistrations();
+        this.refreshRegistrations();
         this.loadKnown();
         this.reconsider();
         this.pruneKnown();

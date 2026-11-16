@@ -496,7 +496,7 @@ describe.skipIf(!existsSync(BUNDLE))('MCP server (agent output contract)', () =>
   });
 });
 
-// Forward sync is gated on the calendar helper being present, which resolveCalBin
+// Forward sync is gated on the calendar helper being present, which CalClient
 // only honors on darwin. Point ASIDE_CAL_BIN at a fake helper that answers each
 // request with a canned response and records it (JSON per line) for assertions.
 const CAL_OK = process.platform === 'darwin' && existsSync(BUNDLE);

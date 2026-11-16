@@ -1,5 +1,6 @@
 import type { WebappSidebarItem, WebappSidebarSection } from '../../cli/src/core/types';
 import { artifactHandle, assertArtifactId, assertAttachmentFilename, parseArtifactHandle } from '../../cli/src/core/artifact-reference';
+import { entityKey } from '../../cli/src/core/record-reference';
 import { buildRoute, parseRoute, type ViewState } from './route';
 import { parseEntityHandle } from './entity-reference';
 import { dateHandle, parseDateHandle } from './date-reference';
@@ -46,7 +47,7 @@ export function sidebarView(item: WebappSidebarItem, instance: string): ViewStat
 
 export function viewPin(instance: string, view: ViewState, label: string): WebappSidebarItem {
   const route = buildRoute(view);
-  const focusHandle = view.filter && `#${view.filter.type}/${view.filter.id}`;
+  const focusHandle = view.filter && entityKey(view.filter.type, view.filter.id);
   const nativeFocus = focusHandle && parseEntityHandle(focusHandle) ? focusHandle : undefined;
   if (view.doc) {
     const entity = view.doc.kind === 'artifact' ? artifactHandle(view.doc.id, view.doc.filename)
@@ -54,7 +55,7 @@ export function viewPin(instance: string, view: ViewState, label: string): Webap
       : `aside://${instance}/${buildRoute({ filter: view.doc.kind === 'detail' ? view.filter : null, doc: view.doc })}`;
     return { label, entity };
   }
-  if (view.filter?.type === 'entry') return { label, entity: `#entry/${view.filter.id}` };
+  if (view.filter?.type === 'entry') return { label, entity: entityKey('entry', view.filter.id) };
   const layers = [view.source, view.filter, view.search, view.range, view.order].filter(Boolean).length;
   const timeline = layers > 1 || view.order || view.jump || view.filter && !nativeFocus || view.search?.startsWith('#') || view.search?.startsWith('aside://') ? `aside://${instance}/${route}`
     : view.source ?? nativeFocus
@@ -75,11 +76,6 @@ export function pinMatches(item: WebappSidebarItem, instance: string, view: View
 }
 
 // Pure list transformation. The browser and agent persist the same declaration.
-export function toggleViewPin(sections: readonly WebappSidebarSection[], instance: string, view: ViewState, label: string): WebappSidebarSection[] {
-  const exists = sections.some(section => section.items.some(item => pinMatches(item, instance, view)));
-  return setViewPinned(sections, instance, view, label, !exists);
-}
-
 export function setViewPinned(sections: readonly WebappSidebarSection[], instance: string, view: ViewState, label: string, pinned: boolean): WebappSidebarSection[] {
   const next = sections.map(section => ({ ...section, items: section.items.filter(item => pinned || !pinMatches(item, instance, view)) }));
   if (!pinned) return next.filter(section => section.items.length || section.title);

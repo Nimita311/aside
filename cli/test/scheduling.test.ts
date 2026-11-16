@@ -43,6 +43,10 @@ describe('scheduling contract', () => {
     expect(schedulingIssues({ timezone: 'America/Los_Angeles', scheduled: '2026-03-08T01:30', duration: 'PT1H' })).toEqual([]);
     expect(schedulingIssues({ timezone: 'America/Los_Angeles', scheduled: '2026-03-08T01:45' })).toEqual([]);
   });
+  it('reports an untyped null schedule as an invalid date', () => {
+    const nullSchedule = { scheduled: null, timezone: 'Asia/Tokyo' } as unknown as Parameters<typeof schedulingIssues>[0];
+    expect(schedulingIssues(nullSchedule)).toEqual(['scheduled: "null" must be a real date YYYY-MM-DD or local time YYYY-MM-DDTHH:mm (00:00–23:59).']);
+  });
   it.each([{ scheduled: '2026-02-31' }, { deadline: '2026-05-15T25:00' }, { timezone: 'Mars/Olympus' }, { duration: 'PT0M' }])('rejects capture atomically for invalid fields %j', fields => {
     const f = fixture(), before = snapshot(f.dir);
     expect(() => handleCapture(f.store, { content: 'Bad scheduling', description: 'Bad', projects: [{ name: 'New project', description: 'New' }], actions: [{ name: 'Valid first', description: 'First' }, { name: 'Invalid second', description: 'Second', ...fields }] })).toThrow(Object.keys(fields)[0]);

@@ -1,6 +1,6 @@
 // Wire protocol between MCP (Node) and `aside-native calendar`. One JSON
 // object per line each way; every request is answered by exactly one response
-// carrying the same `id`. See cli/calendar-impl.md.
+// carrying the same `id`. Synchronization constraints: design/planning.md.
 
 // Machine-readable failure classes the helper attaches to error responses
 // (`{ id, ok: false, error, code? }`), so the MCP classifies failures without

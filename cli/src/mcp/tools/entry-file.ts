@@ -60,7 +60,7 @@ export function buildEntryBlock(
   return `\`\`\`entry\n${metaLines}${metaLines.endsWith('\n') ? '' : '\n'}\`\`\`\n\n${content}`;
 }
 
-// Render bare entry blocks into a weekly-file body. Per the note spec (design/note.md),
+// Render bare entry blocks into a weekly-file body. Per the note design (design/note.md),
 // every entry begins with a `---` preamble directly
 // attached to its ```entry fence (no blank line between), and consecutive entries are
 // separated by one blank line before the preamble (`content\n\n---\n```entry`).

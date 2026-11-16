@@ -1,4 +1,3 @@
-import { WebAuth } from '../src/web/auth.js';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -76,13 +75,12 @@ describe('localhost GraphQL queries', () => {
       data: async path => stores.get(path)!.snapshot(),
       query: vi.fn((path,args,signal) => executeGraphQL(stores.get(path)!, 'query', args, {signal, maxFields:10_000, maxResponseBytes:WEB_QUERY_MAX_RESPONSE_BYTES})),
     };
-    const auth = new WebAuth(join(fixture, 'auth'));
-    authorization = `Bearer ${auth.issue().token}`;
-    server = (await AsideWebServer.start(join(fixture,'app'), backend, 0, { auth, stateDirectory: join(fixture, 'auth') }))!;
+    authorization = '';
+    server = (await AsideWebServer.start(join(fixture,'app'), backend, 0))!;
   });
   afterEach(() => { server.close(); vi.restoreAllMocks(); });
   const post = (input: unknown, id = 'first', headers: Record<string,string> = {}, signal?: AbortSignal) => fetch(`http://127.0.0.1:${server.port}/-/api/instances/${id}/graphql`, {
-    method:'POST', headers:{Authorization: authorization, 'Content-Type':'application/json','X-Aside-Control':'1', ...headers}, body:JSON.stringify(input), signal,
+    method:'POST', headers:{Authorization: authorization, 'Content-Type':'application/json',...headers}, body:JSON.stringify(input), signal,
   });
   it('queries the exact instance independently of another instance with the same record ID', async () => {
     for (const instance of ['first','second']) {
@@ -97,8 +95,8 @@ describe('localhost GraphQL queries', () => {
     }
     expect(backend.query).not.toHaveBeenCalled();
   });
-  it('rejects foreign origins, opaque iframe origins, missing control headers and non-POST methods', async () => {
-    for (const headers of [{Origin:'null'},{Origin:'https://other.example'}, {'X-Aside-Control':''}]) expect((await post({query:'{__typename}'},'first',headers)).status).toBe(403);
+  it('rejects foreign origins, opaque iframe origins, non-JSON content types and non-POST methods', async () => {
+    for (const headers of [{Origin:'null'},{Origin:'https://other.example'}, {'Content-Type':'text/plain'}]) expect((await post({query:'{__typename}'},'first',headers)).status).toBe(403);
     expect((await fetch(`http://127.0.0.1:${server.port}/-/api/instances/first/graphql`, { headers: { Authorization: authorization } })).status).toBe(405);
     expect((await post({query:'{__typename}'},'missing')).status).toBe(404);
     expect(backend.query).not.toHaveBeenCalled();
@@ -146,7 +144,7 @@ describe('localhost GraphQL queries', () => {
     try {
       const response = await new Promise<{status: number; body: string}>((resolve, reject) => {
         client = httpRequest(`http://127.0.0.1:${server.port}/-/api/instances/first/graphql`, {
-          method: 'POST', headers: {Authorization: authorization, 'X-Aside-Control':'1', 'Content-Length':'100'},
+          method: 'POST', headers: {Authorization: authorization, 'Content-Type':'application/json', 'Content-Length':'100'},
         }, incoming => {
           let body = '';
           incoming.on('data', chunk => { body += chunk; });

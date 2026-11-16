@@ -3,6 +3,7 @@
 import { errorLine, errorResult, outputState, writeOutput } from './commands/output.js';
 import { CliParseError, parseCli } from './commands/options.js';
 import { InstancePathError } from './core/instance.js';
+import { errorMessage } from './core/error.js';
 
 let jsonRequested: boolean | undefined;
 let graphqlRequested = process.argv[2] === 'graphql';
@@ -43,7 +44,7 @@ main().then(() => { if (outputState().failedChecks) process.exitCode = 1; }).cat
     catch { /* Preserve the operation's original error if registry cleanup is unavailable. */ }
   }
   if (graphqlRequested) {
-    writeOutput(JSON.stringify({ errors: [{ message: e instanceof Error ? e.message : String(e) }] }, null, 2), true);
+    writeOutput(JSON.stringify({ errors: [{ message: errorMessage(e) }] }, null, 2), true);
     process.exitCode = 1;
     return;
   }

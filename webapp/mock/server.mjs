@@ -1,5 +1,5 @@
 import { createServer } from 'node:http';
-import { createHash, randomBytes, randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { readFile, realpath, mkdir, rm } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -125,6 +125,9 @@ export async function createMockServer({ port = 24801, host = '127.0.0.1', watch
     const fixture = name => runtime.loadFixture(name, { fixturesRoot: fixtureDir });
     const faultsFor = session => session.recovered ? {} : session.scenario.faults ?? {};
     const configFor = session => ({ id: session.id, scenario: { ...session.scenario, faults: faultsFor(session) }, theme: session.theme });
+    // Inline JSON must not be able to close its own script element.
+    const bootstrapScript = session => `<script>AsideMock.bootstrap(${JSON.stringify(configFor(session)).replace(/</g, '\\u003c')});</script>`;
+    const toGallery = res => { res.writeHead(302, { Location: '/__mock/' }); res.end(); };
     const release = session => { for (const resolve of session.waiters) resolve(); session.waiters.clear(); };
     const hold = (session, res) => new Promise(resolve => {
       const done = () => { session.waiters.delete(done); res.off('close', done); resolve(); };
@@ -139,6 +142,7 @@ export async function createMockServer({ port = 24801, host = '127.0.0.1', watch
         const { indexes } = snapshot;
         return { id: name, name: manifest.name ?? name, description: manifest.description,
           path: session.fixtures[name].root, address: name,
+          alias: `${name}~${createHash('sha256').update(session.id + ':' + name).digest('hex').slice(0, 16)}`,
           summary: { projects: { open: indexes.projects.filter(({ id }) => projects.has(id) && !projects.get(id).frontMatter.ended).length, total: indexes.projects.length },
             actions: { open: indexes.actions.filter(({ id }) => actions.has(id) && !actions.get(id).frontMatter.resolution).length, total: indexes.actions.length },
             entries: indexes.notes.length, latest: indexes.notes[0]?.id, lastEdited: session.scenario.now },
@@ -179,7 +183,7 @@ export async function createMockServer({ port = 24801, host = '127.0.0.1', watch
     const stream = (req, res, session, endpoint) => {
       if (faultsFor(session).connection) return fail(req, res, 503, 'Demonstration: event connection unavailable.');
       res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-store', Connection: 'keep-alive' });
-      res.write(`event: auth\ndata: ${JSON.stringify({ expiresAt: new Date(session.scenario.now).getTime() + 86_400_000 })}\n\n`);
+      res.write(': connected\n\n');
       if (endpoint === 'control') res.write('data: {"tab":1}\n\n');
       else res.write('data: []\n\n');
       session.streams.add(res);
@@ -207,7 +211,7 @@ export async function createMockServer({ port = 24801, host = '127.0.0.1', watch
           const id = randomUUID();
           const fixtures = Object.fromEntries(await Promise.all(runtime.FIXTURE_NAMES.map(async name => [name, await fixture(name)])));
           const session = { id, scenario, theme: input.theme === 'dark' ? 'dark' : 'light', fixtures, recovered: false,
-            key: randomBytes(32).toString('base64url'), waiters: new Set(), streams: new Set(), removed: new Set() };
+            waiters: new Set(), streams: new Set(), removed: new Set() };
           sessions.set(id, session);
           const route = new URL(scenario.route, base); route.searchParams.set('mockSession', id);
           return json(req, res, { ...configFor(session), url: route.pathname + route.search });
@@ -230,11 +234,10 @@ export async function createMockServer({ port = 24801, host = '127.0.0.1', watch
         if (pathname === '/__mock/elements/style.css') return send(req, res, 200, await readFile(path.join(mockDir, 'elements/style.css')), MIME['.css']);
         if (pathname === '/__mock/elements/') {
           const session = sessions.get(url.searchParams.get('mockSession'));
-          if (!session) { res.writeHead(302, { Location: '/__mock/' }); res.end(); return; }
+          if (!session) return toGallery(res);
           if (session.scenario.kind !== 'elements') return fail(req, res, 404, 'This session is not an elements preview.');
-          const config = JSON.stringify(configFor(session)).replace(/</g, '\\u003c');
-          const html = (await readFile(path.join(mockDir, 'elements/index.html'), 'utf8'))
-            .replace('<!-- mock-config -->', `<script>AsideMock.bootstrap(${config});</script>`);
+          const script = bootstrapScript(session);
+          const html = (await readFile(path.join(mockDir, 'elements/index.html'), 'utf8')).replace('<!-- mock-config -->', script);
           return send(req, res, 200, html, MIME['.html']);
         }
         const generated = pathname.startsWith('/-/assets/') ? `assets/${pathname.slice(10)}`
@@ -243,28 +246,17 @@ export async function createMockServer({ port = 24801, host = '127.0.0.1', watch
           const found = await containedFile(outputDir, generated);
           return found ? sendFile(req, res, found.filename, found.body) : fail(req, res, 404, 'Build asset not found.');
         }
-        if (pathname.startsWith('/-/files/')) {
-          const grant = runtime.parseFileGrantPath(pathname);
-          const session = grant && sessions.get(grant.session);
-          const instance = session && resolveInstance(session, grant.instance);
-          if (!grant || !session || !instance || !runtime.verifyFileGrant(session.key, grant.scope, grant.signature, grant.path)) return fail(req, res, 401, 'Invalid mock file grant.');
-          if (!['GET', 'HEAD'].includes(req.method)) return fail(req, res, 405, 'Use GET or HEAD.');
-          return file(req, res, session, instance.id, grant.path);
-        }
         if (pathname.startsWith('/-/api/')) {
           const headerId = req.headers['x-aside-mock-session'];
-          const tokenId = req.headers.authorization?.replace(/^Bearer mock:/, '');
-          const session = sessions.get(tokenId ?? headerId);
-          if (!session || (tokenId && headerId && tokenId !== headerId)) return fail(req, res, 401, 'Unknown mock session.');
+          const resourceAddress = /^\/-\/api\/instances\/([^/]+)/.exec(pathname)?.[1];
+          const session = sessions.get(headerId) ?? (resourceAddress && [...sessions.values()].find(value => catalogue(value).some(row => row.alias === resourceAddress)));
+          if (!session) return fail(req, res, 401, 'Unknown mock session.');
           if (!['GET', 'HEAD', 'POST'].includes(req.method)) return fail(req, res, 405, 'Method not allowed.');
+          if (faultsFor(session).access === 'loading') await hold(session, res);
+          if (res.destroyed) return;
           const faults = faultsFor(session);
-          if (pathname === '/-/api/auth') {
-            if (faults.auth === 'checking') await hold(session, res);
-            if (res.destroyed) return;
-            if (faultsFor(session).auth === 'required') return fail(req, res, 401, 'Mock authorization required.');
-            if (faultsFor(session).auth === 'offline') return fail(req, res, 503, 'Mock server is unavailable.');
-            return json(req, res, { expiresAt: new Date(session.scenario.now).getTime() + 86_400_000 });
-          }
+          if (faults.access === 'denied') return fail(req, res, 401, 'Deployment access denied.');
+          if (faults.access === 'offline') return fail(req, res, 503, 'Mock server is unavailable.');
           if (pathname === '/-/api/instances') {
             if (faults.catalogue === 'loading') await hold(session, res);
             if (res.destroyed) return;
@@ -296,7 +288,6 @@ export async function createMockServer({ port = 24801, host = '127.0.0.1', watch
             if (faultsFor(session).instance === 'error') return fail(req, res, 503, 'Demonstration: the instance could not load. Recover, then Retry.');
             return json(req, res, instance);
           }
-          if (endpoint === 'access') return json(req, res, { fileBase: `/-/files/${session.id}/${address}`, fileKey: session.key });
           if (endpoint === 'data') {
             const body = Buffer.from(JSON.stringify(snapshotFor(session, instance.id)));
             return sendFile(req, res, 'snapshot.json', body);
@@ -304,7 +295,7 @@ export async function createMockServer({ port = 24801, host = '127.0.0.1', watch
           if (endpoint === 'sidebar') {
             if (req.method !== 'POST') return fail(req, res, 405, 'Use POST.');
             const origin = req.headers.origin, site = req.headers['sec-fetch-site'];
-            if (req.headers['x-aside-control'] !== '1' || origin !== undefined && origin !== base
+            if (!/^application\/json(?:\s*;|$)/i.test(req.headers['content-type'] ?? '') || origin !== undefined && origin !== base
               || origin === undefined && site !== undefined && !['same-origin', 'none'].includes(site)) return fail(req, res, 403, 'Forbidden.');
             if (faults.operations === 'error') return fail(req, res, 503, 'Demonstration: could not save the sidebar.');
             const input = await readJson(req);
@@ -331,11 +322,11 @@ export async function createMockServer({ port = 24801, host = '127.0.0.1', watch
         // Cold loads use the actual shell and route grammar. Mock setup runs
         // synchronously before the unchanged app module registers its init.
         const session = sessions.get(url.searchParams.get('mockSession'));
-        if (!session) { res.writeHead(302, { Location: '/__mock/' }); res.end(); return; }
-        const config = JSON.stringify(configFor(session)).replace(/</g, '\\u003c');
+        if (!session) return toGallery(res);
+        const script = bootstrapScript(session);
         let html = await readFile(path.join(webappDir, 'index.html'), 'utf8');
         html = html.replace('<script type="module" src="/-/assets/app.js"></script>',
-          `<script src="/__mock/environment.js"></script>\n<script>AsideMock.bootstrap(${config});</script>\n<script type="module" src="/-/assets/app.js"></script>`);
+          `<script src="/__mock/environment.js"></script>\n${script}\n<script type="module" src="/-/assets/app.js"></script>`);
         send(req, res, 200, html, MIME['.html']);
       } catch (error) { fail(req, res, error.status ?? 500, error.message ?? 'Mock server error.'); }
     });

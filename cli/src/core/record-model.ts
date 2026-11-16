@@ -71,7 +71,7 @@ export function buildRelations(records: RecordCollection, sources: readonly Arti
   // filtered flow and its entry count include the entries a filter can be
   // engaged from. Co-occurrence and asset links stay metadata-only: those
   // read "tagged together", the design's source of truth for relations.
-  for (const entry of [...records.entries].sort((a, b) => descending(a.meta.created, b.meta.created))) {
+  for (const entry of [...records.entries].sort(newestFirst)) {
     const { created, projects = [], actions = [] } = entry.meta;
     const allProjects = entryEntityIds(entry, 'project');
     const allActions = entryEntityIds(entry, 'action');
@@ -156,3 +156,4 @@ export function buildRelations(records: RecordCollection, sources: readonly Arti
 }
 
 function descending(a: string, b: string): number { return a < b ? 1 : a > b ? -1 : 0; }
+export function newestFirst(a: Entry, b: Entry): number { return descending(a.meta.created, b.meta.created); }

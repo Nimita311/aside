@@ -15,7 +15,6 @@ import {normalizeMutationArguments} from '../src/graphql/inputs.js';
 import {prepareAutomationPrompts} from '../src/graphql/automation-prompts.js';
 import {SemanticSearchService} from '../src/semantic/search.js';
 import {AsideWebServer} from '../src/web/server.js';
-import {WebAuth} from '../src/web/auth.js';
 
 const cleanup: Array<() => Promise<void>> = [];
 const project = '2026-10-30-owner', artifact = '2026-10-30-instructions', action = '2026-10-30-scheduled';
@@ -193,28 +192,26 @@ describe('shared source ownership contracts', () => {
     expectReadOwnership(f);
   });
 
-  it('enforces the same read contract through authenticated browser HTTP routes', async () => {
+  it('enforces the same read contract through browser HTTP routes', async () => {
     const f = await fixture();
     vi.useRealTimers();
-    const auth = new WebAuth(join(f.home, 'auth'));
-    const authorization = `Bearer ${auth.issue().token}`;
     const server = (await AsideWebServer.start(join(f.home, 'app'), {
       instances: () => f.host.availableInstances([f.root]), summary: path => f.host.summary(path),
       register: async () => null, remove: () => {}, load: path => {f.host.load(path);},
       years: path => f.host.years(path), data: (path, refresh) => f.host.data(path, refresh),
       query: (path, args, signal) => f.host.webQuery(path, args, signal),
-    }, 0, {auth, stateDirectory: join(f.home, 'auth')}))!;
+    }, 0))!;
     try {
       const base = `http://127.0.0.1:${server.port}/-/api/instances`;
       for (const suffix of ['', '/ownership-contract', '/ownership-contract/years', '/ownership-contract/data']) {
-        const response = await fetch(base + suffix, {headers: {Authorization: authorization}});
+        const response = await fetch(base + suffix, {});
         expect(response.status).toBe(200);
         const result = await response.json();
         if (!suffix) expect(result).toEqual([expect.objectContaining({name: 'Published instance'})]);
         if (suffix.endsWith('/years')) expect(result).toEqual(['2026']);
       }
       const response = await fetch(`${base}/ownership-contract/graphql`, {method: 'POST',
-        headers: {Authorization: authorization, 'Content-Type': 'application/json', 'X-Aside-Control': '1'},
+        headers: {'Content-Type': 'application/json'},
         body: JSON.stringify({query: `{project(id:"${project}"){body}}`}),
       });
       expect(response.status).toBe(200);
@@ -279,7 +276,6 @@ describe('shared source ownership contracts', () => {
   it('allows only the requested raw attachment and its path checks when serving bytes', async () => {
     const f = await attachmentFixture();
     vi.useRealTimers();
-    const auth = new WebAuth(join(f.home, 'auth')), authorization = `Bearer ${auth.issue().token}`;
     access.protect([f.root]);
     await access.allow({paths: [join(f.root, 'artifacts'), join(f.root, 'artifacts', '2026'), f.directory, f.attachment],
       operations: ['read'], reason: 'Serve the explicitly requested attachment bytes with managed-path checks'}, async () => {
@@ -288,10 +284,10 @@ describe('shared source ownership contracts', () => {
         register: async () => null, remove: () => {}, load: path => {f.host.load(path);},
         years: path => f.host.years(path), data: (path, refresh) => f.host.data(path, refresh),
         query: (path, args, signal) => f.host.webQuery(path, args, signal),
-      }, 0, {auth, stateDirectory: join(f.home, 'auth')}))!;
+      }, 0))!;
       try {
         const response = await fetch(`http://127.0.0.1:${server.port}/-/api/instances/ownership-contract/files/artifacts/2026/${artifact}/instructions.txt`,
-          {headers: {Authorization: authorization}});
+          {});
         expect(response.status).toBe(200);
         expect(await response.text()).toBe('Published attachment instructions.');
       } finally {server.close();}

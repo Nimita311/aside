@@ -165,11 +165,13 @@ export function handleQueryArtifacts(store: Store, args: QueryArtifactsArgs, con
   if (args.projects) pushRelationFilter(filters, args.projects, item => store.getProjectsForArtifact(item.id));
   if (args.actions) pushRelationFilter(filters, args.actions, item => store.getActionsForArtifact(item.id));
   pushDateFilters(filters, args.created_from, args.created_to, item => item.artifact.frontMatter.created, 'created');
+  const detail = (item: Item) => [item.id, item.artifact, store.getProjectsForArtifact(item.id), store.getActionsForArtifact(item.id),
+    store.getArtifactBacklinks(item.id), indexMap.get(item.id)?.description, store.getAttachmentFiles(item.id)] as const;
   return runQuery(items, args, {
     filters,
     searchTexts: item => [item.artifact.frontMatter.name, indexMap.get(item.id)?.description ?? '', item.artifact.body],
-    formatFull: item => formatArtifactFull(item.id, item.artifact, store.getProjectsForArtifact(item.id), store.getActionsForArtifact(item.id), store.getArtifactBacklinks(item.id), indexMap.get(item.id)?.description, store.getAttachmentFiles(item.id)),
-    formatMeta: item => formatArtifactMeta(item.id, item.artifact, store.getProjectsForArtifact(item.id), store.getActionsForArtifact(item.id), store.getArtifactBacklinks(item.id), indexMap.get(item.id)?.description, store.getAttachmentFiles(item.id)),
+    formatFull: item => formatArtifactFull(...detail(item)),
+    formatMeta: item => formatArtifactMeta(...detail(item)),
     formatIndex: item => formatArtifactIndex(indexMap.get(item.id) ?? { id: item.id, description: item.artifact.frontMatter.name }),
     emptyIds: args.ids?.length === 0,
     issues: store.getIssues(),

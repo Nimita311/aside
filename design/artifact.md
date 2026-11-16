@@ -6,7 +6,7 @@ Artifacts are edited in place; their stable handles open the latest content. Git
 
 ## Identity and storage
 
-Markdown records live at `artifacts/<year>/<id>.md`. IDs follow the [entity identity rules](identity.md): `YYYY-MM-DD-{slug-of-name}`, derived at creation. The ID and creation timestamp remain fixed when the name or content changes.
+Markdown records live at `artifacts/<year>/<id>.md`. IDs follow the [entity identity rules](runtime.md#record-identity): `YYYY-MM-DD-{slug-of-name}`, derived at creation. The ID and creation timestamp remain fixed when the name or content changes.
 
 An optional sibling directory with the same ID holds attachments.
 
@@ -87,6 +87,6 @@ The rule is evaluated from the current body and attachment index. Adding a secon
 
 MCP creates, queries, updates, and shows artifacts, maintains indexes, and imports or removes attachments. It reconciles the attachment index when loading an instance, after file writes, and when external file changes are observed. Only immediate regular files belong to the index; subdirectories, symlinks, and temporary import files are excluded. Index reconciliation preserves authored content and custom front matter. Source paths are temporary import inputs. Metadata/full queries and create/update receipts expose each indexed attachment’s exact filename, canonical handle, and validated absolute path to its saved copy. Only existing ordinary regular files contained in the managed artifact directory and instance receive paths; missing or invalid files receive diagnostics. Agents may read those paths with existing file or format-specific tools, without bypassing MCP for record operations or attachment changes. Paths are current retrieval metadata, never persisted references or a promise of immutable content or continued existence. Validation checks record identity, attachment index consistency, references, and referenced files.
 
-The webapp includes artifacts in search and uses the existing reader. It lists attachments from front matter and fetches their content only when selected or referenced. The file server does not enumerate attachment directories. HTML attachments open as sandboxed webpage previews with [instance query access](../webapp/spec.md#iframe-graphql). Markdown iframe embeds can target attachment handles or external pages. See [webpage embeds](../webapp/spec.md#webpage-embeds) for authoring and isolation.
+The webapp includes artifacts in search and previews attachments in the reader. Markdown iframe embeds can target attachment handles or external pages. HTML authoring and SDK behavior follow the [interface design](interfaces.md#artifact-sdk).
 
 Existing saved content can be promoted into artifact records.

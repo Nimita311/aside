@@ -45,7 +45,7 @@ export async function settlePreview(target: HTMLElement, timeout = 15_000): Prom
       return (animation.pending || animation.playState === 'running') && typeof end === 'number' && Number.isFinite(end);
     });
     const loadingMedia = mediaPending() || doc.fonts?.status === 'loading';
-    const surfaces = [target, ...doc.querySelectorAll<HTMLElement>('#flow-scroll, #doc-body, #side-panel')];
+    const surfaces = [target, ...doc.querySelectorAll<HTMLElement>('#flow-scroll, #side-panel')];
     const geometry = surfaces.map(element => {
       const rect = element.getBoundingClientRect();
       return [rect.x, rect.y, rect.width, rect.height, element.scrollTop, element.scrollHeight].join(',');

@@ -1,4 +1,4 @@
-// The daemon protocol's shapes (see cli/spec.md, Daemon). `hello` and
+// Build replacement follows design/runtime.md#process-lifetime. `hello` and
 // `shutdown` are the fixed core: they keep their shape across releases,
 // so any client can identify and replace any daemon.
 import { BUILT_AT, VERSION } from '../version.js';

@@ -1,0 +1,714 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Entity styles · Aside</title>
+<style>
+:root {
+  color-scheme: light;
+  --color-bg: #fff;
+  --color-text: #1f2328; --color-text-secondary: #656d76; --color-border: #d1d9e0; --color-border-subtle: #e8ecf0; --color-accent: #0969da;
+  --project-bg: #ddf4ff; --project-fg: #0550ae; --action-bg: #dafbe1; --action-fg: #116329; --closed-bg: #eef1f5;
+  --selection-tint: color-mix(in srgb,var(--color-text) 12%,transparent);
+  --font-body: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans", Helvetica, Arial, sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+html[data-theme="dark"] {
+  color-scheme: dark;
+  --color-bg: #0d1117;
+  --color-text: #e6edf3; --color-text-secondary: #919ba7; --color-border: #30363d; --color-border-subtle: #21262d; --color-accent: #58a6ff;
+  --project-bg: rgba(56,139,253,.15); --project-fg: #79c0ff; --action-bg: rgba(63,185,80,.15); --action-fg: #7ee787; --closed-bg: rgba(110,118,129,.15);
+}
+* { box-sizing: border-box; }
+html { scroll-behavior: smooth; scroll-padding-top: 24px; }
+body { margin: 0; padding: 48px 24px 64px; background: var(--color-bg); color: var(--color-text); font: 400 14px/20px var(--font-body); -webkit-font-smoothing: antialiased; }
+main { max-width: 1120px; margin: 0 auto; display: grid; gap: 48px; }
+h1, h2, h3, h4, p { margin: 0; }
+h1 { font: 600 40px/48px var(--font-body); letter-spacing: -.025em; }
+h2 { font: 600 24px/32px var(--font-body); letter-spacing: -.01em; }
+h3 { font: 500 16px/24px var(--font-body); }
+.hero { display: grid; gap: 16px; }
+.eyebrow, .section-no { color: var(--color-text-secondary); font: 500 11px/16px var(--font-mono); letter-spacing: .08em; text-transform: uppercase; }
+.lede { font: 400 20px/28px var(--font-body); color: var(--color-text-secondary); }
+.hero-bottom { display: flex; flex-wrap: wrap; gap: 16px 24px; align-items: center; justify-content: space-between; }
+nav { display: flex; flex-wrap: wrap; gap: 10px 20px; }
+a { color: var(--color-accent); text-underline-offset: 3px; }
+nav a { color: var(--color-text-secondary); text-decoration: none; }
+nav a:hover { color: var(--color-text); text-decoration: underline; }
+section { min-width: 0; }
+.section-heading { display: flex; align-items: baseline; flex-wrap: wrap; gap: 8px 12px; margin-bottom: 20px; }
+.section-heading .section-note { margin-left: auto; color: var(--color-text-secondary); font: 400 12px/20px var(--font-body); }
+.controls { display: flex; flex-wrap: wrap; align-items: center; gap: 12px 20px; }
+.controls label { display: flex; align-items: center; gap: 8px; color: var(--color-text-secondary); font: 400 12px/20px var(--font-body); }
+select { font: inherit; color: var(--color-text); }
+select { border: 1px solid var(--color-border); border-radius: 4px; padding: 5px 8px; background: var(--color-bg); }
+:focus-visible { outline: 2px solid var(--color-accent); outline-offset: 3px; }
+.muted, .caption { color: var(--color-text-secondary); }
+.caption { font: 400 12px/20px var(--font-body); }
+.philosophy-points { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 24px 40px; }
+.philosophy-point { min-width: 0; display: grid; gap: 8px; border-top: 1px solid var(--color-border-subtle); padding-top: 16px; }
+.philosophy-point p { max-width: 52ch; color: var(--color-text-secondary); }
+.live-controls { margin-bottom: 24px; }
+.context-specimens { display: grid; gap: 28px; }
+.context-sample { display: grid; grid-template-columns: 140px minmax(0,1fr); gap: 24px; align-items: start; padding-top: 20px; border-top: 1px solid var(--color-border-subtle); }
+.context-sample > * { min-width: 0; }
+.specimen-label { color: var(--color-text-secondary); font: 400 12px/20px var(--font-body); }
+.context-sample .prose, .context-sample .rows { max-width: 720px; }
+.title-sample { font: 500 20px/28px var(--font-body); }
+.prose { font: 400 16px/26px var(--font-body); overflow-wrap: anywhere; }
+.prose > * + * { margin-top: 16px; }
+.prose h3 { font: 600 24px/32px var(--font-body); }
+.prose strong, .prose b { font-weight: 600; }
+.prose ul { padding-left: 20px; }
+.prose li + li { margin-top: 6px; }
+.prose blockquote { margin-left: 0; padding-left: 16px; border-left: 2px solid var(--color-border); }
+.prose table { width: 100%; border-collapse: collapse; font: 400 14px/22px var(--font-body); }
+.prose th, .prose td { text-align: left; padding: 10px 8px; border-bottom: 1px solid var(--color-border-subtle); vertical-align: top; }
+.prose th { padding-left: 0; width: 70px; color: var(--color-text-secondary); font-weight: 400; }
+.prose .caption { font: 400 12px/20px var(--font-body); }
+.metadata { display: flex; flex-wrap: wrap; gap: 6px; }
+.rows { display: grid; gap: 2px; }
+.interaction-table { display: grid; border-top: 1px solid var(--color-border); }
+.interaction-heading, .interaction-line { display: grid; grid-template-columns: 140px repeat(5,minmax(0,1fr)); gap: 20px; align-items: center; padding: 16px 0; }
+.interaction-heading { color: var(--color-text-secondary); font: 400 12px/16px var(--font-body); }
+.interaction-line { border-top: 1px solid var(--color-border-subtle); }
+.interaction-label { color: var(--color-text-secondary); font: 400 12px/20px var(--font-body); }
+.interaction-cell { min-width: 0; }
+.interaction-cell.prose { display: block; }
+.state-table { display: grid; gap: 0; border-top: 1px solid var(--color-border); }
+.state-heading, .state-line { display: grid; grid-template-columns: 160px minmax(0,1fr) minmax(0,1.2fr) minmax(0,1.2fr); gap: 16px; align-items: center; }
+.state-heading { color: var(--color-text-secondary); font: 400 12px/16px var(--font-body); padding: 12px 0; }
+.state-line { padding: 16px 0; border-top: 1px solid var(--color-border-subtle); }
+.state-line > * { min-width: 0; }
+.state-name { font: 500 12px/18px var(--font-body); }
+.state-name small { display: block; color: var(--color-text-secondary); font: 400 11px/16px var(--font-body); }
+.state-slot { min-width: 0; }
+.state-slot[data-form="inline"] { font: 400 14px/22px var(--font-body); }
+.details-grid { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 12px 24px; margin-top: 16px; }
+details summary { cursor: pointer; color: var(--color-text-secondary); }
+.rule { display: flex; gap: 16px; justify-content: space-between; padding-bottom: 8px; border-bottom: 1px solid var(--color-border-subtle); }
+.rule span { color: var(--color-text-secondary); }
+.rule code { font: 400 12px/20px var(--font-mono); text-align: right; }
+.sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+/* One component vocabulary serves every context. */
+.ref { color: var(--color-text); text-decoration: none; }
+a.ref { cursor: pointer; }
+.ref .entity-icon { color: var(--color-text-secondary); flex: none; }
+.ref[data-kind="project"] .entity-icon { color: var(--project-fg); }
+.ref[data-kind="action"] .entity-icon { color: var(--action-fg); }
+.ref-inline, .ref-row { border-radius: 4px; }
+.ref-inline { display: inline; color: inherit; font: inherit; -webkit-box-decoration-break: clone; box-decoration-break: clone; }
+.ref-inline .label { text-decoration: underline; text-decoration-color: var(--color-border); text-decoration-thickness: 1px; text-underline-offset: 3px; }
+.ref-inline:is(.is-selected,.is-selected-preview) .label { text-decoration-line: none; }
+.ref-inline .entity-icon, .ref-pill .entity-icon { width: max(10px,.75em); height: max(10px,.75em); }
+.ref-inline .entity-icon { vertical-align: -.05em; margin-right: .25em; }
+a.ref-inline.is-cohovered .label, .ref-inline.is-hover-preview .label { text-decoration-line: underline; text-decoration-color: currentColor; }
+.ref-pill { display: inline-flex; align-items: center; gap: .25em; max-width: 100%; border-radius: 100px; padding: 2px 6px; font: 500 12px/16px var(--font-body); vertical-align: middle; }
+.ref-pill .label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ref-pill[data-kind="project"] { background: var(--project-bg); color: var(--project-fg); }
+.ref-pill[data-kind="action"] { background: var(--action-bg); color: var(--action-fg); }
+.ref-pill.is-closed { background: var(--closed-bg); }
+a.ref-pill.is-cohovered, .ref-pill.is-hover-preview { outline: 1px solid var(--color-border); outline-offset: 1px; }
+.ref-row { display: flex; align-items: flex-start; gap: 8px; padding: 6px; margin-inline: -6px; min-width: 0; font: 400 14px/20px var(--font-body); }
+.ref-row .label { min-width: 0; overflow-wrap: anywhere; }
+a.ref-row.is-cohovered, .ref-row.is-hover-preview { background: color-mix(in srgb,var(--color-text) 4%,transparent); }
+.ref-identity { display: flex; align-items: flex-start; gap: 8px; min-width: 0; user-select: text; }
+.ref-row .entity-icon, .ref-identity .entity-icon { width: 1em; height: 1em; margin-top: calc((1lh - 1em) / 2); }
+.ref-identity .label { min-width: 0; overflow-wrap: anywhere; }
+.ref:not(.ref-inline).is-closed .label { color: var(--color-text-secondary); }
+.ref:not(.ref-inline).is-cancelled .label { text-decoration-line: line-through; text-decoration-thickness: 1px; }
+a.ref.is-selected, .ref.is-selected-preview { background-image: linear-gradient(var(--selection-tint),var(--selection-tint)); }
+a.ref-inline.is-selected, .ref-inline.is-selected-preview { box-shadow: 0 0 0 2px var(--selection-tint); }
+a.ref:focus-visible, .ref.is-focus-preview { outline: 2px solid var(--color-accent); outline-offset: 3px; }
+/* Established icon drawings and state layers. */
+@property --icon-on { syntax: "<number>"; inherits: true; initial-value: 0; }
+.entity-icon { overflow: visible; --icon-stroke: 2; --icon-motion: 0ms; }
+.entity-icon .body {
+  fill: currentColor; fill-opacity: 0;
+  stroke: currentColor; stroke-width: var(--icon-stroke); stroke-linecap: round; stroke-linejoin: round;
+  transform-box: view-box;
+  transition: fill-opacity var(--icon-motion), stroke-dasharray var(--icon-motion),
+    stroke-dashoffset var(--icon-motion), transform var(--icon-motion), opacity var(--icon-motion);
+}
+.entity-icon.filled .body { fill-opacity: 1; }
+.entity-icon .m {
+  fill: none; stroke: currentColor; stroke-width: var(--icon-stroke); stroke-linecap: round; stroke-linejoin: round;
+  opacity: var(--icon-on); stroke-dasharray: 1 1; stroke-dashoffset: calc(1 - var(--icon-on));
+  transform-box: view-box;
+  transition: --icon-on var(--icon-motion), transform var(--icon-motion);
+}
+.entity-icon .m.bold { stroke-width: calc(var(--icon-stroke) * 1.5); }
+.entity-icon .m.fill { fill: currentColor; stroke-dasharray: none; }
+/* Letters fade rather than draw on: a dash would end at the D's closing
+   corner and leave it notched. */
+.entity-icon .m.letters { stroke-linecap: butt; stroke-linejoin: miter; stroke-dasharray: none; }
+.entity-icon.filled .lay .m.in { opacity: 0; }
+.entity-icon .knock .m { stroke: #000; opacity: 0; }
+.entity-icon .knock .m.fill { fill: #000; }
+.entity-icon.filled .knock .m { opacity: var(--icon-on); }
+.entity-icon .gap .m { stroke: #000; stroke-width: calc(var(--icon-stroke) * 2.5); }
+.entity-icon .gap .m.fill { fill: #000; }
+.entity-icon .occ .o {
+  fill: #000; stroke: #000; stroke-width: calc(var(--icon-stroke) * 2); transform-box: view-box;
+  transition: transform var(--icon-motion), opacity var(--icon-motion);
+}
+@media (prefers-reduced-motion: reduce) { .entity-icon { --icon-motion: 0ms; } }
+
+
+:root {
+  --sys-linear-fill: #f1f1f3; --sys-linear-project: #5e6ad2; --sys-linear-issue: #b08410;
+  --sys-google-fill: #e8eaed; --sys-google-ink: #202124; --sys-google-icon: #5f6368;
+  --sys-notion-rule: #d9d9d6; --sys-smart-link: #1868db; --sys-smart-border: #dcdfe4;
+}
+html[data-theme="dark"] {
+  --sys-linear-fill: #25262b; --sys-linear-project: #a49bff; --sys-linear-issue: #d4b35a;
+  --sys-google-fill: #303134; --sys-google-ink: #e8eaed; --sys-google-icon: #bdc1c6;
+  --sys-notion-rule: #4a4a48; --sys-smart-link: #85b8ff; --sys-smart-border: #454a53;
+}
+#other-systems .sys-gallery { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 12px; }
+#other-systems .sys-card { min-width: 0; display: grid; align-content: start; gap: 12px; padding: 20px; background: var(--color-bg); border: 1px solid var(--color-border-subtle); border-radius: 6px; }
+#other-systems .sys-card h3 { margin: 0; color: var(--color-text-secondary); font: 500 14px/20px var(--font-body); }
+#other-systems .sys-prose { margin: 0; color: var(--color-text); font: 400 16px/28px var(--font-body); overflow-wrap: anywhere; }
+#other-systems .sys-ref { color: var(--color-text); }
+#other-systems .sys-chip { display: inline-flex; align-items: center; gap: 4px; max-width: 100%; vertical-align: -.16em; font-size: .875em; line-height: 20px; padding: 0 5px; }
+#other-systems .sys-chip > span { min-width: 0; overflow-wrap: anywhere; }
+#other-systems .sys-icon { display: inline-block; width: 1em; height: 1em; flex: none; fill: none; stroke: currentColor; stroke-width: 1.25; stroke-linecap: round; stroke-linejoin: round; }
+#other-systems .sys-linear { border-radius: 4px; background: var(--sys-linear-fill); font-weight: 500; }
+#other-systems .sys-project-color { color: var(--sys-linear-project); }
+#other-systems .sys-issue-color { color: var(--sys-linear-issue); }
+#other-systems .sys-google { border-radius: 100px; background: var(--sys-google-fill); color: var(--sys-google-ink); padding: 1px 8px; }
+#other-systems .sys-google .sys-icon { color: var(--sys-google-icon); }
+#other-systems .sys-notion { font-weight: 500; text-decoration: underline; text-decoration-color: var(--sys-notion-rule); text-underline-offset: 3px; text-decoration-thickness: 1px; }
+#other-systems .sys-notion-icon { position: relative; display: inline-block; width: 1em; height: 1em; margin-right: .2em; vertical-align: -.12em; }
+#other-systems .sys-notion-icon .sys-icon { position: absolute; inset: 0; }
+#other-systems .sys-notion-icon .sys-arrow { position: absolute; width: .58em; height: .58em; left: -.14em; top: auto; bottom: -.08em; background: var(--color-bg); stroke-width: 1.8; }
+#other-systems .sys-github-issue { color: var(--color-accent); text-decoration: underline; text-underline-offset: 2px; }
+#other-systems .sys-github-person { font-weight: 600; text-decoration: underline; text-underline-offset: 2px; }
+#other-systems .sys-atlassian { border: 1px solid var(--sys-smart-border); border-radius: 6px; color: var(--sys-smart-link); }
+#other-systems .sys-defs { position: absolute; width: 0; height: 0; overflow: hidden; }
+@media (max-width: 640px) { #other-systems .sys-gallery { grid-template-columns: minmax(0,1fr); } }
+
+@media (max-width: 900px) {
+  .interaction-heading { position: absolute; width: 1px; height: 1px; padding: 0; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+  .interaction-line { grid-template-columns: repeat(2,minmax(0,1fr)); gap: 16px; }
+  .interaction-label { grid-column: 1 / -1; }
+  .interaction-cell::before { content: attr(data-state); display: block; margin-bottom: 8px; color: var(--color-text-secondary); font: 400 11px/16px var(--font-body); }
+}
+@media (max-width: 650px) {
+  body { padding: 28px 16px 40px; }
+  main { gap: 36px; }
+  h1 { font-size: 32px; line-height: 40px; }
+  .philosophy-points, .details-grid { grid-template-columns: minmax(0,1fr); }
+  .context-sample { grid-template-columns: minmax(0,1fr); gap: 12px; }
+  .interaction-line { grid-template-columns: minmax(0,1fr); }
+  .state-heading { position: absolute; width: 1px; height: 1px; padding: 0; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+  .state-line { grid-template-columns: repeat(2,minmax(0,1fr)); gap: 12px; }
+  .state-name { grid-column: 1 / -1; }
+  .state-slot::before { content: attr(data-label); display: block; color: var(--color-text-secondary); font: 400 11px/16px var(--font-body); margin-bottom: 8px; }
+  .state-slot:last-child { grid-column: 1 / -1; }
+}
+@media (pointer: coarse) { select { min-height: 44px; font-size: 16px; } .ref-row { min-height: 44px; padding-block: 12px; } }
+@media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } }
+@media print { body { padding: 0; } nav,.controls { display: none; } .sys-card { break-inside: avoid; } }
+</style>
+<body>
+<main>
+  <header class="hero">
+    <p class="eyebrow">Aside · Design reference</p>
+    <h1>Entity styles</h1>
+    <p class="lede">One identity. A form for each context.</p>
+    <div class="hero-bottom">
+      <nav aria-label="Document sections"><a href="#other-systems">Other systems</a><a href="#philosophy">Philosophy</a><a href="#contexts">Live specimens</a><a href="#states">States</a><a href="#interactions">Hover &amp; selection</a></nav>
+      <div class="controls"><label>Theme <select id="theme"><option value="light">Light</option><option value="dark">Dark</option></select></label></div>
+    </div>
+  </header>
+  <section id="other-systems">
+    <div class="section-heading"><span class="section-no">01</span><h2>Other systems</h2></div>
+    <svg class="sys-defs" aria-hidden="true" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <symbol id="sys-file" viewBox="0 0 16 16"><path d="M9.5 1.5h-6v13h9v-10zM9.5 1.5v3h3M5.5 7h5M5.5 9.5h5M5.5 12h3"/></symbol>
+    <symbol id="sys-project" viewBox="0 0 16 16"><path d="m8 1.5 6 3.2v6.6L8 14.5l-6-3.2V4.7zM2 4.7 8 8l6-3.3M8 8v6.5"/></symbol>
+    <symbol id="sys-issue" viewBox="0 0 16 16"><circle cx="8" cy="8" r="5.7"/><path d="M8 4.3V8l2.4 1.4"/></symbol>
+    <symbol id="sys-person" viewBox="0 0 16 16"><circle cx="8" cy="5" r="2.5"/><path d="M2.5 14v-1.2c0-2.2 2.2-3.5 5.5-3.5s5.5 1.3 5.5 3.5V14"/></symbol>
+    <symbol id="sys-arrow" viewBox="0 0 10 10"><path d="M1.5 8.5v-4h6M5 2l2.5 2.5L5 7"/></symbol>
+    <symbol id="sys-ticket" viewBox="0 0 16 16"><path d="m8 1.5 6.5 6.5L8 14.5 1.5 8zM6 5.5h4v5H6z"/></symbol>
+  </defs>
+</svg>
+<div class="sys-gallery">
+  <article class="sys-card">
+    <h3>Linear</h3>
+    <p class="sys-prose">Use <span class="sys-ref sys-chip sys-linear"><svg class="sys-icon sys-project-color" viewBox="0 0 16 16" aria-hidden="true"><use href="#sys-project"/></svg><span>Aurora launch</span></span> to plan <span class="sys-ref sys-chip sys-linear"><svg class="sys-icon sys-issue-color" viewBox="0 0 16 16" aria-hidden="true"><use href="#sys-issue"/></svg><span>AUR-142 Final review</span></span>.</p>
+  </article>
+  <article class="sys-card">
+    <h3>Google Docs / Sheets</h3>
+    <p class="sys-prose">Review <span class="sys-ref sys-chip sys-google"><svg class="sys-icon" viewBox="0 0 16 16" aria-hidden="true"><use href="#sys-file"/></svg><span>Launch checklist</span></span> with <span class="sys-ref sys-chip sys-google"><svg class="sys-icon" viewBox="0 0 16 16" aria-hidden="true"><use href="#sys-person"/></svg><span>Maya Chen</span></span>.</p>
+  </article>
+  <article class="sys-card">
+    <h3>Notion</h3>
+    <p class="sys-prose">Use <span class="sys-ref sys-notion"><span class="sys-notion-icon" aria-hidden="true"><svg class="sys-icon" viewBox="0 0 16 16"><use href="#sys-file"/></svg><svg class="sys-icon sys-arrow" viewBox="0 0 10 10"><use href="#sys-arrow"/></svg></span><span>Launch checklist</span></span> for <span class="sys-ref sys-notion"><span class="sys-notion-icon" aria-hidden="true"><svg class="sys-icon" viewBox="0 0 16 16"><use href="#sys-project"/></svg><svg class="sys-icon sys-arrow" viewBox="0 0 10 10"><use href="#sys-arrow"/></svg></span><span>Aurora launch</span></span>.</p>
+  </article>
+  <article class="sys-card">
+    <h3>GitHub</h3>
+    <p class="sys-prose">Track the review in <span class="sys-ref sys-github-issue">#142</span> with <span class="sys-ref sys-github-person">@maya</span>.</p>
+  </article>
+  <article class="sys-card">
+    <h3>Atlassian</h3>
+    <p class="sys-prose">Review <span class="sys-ref sys-chip sys-atlassian"><svg class="sys-icon" viewBox="0 0 16 16" aria-hidden="true"><use href="#sys-file"/></svg><span>Launch checklist</span></span> in <span class="sys-ref sys-chip sys-atlassian"><svg class="sys-icon" viewBox="0 0 16 16" aria-hidden="true"><use href="#sys-ticket"/></svg><span>AUR-142</span></span>.</p>
+  </article>
+</div>
+
+  </section>
+  <section id="philosophy">
+    <div class="section-heading"><span class="section-no">02</span><h2>Design philosophy</h2></div>
+    <div class="philosophy-points">
+      <article class="philosophy-point"><h3>Reading comes first</h3><p>References belong to the sentence. Names inherit its ink, font and emphasis so prose flows naturally.</p></article>
+      <article class="philosophy-point"><h3>Recognition lives in the icon</h3><p>Type color and lifecycle stay in a familiar icon, keeping identity recognizable across contexts.</p></article>
+      <article class="philosophy-point"><h3>Pills group metadata</h3><p>The field makes an entry’s project and action labels easy to scan.</p></article>
+    </div>
+  </section>
+  <section id="contexts">
+    <div class="section-heading"><span class="section-no">03</span><h2>Live specimens</h2><span class="section-note">Select a reference to see its title form.</span></div>
+    <div class="controls live-controls">
+      <label>Names <select id="names"><option value="short">Standard</option><option value="long">Long · Unicode</option></select></label>
+    </div>
+    <div class="context-specimens">
+      <article class="context-sample" id="inline"><h3 class="specimen-label">Prose &amp; typography</h3><div id="writing" class="prose"></div></article>
+      <article class="context-sample" id="pill"><h3 class="specimen-label">Timeline metadata</h3><div id="metadata-examples" class="metadata"></div></article>
+      <article class="context-sample" id="row"><h3 class="specimen-label">List references</h3><div id="list-examples" class="rows"></div></article>
+      <article class="context-sample" id="identity"><h3 class="specimen-label">Title</h3><h4 id="title-sample" class="title-sample"></h4></article>
+    </div>
+    <p id="title-announcement" class="sr-only" role="status"></p>
+  </section>
+  <section id="states">
+    <div class="section-heading"><span class="section-no">04</span><h2>Lifecycle</h2><span class="section-note">The icon carries schedule and resolution.</span></div>
+    <div class="state-table" role="table" aria-label="Lifecycle reference styles"><div class="state-heading" role="row"><span role="columnheader">State</span><span role="columnheader">Metadata</span><span role="columnheader">Prose</span><span role="columnheader">List</span></div><div id="state-examples" role="rowgroup" style="display: contents"></div></div>
+  </section>
+  <section id="interactions">
+    <div class="section-heading"><span class="section-no">05</span><h2>Hover &amp; selection</h2><span class="section-note">Hover is temporary. Selection persists.</span></div>
+    <div class="interaction-table" role="table" aria-label="Reference interaction styles">
+      <div class="interaction-heading" role="row"><span role="columnheader">Form</span><span role="columnheader">Rest</span><span role="columnheader">Hover</span><span role="columnheader">Selected</span><span role="columnheader">Selected + hover</span><span role="columnheader">Keyboard focus</span></div>
+      <div id="interaction-examples" role="rowgroup" style="display: contents"></div>
+    </div>
+  </section>
+  <details id="details">
+    <summary>Dimensions &amp; interaction</summary>
+    <div class="details-grid">
+      <div class="rule"><span>Text / metadata icon</span><code>0.75em · minimum 10px</code></div>
+      <div class="rule"><span>Prose alignment</span><code>−0.05em baseline</code></div>
+      <div class="rule"><span>List / title icon</span><code>1em · centered on first line</code></div>
+      <div class="rule"><span>Text / metadata gap</span><code>0.25em</code></div>
+      <div class="rule"><span>List / title gap</span><code>8px</code></div>
+      <div class="rule"><span>Prose text</span><code>Inherited ink and font · all states</code></div>
+      <div class="rule"><span>Underline</span><code>1px · 3px offset · selected: hover only</code></div>
+      <div class="rule"><span>Highlight corners</span><code>4px · metadata follows pill shape</code></div>
+      <div class="rule"><span>Highlight breathing room</span><code>2px around prose · 6px beside lists</code></div>
+      <div class="rule"><span>Keyboard focus</span><code>2px ring</code></div>
+      <div class="rule"><span>Title</span><code>selectable icon + name</code></div>
+      <div class="rule"><span>Postal-only location</span><code>inert · dashed pin</code></div>
+    </div>
+  </details>
+</main>
+<script>
+const EntityIcons = (() => {
+// The entity icon drawings — one notebook family drawn on Lucide's geometry
+// (lucide-static 1.66.0, ISC license): its 24-unit grid, its 2-unit stroke,
+// and its shapes for the notebook, the pencil, the bookmark, the ring and the
+// file page. The instance is the notebook; an entry is the pencil writing in
+// it; a project is a bookmark ribbon left in it; an action is the round
+// checkbox in its margin; artifacts and attachments are the pages kept with
+// it, keyed by how the reader renders them. Shapes are drawn in line, as
+// Lucide's are. Fill marks a state — the ring and the ribbon fill when their
+// work settles, the open instance's cover as it swings open — and gives a
+// media mark its weight.
+//
+// Smart elements — the dates and places content mentions — are not entities,
+// but they draw on the same grid, stroke and rules: a date is the calendar
+// page the notebook's days are kept on, a location the map pin.
+//
+// Each drawing is a set of layers back to front, each masked by the layers in
+// front of it, and marks — `in` marks sit on a layer (knocked out of it once
+// the body fills), `over` marks cut a gap through what they cross, `free`
+// marks draw as they are. A state shows marks and layers, swings or stacks
+// layers, and fills or empties the body. Every state of a drawing has the
+// same elements, so a state change rewrites only class and style attributes,
+// and the CSS transitions in style.css animate the morph. A few icons have a
+// second drawing for 13px and below, where detail closes up.
+//
+// Kept free of imports so the design demo can embed it as is.
+
+
+// Lucide's shapes: `circle`, `notebook`, `pencil-line`, `bookmark`, `file`,
+// `git-branch`, `calendar` and `map-pin`.
+const RING = 'M12 2a10 10 0 1 1 0 20a10 10 0 1 1 0-20Z';
+const NOTEBOOK = 'M6 2h12a2 2 0 0 1 2 2v16a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2Z';
+const PENCIL = 'M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.497z';
+const BOOKMARK = 'M17 3a2 2 0 0 1 2 2v15a1 1 0 0 1-1.496.868l-4.512-2.578a2 2 0 0 0-1.984 0l-4.512 2.578A1 1 0 0 1 5 20V5a2 2 0 0 1 2-2z';
+const PAGE = 'M6 22a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h8a2.4 2.4 0 0 1 1.704.706l3.588 3.588A2.4 2.4 0 0 1 20 8v12a2 2 0 0 1-2 2z';
+const FOLD = 'M14 2v5a1 1 0 0 0 1 1h5';
+// The page opened at the lower left for a large mark, as Lucide's own file
+// icons are (`file-chart-pie`, `file-video-camera`): the left border ends at
+// `left` and the bottom border starts at `bottom`, each stopping two units
+// short of the mark. A bottom at the corner leaves the whole bottom open.
+const openPage = (left        , bottom        ) => bottom >= 18
+  ? `M4 ${left}V4a2 2 0 0 1 2-2h8a2.4 2.4 0 0 1 1.706.706l3.588 3.588A2.4 2.4 0 0 1 20 8v12a2 2 0 0 1-2 2`
+  : `M${bottom} 22H18a2 2 0 0 0 2-2V8a2.4 2.4 0 0 0-.706-1.704l-3.588-3.588A2.4 2.4 0 0 0 14 2H6a2 2 0 0 0-2 2v${left - 4}`;
+const BRANCH = 'M15 6a9 9 0 0 0-9 9V3M18 3a3 3 0 1 1 0 6a3 3 0 1 1 0-6ZM6 15a3 3 0 1 1 0 6a3 3 0 1 1 0-6Z';
+const RINGS = 'M2 6h4M2 10h4M2 14h4M2 18h4';
+const CALENDAR = 'M5 3h14a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2Z';
+// The calendar opened at the lower right around a clock, as Lucide's
+// `calendar-clock` is: each border stops two units short of the face.
+const CALENDAR_OPEN = 'M21 7.338V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h2.338';
+// Lucide's pin, started at its crown so the dashes of a pending pin fall
+// symmetrically, one of them across the tip.
+const PIN = 'M12 2a8 8 0 0 1 8 8c0 4.993-5.539 10.193-7.399 11.799a1 1 0 0 1-1.202 0C9.539 20.193 4 14.993 4 10a8 8 0 0 1 8-8Z';
+
+// The open instance's cover swings half open about the rings, turning solid
+// against the first page.
+const SWING = 'scaleX(0.5) skewY(-14deg)';
+const HINGE = '4px 12px';
+// A collection's pages take Lucide's `files` places: the front page shrinks
+// up and right, and a second one steps out below and left.
+const STACK = { back: 'translate(0px, 5.5px) scale(0.75)', page: 'translate(6px, 0.5px) scale(0.75)' };
+
+// The settling tick is Lucide's check enlarged: cut out of a filled body it
+// reads smaller than the same tick drawn in ink.
+const RINGED                       = {
+  check: { d: 'm7.5 12 3 3 6-6', on: 'ring' },
+  hands: { d: 'M12 6v6l4 2', on: 'ring' },
+  slash: { d: 'M22 2 2 22', kind: 'over' },
+  arrow: { d: 'M10.5.5 12 2l-1.5 1.5', kind: 'free' },
+};
+// A cancelled ring takes Lucide's corner-to-corner slash, matching the
+// struck-through name; a recurring one opens into a loop arrow; a backlog one
+// breaks into the eight dashes of Lucide's `circle-dashed`.
+const ACTION_STATES                       = {
+  backlog: { marks: [], edge: ['3.65 3.85', 1.825] },
+  scheduled: { marks: [] },
+  slipped: { marks: ['hands'] },
+  done: { marks: ['check'], filled: true },
+  cancelled: { marks: ['slash'] },
+  recurring: { marks: ['arrow'], edge: ['51 9', 51] },
+};
+const PROJECT_STATES                       = { live: { marks: [] }, ended: { marks: ['check'], filled: true } };
+
+const ICONS                         = {
+  instance: {
+    initial: 'available',
+    // The first page sits behind the cover and shows as it swings open; a
+    // worktree gives the whole cover to the git branch.
+    full: {
+      layers: [
+        { id: 'leaves', d: NOTEBOOK, alt: true, occ: ['cover'] },
+        { id: 'cover', d: NOTEBOOK, origin: HINGE },
+      ],
+      marks: {
+        rings: { d: RINGS, kind: 'free' },
+        spine: { d: 'M16 2v20', on: 'cover' },
+        lines: { d: 'M14 8h3M14 12h4M14 16h2.5', on: 'leaves' },
+        branch: { d: 'M13.65 8.7a4.95 4.95 0 0 0-4.95 4.95V7.05M15.3 7.05a1.65 1.65 0 1 1 0 3.3a1.65 1.65 0 1 1 0-3.3ZM8.7 13.65a1.65 1.65 0 1 1 0 3.3a1.65 1.65 0 1 1 0-3.3Z', on: 'cover' },
+      },
+      states: {
+        available: { marks: ['rings', 'spine'] },
+        active: { marks: ['rings', 'lines'], show: ['leaves'], solid: ['cover'], move: { cover: SWING } },
+        worktree: { marks: ['rings', 'branch'] },
+      },
+    },
+    // At 13px and below the cover drops its spine and the open notebook its page
+    // lines; a worktree is Lucide's git branch on its own.
+    small: {
+      layers: [
+        { id: 'leaves', d: NOTEBOOK, alt: true, occ: ['cover'] },
+        { id: 'cover', d: NOTEBOOK, alt: true, origin: HINGE },
+      ],
+      marks: {
+        rings: { d: RINGS, kind: 'free' },
+        git: { d: BRANCH, kind: 'free' },
+      },
+      states: {
+        available: { marks: ['rings'], show: ['cover'] },
+        active: { marks: ['rings'], show: ['leaves', 'cover'], solid: ['cover'], move: { cover: SWING } },
+        worktree: { marks: ['git'] },
+      },
+    },
+  },
+  entry: {
+    initial: 'recorded',
+    full: {
+      layers: [{ id: 'pen', d: PENCIL }],
+      marks: {
+        ferrule: { d: 'm15 5 4 4', on: 'pen' },
+        eraser: { d: 'M15 5.013 17.188 2.825a2.819 2.819 0 0 1 3.986 3.987L19 8.986Z', on: 'pen', fill: true },
+        line: { d: 'M13 21h8', kind: 'free' },
+      },
+      states: { recorded: { marks: ['ferrule', 'eraser', 'line'] } },
+    },
+  },
+  project: {
+    initial: 'live',
+    full: { layers: [{ id: 'rib', d: BOOKMARK }], marks: { check: { d: 'm8 9.5 3 3 5-5', on: 'rib' } }, states: PROJECT_STATES },
+    // The settling tick grows bolder at 13px and below, where the standard one
+    // shrinks to a hairline.
+    small: { layers: [{ id: 'rib', d: BOOKMARK }], marks: { check: { d: 'm8 9.5 3 3 5-5', on: 'rib', weight: 'bold' } }, states: PROJECT_STATES },
+  },
+  action: {
+    initial: 'scheduled',
+    full: { layers: [{ id: 'ring', d: RING }], marks: RINGED, states: ACTION_STATES, edges: true },
+    small: {
+      layers: [{ id: 'ring', d: RING }],
+      marks: { ...RINGED, check: { d: 'm7.5 12 3 3 6-6', on: 'ring', weight: 'bold' } },
+      states: ACTION_STATES, edges: true,
+    },
+  },
+  content: {
+    initial: 'text',
+    // Lucide's file page at every size, its mark previewing what the reader
+    // opens. Text sits inside a closed page. A media mark or the PDF label is
+    // large, and the page opens around it the way Lucide's own file icons do,
+    // each opening cut to fit its mark.
+    full: {
+      layers: [
+        { id: 'back', d: PAGE, alt: true, occ: ['page'], origin: '0 0' },
+        { id: 'page', d: PAGE, alt: true, origin: '0 0' },
+        { id: 'open-pdf', d: openPage(11.5, 18), alt: true },
+        { id: 'open-image', d: openPage(13, 16), alt: true },
+        { id: 'open-video', d: openPage(8.75, 11), alt: true },
+        { id: 'open-audio', d: openPage(9, 13.5), alt: true },
+        { id: 'open-webpage', d: openPage(9.25, 13.75), alt: true },
+      ],
+      marks: {
+        fold: { d: FOLD, on: 'page' },
+        lines: { d: 'M10 9H8M16 13H8M16 17H8', on: 'page' },
+        // Drawn as strokes rather than text, so the label never joins the
+        // text of the link or row it labels.
+        pdf: { d: 'M2 22.5v-7h1.55a1.75 1.75 0 0 1 0 3.5H2M7.9 15.5h.2a3 3 0 0 1 0 6h-.2ZM13.7 22.5v-7h2.8M13.7 18.5h2.3', kind: 'free', weight: 'letters' },
+        sun: { d: 'M11 9a1.25 1.25 0 1 1 0 2.5a1.25 1.25 0 1 1 0-2.5Z', kind: 'free', fill: true },
+        land: { d: 'M1.5 22.5 6.5 15.5l3 4 1.5-1.5 1 4.5Z', kind: 'free', fill: true },
+        // Lucide's `play`, scaled into the corner.
+        play: { d: 'M2 13.7a1.2 1.2 0 0 1 1.805-1.037l7.198 4.199a1.2 1.2 0 0 1 .002 2.075l-7.2 4.2A1.2 1.2 0 0 1 2 22.1Z', kind: 'free', fill: true },
+        // Four bars, the second tallest, each to its side shorter.
+        wave: { d: 'M2.5 14.5v5M6 12v10M9.5 13.5v7M13 15.5v3', kind: 'free' },
+        // A pie with its slice pulled out: rich, interactive content. The
+        // slice stands far enough off that a gap survives the outline.
+        pie: { d: 'M6.5 17.5V13a4.5 4.5 0 1 0 4.5 4.5ZM10 14V9.5a4.5 4.5 0 0 1 4.5 4.5Z', kind: 'free', fill: true },
+      },
+      states: {
+        text: { marks: ['fold', 'lines'], show: ['page'] },
+        pdf: { marks: ['fold', 'pdf'], show: ['open-pdf'] },
+        image: { marks: ['fold', 'sun', 'land'], show: ['open-image'] },
+        video: { marks: ['fold', 'play'], show: ['open-video'] },
+        audio: { marks: ['fold', 'wave'], show: ['open-audio'] },
+        webpage: { marks: ['fold', 'pie'], show: ['open-webpage'] },
+        file: { marks: ['fold'], show: ['page'] },
+        collection: { marks: ['fold'], show: ['back', 'page'], move: STACK },
+      },
+    },
+  },
+  date: {
+    initial: 'day',
+    // Lucide's calendar page, its mark previewing the value: a day is the
+    // bare page, a range of days carries `calendar-range`'s two spans, and a
+    // clock time opens the page around the clock face, as `calendar-clock`
+    // does — the header stopping short of the face with the borders.
+    full: {
+      layers: [
+        { id: 'page', d: CALENDAR, alt: true },
+        { id: 'open', d: CALENDAR_OPEN, alt: true },
+      ],
+      marks: {
+        rings: { d: 'M8 2v3M16 2v3', on: 'page' },
+        head: { d: 'M3 9h18', on: 'page' },
+        stub: { d: 'M3 9h5.859', on: 'page' },
+        span: { d: 'M7 13h.01M11 13h6M7 17h6M17 17h.01', on: 'page' },
+        face: { d: 'M16 10a6 6 0 1 1 0 12a6 6 0 1 1 0-12Z', kind: 'free' },
+        hands: { d: 'M16 14v2.2l1.6 1', kind: 'free' },
+      },
+      states: {
+        day: { marks: ['rings', 'head'], show: ['page'] },
+        range: { marks: ['rings', 'head', 'span'], show: ['page'] },
+        time: { marks: ['rings', 'stub', 'face', 'hands'], show: ['open'] },
+      },
+    },
+  },
+  location: {
+    initial: 'geo',
+    // Lucide's map pin around its point. A postal address with no saved
+    // coordinates has no point yet: it pends, its edge breaking into dashes
+    // as a backlog ring's does — six, spaced by the ring's gap and long
+    // enough to keep the crown, the shoulders and the tip.
+    full: {
+      layers: [{ id: 'pin', d: PIN }],
+      marks: { point: { d: 'M12 7a3 3 0 1 1 0 6a3 3 0 1 1 0-6Z', on: 'pin' } },
+      states: {
+        geo: { marks: ['point'] },
+        postal: { marks: [], edge: ['5.6 4.4', 2.8] },
+      },
+      edges: true,
+    },
+  },
+};
+
+
+const SMALL_MAX = 13;
+
+const style = (props                                             )         => {
+  const text = Object.entries(props).filter(([, value]) => value !== undefined).map(([key, value]) => `${key}:${value}`).join(';');
+  return text ? ` style="${text}"` : '';
+};
+
+let nextMask = 0;
+
+// The icon's SVG markup in one state. Geometry and state names are constants
+// — never user data — so the markup is safe to set as innerHTML.
+function iconMarkup(kind          , state        , size        )         {
+  const icon = ICONS[kind];
+  const small = size <= SMALL_MAX && icon.small;
+  const drawing = small || icon.full;
+  const name = state in drawing.states ? state : icon.initial;
+  const pose = drawing.states[name];
+  const layerOf = new Map(drawing.layers.map(layer => [layer.id, layer]));
+  // Motion rides every element of a layer: its body, its occluder, its marks.
+  const motion = (id                    ) => {
+    const layer = id === undefined ? undefined : layerOf.get(id);
+    return layer?.origin ? { transform: pose.move?.[layer.id], 'transform-origin': layer.origin } : {};
+  };
+  const hidden = (layer       ) => layer.alt && !pose.show?.includes(layer.id) ? 0 : undefined;
+  const marks = Object.entries(drawing.marks);
+  const markEl = ([name, mark]                ) => {
+    const classes = ['m', mark.kind ?? 'in', mark.fill && 'fill', mark.weight].filter(Boolean).join(' ');
+    const attrs = style({ '--icon-on': pose.marks.includes(name) ? 1 : undefined, ...motion(mark.on) });
+    return `<path class="${classes}" d="${mark.d}"${mark.fill ? '' : ' pathLength="1"'}${attrs}/>`;
+  };
+  const gap = marks.filter(([, mark]) => mark.kind === 'over').map(markEl).join('');
+  const id = `entity-icon-${++nextMask}`;
+  let defs = '', layers = '';
+  drawing.layers.forEach((layer, index) => {
+    const occluders = drawing.layers.filter(front => layer.occ?.includes(front.id))
+      .map(front => `<path class="o" d="${front.d}"${style({ opacity: hidden(front), ...motion(front.id) })}/>`).join('');
+    const own = marks.filter(([, mark]) => (mark.kind ?? 'in') === 'in' && mark.on === layer.id).map(markEl).join('');
+    // A layer with nothing to hide, knock out or cut through needs no mask.
+    const masked = occluders || own || gap;
+    const [dash, offset] = pose.edge ?? ['60 0', 0];
+    const body = style({
+      opacity: hidden(layer),
+      'fill-opacity': pose.solid?.includes(layer.id) ? 1 : undefined,
+      ...(drawing.edges && { 'stroke-dasharray': dash, 'stroke-dashoffset': offset }),
+      ...motion(layer.id),
+    });
+    if (masked) defs += `<mask id="${id}-${index}" maskUnits="userSpaceOnUse" x="-6" y="-6" width="36" height="36"><rect x="-6" y="-6" width="36" height="36" fill="#fff"/><g class="occ">${occluders}</g><g class="knock">${own}</g><g class="gap">${gap}</g></mask>`;
+    layers += `<g class="lay"${masked ? ` mask="url(#${id}-${index})"` : ''}><path class="body" d="${layer.d}" pathLength="60"${body}/>${own}</g>`;
+  });
+  const top = marks.filter(([, mark]) => mark.kind === 'free' || mark.kind === 'over').map(markEl).join('');
+  const classes = `entity-icon${pose.filled ? ' filled' : ''}`;
+  return `<svg class="${classes}" data-icon="${kind}" data-state="${name}" width="${size}" height="${size}" viewBox="0 0 24 24" aria-hidden="true"><defs>${defs}</defs>${layers}<g class="marks">${top}</g></svg>`;
+}
+
+return { iconMarkup };
+})();
+
+const records = {
+  project: { name:'Aurora launch', long:'Aurora international launch · 東京', type:'Project', icon:'project', state:'live' },
+  action: { name:'Final launch review', long:'Final accessibility and localization review · 最終確認', type:'Action', icon:'action', state:'scheduled' },
+  artifact: { name:'Launch checklist', long:'Launch checklist for the international release · チェックリスト', type:'Artifact', icon:'content', state:'text' },
+  file: { name:'Notes.txt', long:'International launch decisions and meeting notes.txt', type:'File', icon:'content', state:'text' },
+  entry: { name:'Launch notes', long:'Launch notes · research, decisions and follow-up', type:'Entry', icon:'entry', state:'recorded' },
+  instance: { name:'Work', long:'Work · international launch workspace', type:'Instance', icon:'instance', state:'available' },
+  date: { name:'Launch day', long:'Launch day for the international release', type:'Date', icon:'date', state:'day' },
+  range: { name:'Launch window', long:'Launch window for the international release', type:'Date range', icon:'date', state:'range' },
+  location: { name:'Studio 4', long:'Studio 4 · international launch coordination room', type:'Location', icon:'location', state:'geo' },
+  postal: { name:'Venue pending', long:'Venue pending · address awaiting coordinates', type:'Location', icon:'location', state:'postal', description:'Coordinates are unavailable.', inert:true },
+};
+const actionStates = {
+  scheduled: { state:'scheduled' },
+  slipped: { state:'slipped' },
+  backlog: { state:'backlog' },
+  recurring: { state:'recurring' },
+  done: { state:'done', closed:true },
+  cancelled: { state:'cancelled', closed:true, cancelled:true },
+};
+const ui = { selected:'action', names:'short' };
+const referenceForms = [['pill','Metadata'],['inline','Prose'],['row','List']];
+const escapeHTML = value => String(value).replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;').replaceAll('"','&quot;');
+function record(key,variant) {
+  const base = records[key];
+  const status = key === 'action' ? actionStates[variant || 'scheduled'] : key === 'project' && variant === 'ended' ? {state:'ended',closed:true} : {};
+  return { ...base, ...status, key, name:ui.names === 'long' ? base.long : base.name };
+}
+function reference(key,form='inline',options={}) {
+  const item = record(key,options.variant);
+  if(form === 'pill' && !['project','action'].includes(key)) throw new Error('Metadata pills require a project or action');
+  const previews = [options.preview].flat().filter(Boolean);
+  const flags = [item.closed && 'is-closed',item.cancelled && 'is-cancelled',...previews.map(state => `is-${state}-preview`)].filter(Boolean).join(' ');
+  const interactive = form !== 'identity' && !item.inert && options.interactive !== false;
+  const tag = interactive ? 'a' : 'span';
+  const stateNames = {scheduled:'Scheduled',slipped:'Slipped schedule',backlog:'Backlog',recurring:'Recurring',done:'Done',cancelled:'Cancelled',ended:'Ended'};
+  const status = stateNames[item.state] || '';
+  const accessible = `Show ${options.name || item.name} as a title. ${item.type}${status ? '. ' + status : ''}`;
+  const attrs = interactive ? ` href="#title-sample" data-ref-key="${key}" aria-label="${escapeHTML(accessible)}"` : '';
+  const title = item.inert ? item.description : item.type;
+  const description = item.inert ? `<span class="sr-only"> ${escapeHTML(item.description)}</span>` : '';
+  return `<${tag} class="ref ref-${form} ${flags}" data-kind="${item.icon}" title="${escapeHTML(title)}"${attrs}>${EntityIcons.iconMarkup(item.icon,item.state,12)}<span class="label">${escapeHTML(options.name || item.name)}</span>${description}</${tag}>`;
+}
+function renderWriting() {
+  document.getElementById('writing').innerHTML = `<h3>${reference('project')} readiness</h3><p>Prepare ${reference('action')} with ${reference('artifact')}. Keep ${reference('file')} close.</p><ul><li>Discuss ${reference('entry')}.</li><li>Coordinate in ${reference('instance')}.</li></ul><table aria-label="Smart elements in a table"><tbody><tr><th scope="row">Day</th><td>${reference('date')}</td></tr><tr><th scope="row">Period</th><td>${reference('range')}</td></tr><tr><th scope="row">Place</th><td>${reference('location')}</td></tr><tr><th scope="row">Postal</th><td>${reference('postal')}</td></tr></tbody></table><blockquote>Keep <strong>${reference('artifact')}</strong> close during the review.</blockquote><p class="caption">Attachment: ${reference('file')}</p>`;
+  document.getElementById('metadata-examples').innerHTML = reference('project','pill') + reference('action','pill');
+}
+function renderTitle() {
+  document.getElementById('title-sample').innerHTML = reference(ui.selected,'identity');
+}
+function renderRows() {
+  document.getElementById('list-examples').innerHTML = Object.keys(records).map(key => reference(key,'row')).join('');
+}
+function renderStates() {
+  const cases = [
+    ['Scheduled','Upcoming or in progress','action','scheduled'],
+    ['Slipped','Elapsed, unresolved','action','slipped'],
+    ['Backlog','Unscheduled','action','backlog'],
+    ['Recurring','Template','action','recurring'],
+    ['Done','Resolved','action','done'],
+    ['Cancelled','Resolved','action','cancelled'],
+    ['Ended project','Resolved','project','ended'],
+  ];
+  document.getElementById('state-examples').innerHTML = cases.map(([name,annotation,key,variant]) => `<div class="state-line" role="row"><div class="state-name" role="rowheader">${name}<small>${annotation}</small></div>${referenceForms.map(([form,label]) => `<div class="state-slot" role="cell" data-form="${form}" data-label="${label}">${reference(key,form,{variant,interactive:false})}</div>`).join('')}</div>`).join('');
+}
+function renderInteractions() {
+  const states = [['Rest',null],['Hover','hover'],['Selected','selected'],['Selected + hover',['selected','hover']],['Keyboard focus','focus']];
+  document.getElementById('interaction-examples').innerHTML = referenceForms.map(([form,label]) => `<div class="interaction-line" role="row"><span class="interaction-label" role="rowheader">${label}</span>${states.map(([state,preview]) => `<div class="interaction-cell ${form === 'inline' ? 'prose' : ''}" role="cell" data-state="${state}">${form === 'inline' ? 'Read ' : ''}${reference('project',form,{interactive:false,preview})}${form === 'inline' ? ' together.' : ''}</div>`).join('')}</div>`).join('');
+}
+function syncSelection() {
+  for(const ref of document.querySelectorAll('#contexts a[data-ref-key]')) {
+    const selected = ref.dataset.refKey === ui.selected;
+    ref.classList.toggle('is-selected',selected);
+    if(selected) ref.setAttribute('aria-current','true');
+    else ref.removeAttribute('aria-current');
+  }
+}
+function syncIconSizes() {
+  for(const icon of document.querySelectorAll('.ref .entity-icon')) {
+    const size = Number.parseFloat(getComputedStyle(icon).width);
+    if(!Number.isFinite(size) || size <= 0 || Math.abs(size - Number(icon.getAttribute('width'))) < .01) continue;
+    const template = document.createElement('template');
+    template.innerHTML = EntityIcons.iconMarkup(icon.dataset.icon,icon.dataset.state,size);
+    icon.replaceWith(template.content.firstElementChild);
+  }
+}
+function renderAll() { renderWriting();renderTitle();renderRows();renderStates();renderInteractions();syncSelection();syncIconSizes(); }
+function cohover(key) { for(const ref of document.querySelectorAll('[data-ref-key]')) ref.classList.toggle('is-cohovered',ref.dataset.refKey === key); }
+document.addEventListener('click',event => {
+  if(event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+  const ref = event.target.closest('a[data-ref-key]');
+  if(!ref) return;
+  event.preventDefault();ui.selected = ref.dataset.refKey;renderTitle();syncSelection();syncIconSizes();
+  document.getElementById('title-announcement').textContent = `Title: ${record(ui.selected).name}`;
+});
+document.addEventListener('pointerover',event => {if(event.pointerType === 'touch') {cohover(null);return;}const ref = event.target.closest('[data-ref-key]');if(ref) cohover(ref.dataset.refKey);});
+document.addEventListener('pointerout',event => {const ref = event.target.closest('[data-ref-key]');if(ref && !ref.contains(event.relatedTarget)) cohover(null);});
+document.getElementById('names').addEventListener('change',event => {ui.names=event.target.value;renderAll();});
+const theme=document.getElementById('theme');
+theme.value=matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+document.documentElement.dataset.theme=theme.value;
+theme.addEventListener('change',() => document.documentElement.dataset.theme=theme.value);
+renderAll();
+
+</script>
+</body>
+</html>

@@ -8,7 +8,7 @@ import type { createContextPanel } from '../src/context-panel';
 import type { HotSet, PendingUpdate } from '../../cli/src/core/data-snapshot';
 import { loadApp } from './app-harness';
 import { snapshotFixture } from './snapshot-fixture';
-import { stubBrowserFetch } from './auth-fixture';
+import { stubBrowserFetch } from './connection-fixture';
 
 const project = '2026-10-04-program', action = '2026-10-04-task';
 const sourceId = '2026-10-04-review', source = `#artifact/${sourceId}/flow.json`;
@@ -29,12 +29,12 @@ interface App {
   contextPanel?: ReturnType<typeof createContextPanel>;
   navigationSidebar?: { dispose(): void };
   stopControl?: () => void;
-  datePicker: { close(): void; dispose?(): void };
+  datePicker: { dispose?(): void };
 }
 let app: App | undefined;
 let authoredProjectBody: string;
 afterEach(() => {
-  app?.stopControl?.(); app?.datePicker.close(); app?.clearInstanceView();
+  app?.stopControl?.(); app?.clearInstanceView();
   app?.navigationSidebar?.dispose(); app?.contextPanel?.destroy(); app?.datePicker.dispose?.(); app = undefined;
   vi.restoreAllMocks(); vi.unstubAllGlobals(); document.body.replaceChildren(); localStorage.clear(); history.replaceState(null, '', '/');
 });

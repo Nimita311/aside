@@ -4,9 +4,21 @@ import { Temporal } from '@js-temporal/polyfill';
 const rrule = rrulePackage as unknown as { RRule: typeof rrulePackage.RRule; Weekday: typeof rrulePackage.Weekday;
   default?: { RRule: typeof rrulePackage.RRule; Weekday: typeof rrulePackage.Weekday } };
 const RRule = rrule.RRule ?? rrule.default!.RRule, Weekday = rrule.Weekday ?? rrule.default!.Weekday;
+// rrule ships CommonJS; this resolves its class under either module interop.
+export { RRule };
 type Rule = InstanceType<typeof RRule>;
 const DAY = 86400000;
+// One period's fixed length, for weekly and finer frequencies.
+export function fixedWidth(freq: number): number {
+  return freq === RRule.WEEKLY ? 7 * DAY : freq === RRule.DAILY ? DAY : freq === RRule.HOURLY ? 3600000 : freq === RRule.MINUTELY ? 60000 : 1000;
+}
 const MAX_WALL = new Date('9999-12-31T23:59:59.999Z').getTime();
+// Each clock field's allowed values: the authored BY list, or every value.
+function clockSets(opts: Rule['options']): { hours: number[]; minutes: number[]; seconds: number[] } {
+  const values = (authored: number[] | null | undefined, length: number) =>
+    authored?.length ? [...new Set(authored)] : Array.from({ length }, (_, i) => i);
+  return { hours: values(opts.byhour, 24), minutes: values(opts.byminute, 60), seconds: values(opts.bysecond, 60) };
+}
 interface Gap { from: number; to: number }
 interface Period { end: number; next: number; days: number[]; times: number[]; positions?: number[] }
 interface Checkpoint { cursor: number; count: number }
@@ -43,8 +55,7 @@ export class RecurrenceCounter {
     this.noClockCandidates = opts.freq >= RRule.HOURLY && !this.clockCandidatesExist();
     if (opts.freq >= RRule.WEEKLY && Object.entries(rule.origOptions).every(([key, value]) =>
       value == null || ['freq', 'interval', 'wkst', 'dtstart', 'count', 'until', 'tzid'].includes(key))) {
-      this.step = opts.interval * (opts.freq === RRule.WEEKLY ? 7 * DAY : opts.freq === RRule.DAILY ? DAY :
-        opts.freq === RRule.HOURLY ? 3600000 : opts.freq === RRule.MINUTELY ? 60000 : 1000);
+      this.step = opts.interval * fixedWidth(opts.freq);
     }
     if (opts.freq <= RRule.DAILY) for (const hour of opts.byhour) for (const minute of opts.byminute)
       for (const second of opts.bysecond) this.times.push((hour * 3600 + minute * 60 + second) * 1000);
@@ -87,7 +98,7 @@ export class RecurrenceCounter {
         const candidate = this.start + Math.max(0, Math.ceil((threshold - this.start) / this.step)) * this.step;
         if (candidate > MAX_WALL) return undefined;
         this.extendGaps(candidate);
-        const gap = this.gaps.find(gap => candidate >= gap.from && candidate < gap.to);
+        const gap = this.gapAt(candidate);
         if (!gap) return new Date(candidate);
         threshold = gap.to;
       }
@@ -109,14 +120,14 @@ export class RecurrenceCounter {
           let index = lowerBound(this.period.times, threshold - day);
           while (index < this.period.times.length) {
             const candidate = day + this.period.times[index];
-            const gap = this.gaps.find(gap => candidate >= gap.from && candidate < gap.to);
+            const gap = this.gapAt(candidate);
             if (!gap) { candidates.push(candidate); break; }
             index = lowerBound(this.period.times, gap.to - day);
           }
         }
       }
       const candidate = candidates.filter(value => value >= threshold && value >= this.start &&
-        !this.gaps.some(gap => value >= gap.from && value < gap.to)).sort((a, b) => a - b)[0];
+        !this.gapAt(value)).sort((a, b) => a - b)[0];
       if (candidate !== undefined) return new Date(candidate);
       if (this.period.end >= MAX_WALL) return undefined;
       this.countThrough(new Date(this.period.end + 1));
@@ -131,7 +142,7 @@ export class RecurrenceCounter {
         const index = Math.floor((upper - this.start) / this.step);
         if (index < 0) return undefined;
         const candidate = this.start + index * this.step;
-        const gap = this.gaps.find(gap => candidate >= gap.from && candidate < gap.to);
+        const gap = this.gapAt(candidate);
         if (!gap) return new Date(candidate);
         upper = gap.from - 1;
       }
@@ -141,7 +152,7 @@ export class RecurrenceCounter {
     if (target > this.prefix && this.period) {
       const { days, times, positions } = this.period;
       const allowed = (candidate: number) => candidate >= this.start && candidate <= upper &&
-        !this.gaps.some(gap => candidate >= gap.from && candidate < gap.to);
+        !this.gapAt(candidate);
       if (positions) {
         const length = days.length * times.length;
         let candidate = -Infinity;
@@ -158,7 +169,7 @@ export class RecurrenceCounter {
         while (index >= 0) {
           const candidate = day + times[index];
           if (candidate < this.start) break;
-          const gap = this.gaps.find(gap => candidate >= gap.from && candidate < gap.to);
+          const gap = this.gapAt(candidate);
           if (!gap && allowed(candidate)) return new Date(candidate);
           index = gap ? lowerBound(times, gap.from - day) - 1 : index - 1;
         }
@@ -204,11 +215,16 @@ export class RecurrenceCounter {
     return days;
   }
   private allowed(day: number): boolean { return this.daysInYear(new Date(day).getUTCFullYear()).has(day); }
+  private gapAt(wall: number): Gap | undefined { return this.gaps.find(gap => wall >= gap.from && wall < gap.to); }
+  // A sub-daily rule repeats on a fixed grid anchored at the start's own unit.
+  private clockGrid(): { origin: number; step: number } {
+    const opts = this.rule.options, width = fixedWidth(opts.freq);
+    return { origin: Math.floor(this.start / width) * width, step: width * opts.interval };
+  }
   private buildPeriod(): Period {
     const opts = this.rule.options, date = new Date(this.cursor), day = Math.floor(this.cursor / DAY) * DAY;
     if (opts.freq >= RRule.HOURLY) {
-      const width = opts.freq === RRule.HOURLY ? 3600000 : opts.freq === RRule.MINUTELY ? 60000 : 1000;
-      const origin = Math.floor(this.start / width) * width, step = width * opts.interval;
+      const { origin, step } = this.clockGrid();
       const next = origin + Math.ceil((day + DAY - origin) / step) * step;
       return { end: day + DAY - 1, next, days: this.allowed(day) ? [day] : [], times: this.timePattern(day) };
     }
@@ -254,15 +270,12 @@ export class RecurrenceCounter {
   }
   private timePattern(day: number): number[] {
     const opts = this.rule.options;
-    const width = opts.freq === RRule.HOURLY ? 3600000 : opts.freq === RRule.MINUTELY ? 60000 : 1000;
-    const origin = Math.floor(this.start / width) * width, step = opts.interval * width;
+    const { origin, step } = this.clockGrid();
     const phase = ((day - origin) % step + step) % step;
     let times = this.patterns.get(phase);
     if (times) return times;
     const values: number[] = [];
-    const hours = opts.byhour?.length ? [...new Set(opts.byhour)] : Array.from({ length: 24 }, (_, i) => i);
-    const minutes = opts.byminute?.length ? [...new Set(opts.byminute)] : Array.from({ length: 60 }, (_, i) => i);
-    const seconds = opts.bysecond?.length ? [...new Set(opts.bysecond)] : Array.from({ length: 60 }, (_, i) => i);
+    const { hours, minutes, seconds } = clockSets(opts);
     const appendPeriod = (period: number, lower: number[]) => {
       if ((day + period - origin) % step !== 0) return;
       lower.sort((a, b) => a - b);
@@ -291,9 +304,7 @@ export class RecurrenceCounter {
     let a = opts.interval, divisor = units;
     while (divisor) { const remainder = a % divisor; a = divisor; divisor = remainder; }
     const origin = Math.floor(this.start / (DAY / units));
-    const hours = opts.byhour?.length ? [...new Set(opts.byhour)] : Array.from({ length: 24 }, (_, i) => i);
-    const minutes = opts.byminute?.length ? [...new Set(opts.byminute)] : Array.from({ length: 60 }, (_, i) => i);
-    const seconds = opts.bysecond?.length ? [...new Set(opts.bysecond)] : Array.from({ length: 60 }, (_, i) => i);
+    const { hours, minutes, seconds } = clockSets(opts);
     const size = opts.freq === RRule.HOURLY ? minutes.length * seconds.length : opts.freq === RRule.MINUTELY ? seconds.length : 1;
     if (opts.bysetpos?.length && !opts.bysetpos.some(position => Math.abs(position) <= size)) return false;
     for (const hour of hours) {

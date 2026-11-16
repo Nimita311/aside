@@ -1,4 +1,3 @@
-import { activeModal, usable } from './modal';
 import { toDateStr } from '../lib/types';
 import { monthStart, parseLooseDate } from './dates';
 import type { DateTimePreferences } from './preferences';
@@ -15,12 +14,10 @@ export interface CalendarContext {
 
 export interface DatePickerDeps {
   displayPreferences?(): DateTimePreferences;
-  getCalendarContext?(): CalendarContext;
+  getCalendarContext(): CalendarContext;
   /** Complete counts for the inclusive displayed grid, not just loaded cards. */
   getDayCounts?(from: string, to: string): Promise<ReadonlyMap<string, number>>;
   jumpToDate(dateStr: string): void;
-  /** Compatibility for callers of the old quick navigator; unused by the calendar. */
-  jumpNear?(targetIso: string, baseDate: string, dir: number): Promise<boolean>;
 }
 
 interface CalendarSurface {
@@ -47,86 +44,30 @@ function density(count: number): number {
   return count > 0 ? Math.min(0.3, 0.04 + Math.log2(count + 1) * 0.045) : 0;
 }
 
-/** Persistent inline calendar, sharing its month and draft with the optional popover. */
+/** Persistent timeline calendar: a month grid above a jump-to-date field. */
 export function createDatePicker(deps: DatePickerDeps): {
   mountInline(host: HTMLElement): void;
-  toggle(trigger?: HTMLElement): void;
-  close(): void;
-  refresh(options?: { invalidateCounts?: boolean; reloadCounts?: boolean }): void;
-  isOpen(): boolean;
+  refresh(options?: { invalidateCounts?: boolean }): void;
   dispose(): void;
 } {
-  let inline: CalendarSurface | null = null;
-  let popup: CalendarSurface | null = null;
-  let launcher: HTMLElement | null = null;
+  let mounted: CalendarSurface | null = null;
   let view = monthStart(currentFlowDate());
   let contextKey: string | null = null;
   let lastCurrent = '';
   let browsedMonth = false;
   let draft = '';
   let invalid = false;
-  let focusFrame: number | null = null;
-  let armTimer: ReturnType<typeof setTimeout> | null = null;
-  let pressedOutside = false;
-  let detachCurrentWatch: (() => void) | null = null;
-  let detachViewportWatch: (() => void) | null = null;
-  let reposition: (() => void) | null = null;
   let revision = 0;
   let disposed = false;
   const counts = new Map<string, Counts>();
 
-  const surfaces = (): CalendarSurface[] => [inline, popup].filter((surface): surface is CalendarSurface => surface !== null);
   const preferences = (): DateTimePreferences => deps.displayPreferences?.() ?? { timeFormat: 'locale' };
-  const context = (): CalendarContext => deps.getCalendarContext?.() ?? { key: 'legacy', current: currentFlowDate() };
+  const context = (): CalendarContext => deps.getCalendarContext();
   const startsOn = (): number => {
     const day = preferences().weekStartsOn;
     return Number.isInteger(day) && day! >= 0 && day! <= 6 ? day! : 1;
   };
   const requestKey = (ctx: CalendarContext, days: string[]): string => `${ctx.key}\n${days[0]}\n${days[41]}`;
-
-  function cancelFocusRestore(): void {
-    if (focusFrame !== null) cancelAnimationFrame(focusFrame);
-    focusFrame = null;
-    document.removeEventListener('pointerdown', cancelFocusRestore, true);
-  }
-
-  function restoreFocus(trigger: HTMLElement | null): void {
-    if (activeModal()) return;
-    const calendar = document.getElementById('btn-workspace-calendar');
-    const target = usable(trigger) ? trigger : usable(calendar) ? calendar
-      : Array.from(document.querySelectorAll<HTMLElement>('.date-latch-chip')).find(usable)
-        ?? Array.from(document.querySelectorAll<HTMLElement>('#btn-workspace-views, #btn-instance-switch, .app-title a')).find(usable);
-    target?.focus({ preventScroll: true });
-  }
-
-  const isInside = (node: Node | null): boolean => !!node && (!!popup?.root.contains(node) || !!launcher?.contains(node));
-  const onPointerDown = (event: Event): void => { pressedOutside = !isInside(event.target as Node); };
-  const onClick = (event: Event): void => { if (pressedOutside && !isInside(event.target as Node)) close(false); };
-  const onKey = (event: KeyboardEvent): void => {
-    if (event.defaultPrevented || activeModal() || event.key !== 'Escape') return;
-    event.preventDefault(); event.stopPropagation(); close(true);
-  };
-
-  function close(returnFocus = !!popup?.root.contains(document.activeElement)): void {
-    cancelFocusRestore();
-    const wasOpen = popup !== null, trigger = launcher;
-    trigger?.setAttribute('aria-expanded', 'false'); trigger?.removeAttribute('aria-controls');
-    if (armTimer !== null) { clearTimeout(armTimer); armTimer = null; }
-    popup?.root.remove(); popup = null;
-    detachCurrentWatch?.(); detachCurrentWatch = null;
-    detachViewportWatch?.(); detachViewportWatch = null;
-    document.removeEventListener('pointerdown', onPointerDown, true);
-    document.removeEventListener('click', onClick, true);
-    document.removeEventListener('keydown', onKey, true);
-    if (!wasOpen || !returnFocus) return;
-    restoreFocus(trigger);
-    document.addEventListener('pointerdown', cancelFocusRestore, true);
-    focusFrame = requestAnimationFrame(() => {
-      focusFrame = null; document.removeEventListener('pointerdown', cancelFocusRestore, true);
-      const focused = document.activeElement;
-      if (!(focused instanceof HTMLElement) || !usable(focused)) restoreFocus(trigger);
-    });
-  }
 
   function synchronizeContext(): CalendarContext {
     const ctx = context();
@@ -134,8 +75,7 @@ export function createDatePicker(deps: DatePickerDeps): {
       contextKey = ctx.key; view = monthStart(ctx.current); browsedMonth = false;
       draft = ''; invalid = false; counts.clear(); revision++;
     } else if (ctx.current !== lastCurrent && !browsedMonth && !draft.trim()
-      && !surfaces().some(surface => surface.calendar.contains(document.activeElement)
-        && (document.activeElement as HTMLElement)?.dataset.date)) {
+      && !(mounted?.calendar.contains(document.activeElement) && (document.activeElement as HTMLElement).dataset.date)) {
       view = monthStart(ctx.current);
     }
     lastCurrent = ctx.current;
@@ -152,13 +92,12 @@ export function createDatePicker(deps: DatePickerDeps): {
     }
     const token = revision;
     counts.set(key, { status: 'loading' });
-    void Promise.resolve().then(() => deps.getDayCounts!(days[0], days[41])).then(values => {
+    const settle = (result: Counts): void => {
       if (disposed || revision !== token || context().key !== ctx.key || !counts.has(key)) return;
-      counts.set(key, { status: 'ready', values }); render();
-    }, () => {
-      if (disposed || revision !== token || context().key !== ctx.key || !counts.has(key)) return;
-      counts.set(key, { status: 'error' }); render();
-    });
+      counts.set(key, result); render();
+    };
+    void Promise.resolve().then(() => deps.getDayCounts!(days[0], days[41]))
+      .then(values => settle({ status: 'ready', values }), () => settle({ status: 'error' }));
   }
 
   function navigateMonth(delta: number): void {
@@ -168,7 +107,7 @@ export function createDatePicker(deps: DatePickerDeps): {
 
   function jump(date: string): void {
     draft = ''; invalid = false; view = monthStart(date); browsedMonth = false;
-    deps.jumpToDate(date); close(true); render();
+    deps.jumpToDate(date); render();
   }
 
   function commit(surface: CalendarSurface): void {
@@ -178,20 +117,19 @@ export function createDatePicker(deps: DatePickerDeps): {
     draft = surface.input.value;
     const parsed = parseLooseDate(draft);
     if (parsed) jump(parsed);
-    else { invalid = true; updateInputs(); surface.input.focus({ preventScroll: true }); reposition?.(); }
+    else { invalid = true; updateInputs(); surface.input.focus({ preventScroll: true }); }
   }
 
   function updateInputs(): void {
-    const base = context().current;
-    for (const surface of surfaces()) {
-      if (surface.input.value !== draft) surface.input.value = draft;
-      surface.input.classList.toggle('is-invalid', invalid);
-      surface.error.hidden = !invalid;
-      surface.error.textContent = invalid ? `Enter a valid date, such as ${base}.` : '';
-      if (invalid) {
-        surface.input.setAttribute('aria-invalid', 'true'); surface.input.setAttribute('aria-describedby', surface.error.id);
-      } else { surface.input.removeAttribute('aria-invalid'); surface.input.removeAttribute('aria-describedby'); }
-    }
+    if (!mounted) return;
+    const { input, error } = mounted, base = context().current;
+    if (input.value !== draft) input.value = draft;
+    input.classList.toggle('is-invalid', invalid);
+    error.hidden = !invalid;
+    error.textContent = invalid ? `Enter a valid date, such as ${base}.` : '';
+    if (invalid) {
+      input.setAttribute('aria-invalid', 'true'); input.setAttribute('aria-describedby', error.id);
+    } else { input.removeAttribute('aria-invalid'); input.removeAttribute('aria-describedby'); }
   }
 
   function draw(surface: CalendarSurface, ctx: CalendarContext, days: string[]): void {
@@ -276,18 +214,18 @@ export function createDatePicker(deps: DatePickerDeps): {
   }
 
   function render(): void {
-    if (disposed) return;
+    const surface = mounted;
+    if (disposed || !surface) return;
     const ctx = synchronizeContext(), days = gridDates(view, startsOn());
     // Compact layouts park the persistent control until its pill page opens.
     // Preparing that hidden DOM must not issue remote activity queries.
-    if (surfaces().some(surface => surface.root.isConnected && !surface.root.closest('[hidden], [inert]'))) loadCounts(ctx, days);
-    for (const surface of surfaces()) draw(surface, ctx, days);
-    updateInputs(); reposition?.();
+    if (surface.root.isConnected && !surface.root.closest('[hidden], [inert]')) loadCounts(ctx, days);
+    draw(surface, ctx, days);
+    updateInputs();
   }
 
-  function createSurface(popover: boolean): CalendarSurface {
-    const root = document.createElement('div'); root.className = popover ? 'date-jump' : 'timeline-calendar date-jump-inline';
-    if (popover) { root.id = 'date-jump'; root.setAttribute('role', 'dialog'); root.setAttribute('aria-label', 'Timeline calendar'); }
+  function createSurface(): CalendarSurface {
+    const root = document.createElement('div'); root.className = 'timeline-calendar date-jump-inline';
     const calendar = root.appendChild(document.createElement('div')); calendar.className = 'date-jump-cal';
     const entry = root.appendChild(document.createElement('div')); entry.className = 'date-jump-entry';
     const input = entry.appendChild(document.createElement('input'));
@@ -295,7 +233,7 @@ export function createDatePicker(deps: DatePickerDeps): {
     const submit = entry.appendChild(document.createElement('button')); submit.type = 'button';
     submit.className = 'date-jump-submit'; submit.textContent = '→'; submit.setAttribute('aria-label', 'Jump to date');
     const error = root.appendChild(document.createElement('div')); error.className = 'date-jump-error';
-    error.id = popover ? 'date-jump-error' : 'date-jump-error-inline'; error.hidden = true; error.setAttribute('role', 'alert');
+    error.id = 'date-jump-error-inline'; error.hidden = true; error.setAttribute('role', 'alert');
     const status = root.appendChild(document.createElement('div')); status.className = 'date-jump-status';
     status.hidden = true; status.setAttribute('role', 'status'); status.setAttribute('aria-atomic', 'true');
     const surface = { root, calendar, input, error, status };
@@ -314,50 +252,9 @@ export function createDatePicker(deps: DatePickerDeps): {
     return surface;
   }
 
-  function open(trigger?: HTMLElement): void {
-    if (activeModal()) return;
-    const button = trigger ?? document.getElementById('btn-workspace-calendar') ?? document.querySelector<HTMLElement>('.date-latch-chip');
-    if (!button) return;
-    cancelFocusRestore(); launcher = button; pressedOutside = false;
-    popup = createSurface(true); const pop = popup.root;
-    document.body.appendChild(pop); button.setAttribute('aria-expanded', 'true'); button.setAttribute('aria-controls', pop.id);
-    const viewport = window.visualViewport;
-    function positionPopover(): void {
-      if (!pop.isConnected) return;
-      const viewport = window.visualViewport;
-      const minLeft = (viewport?.offsetLeft ?? 0) + 8, minTop = (viewport?.offsetTop ?? 0) + 8;
-      const width = Math.max(0, (viewport?.width ?? window.innerWidth) - 16), height = Math.max(0, (viewport?.height ?? window.innerHeight) - 16);
-      pop.style.maxWidth = `${width}px`; pop.style.maxHeight = `${height}px`;
-      const rect = button!.getBoundingClientRect(), size = pop.getBoundingClientRect();
-      const above = button!.id === 'btn-workspace-calendar' || !!button!.closest('#control-pill');
-      const top = above ? rect.top - size.height - 8 : rect.bottom + 4;
-      pop.style.left = `${Math.max(minLeft, Math.min(rect.right - size.width, minLeft + width - size.width))}px`;
-      pop.style.top = `${Math.max(minTop, Math.min(top, minTop + height - size.height))}px`;
-    }
-    reposition = positionPopover;
-    window.addEventListener('resize', positionPopover); viewport?.addEventListener('resize', positionPopover); viewport?.addEventListener('scroll', positionPopover);
-    detachViewportWatch = () => {
-      reposition = null; window.removeEventListener('resize', positionPopover);
-      viewport?.removeEventListener('resize', positionPopover); viewport?.removeEventListener('scroll', positionPopover);
-    };
-    const latch = document.getElementById('date-latch');
-    if (latch) {
-      const watch = new MutationObserver(() => render()); watch.observe(latch, { attributes: true, attributeFilter: ['data-date'] });
-      detachCurrentWatch = () => watch.disconnect();
-    }
-    render(); popup.input.focus({ preventScroll: true });
-    armTimer = setTimeout(() => {
-      armTimer = null; document.addEventListener('pointerdown', onPointerDown, true);
-      document.addEventListener('click', onClick, true); document.addEventListener('keydown', onKey, true);
-    });
-  }
-
   return {
-    mountInline(host) { if (!inline) inline = createSurface(false); host.append(inline.root); render(); },
-    toggle(trigger) { if (popup) close(); else open(trigger); },
-    close,
-    refresh(options) { if (options?.invalidateCounts || options?.reloadCounts) { counts.clear(); revision++; } if (inline || popup) render(); },
-    isOpen: () => popup !== null,
-    dispose() { close(false); cancelFocusRestore(); inline?.root.remove(); inline = null; disposed = true; revision++; counts.clear(); },
+    mountInline(host) { mounted ??= createSurface(); host.append(mounted.root); render(); },
+    refresh(options) { if (options?.invalidateCounts) { counts.clear(); revision++; } render(); },
+    dispose() { mounted?.root.remove(); mounted = null; disposed = true; revision++; counts.clear(); },
   };
 }

@@ -13,7 +13,6 @@ interface App {
   renderFlow(): Promise<void>;
   jumpToDate(date: string): Promise<void>;
   updateLatchNow(): void;
-  jumpNearDate(target: string, baseDate: string, dir: number): Promise<boolean>;
 }
 
 async function setup(ids: string[]) {
@@ -36,7 +35,7 @@ async function setup(ids: string[]) {
     assetUrl: () => null,
   };
   const store = new Store(source); await store.init();
-  const app = await loadApp<App>('state, renderFlow, jumpNearDate, jumpToDate, updateLatchNow, applyView, handleLocationChange');
+  const app = await loadApp<App>('state, renderFlow, jumpToDate, updateLatchNow, applyView, handleLocationChange');
   app.state.store = store; app.state.animSpeed = 0;
   app.state.instanceId = 'work';
   await app.renderFlow();
@@ -109,29 +108,5 @@ describe('date picker landing in the application', () => {
     expect(scroller.scrollTop).toBe(250);
     expect(document.getElementById('date-latch')!.dataset.date).toBe('2026-10-03');
     expect(cards[1].classList.contains('is-target')).toBe(true);
-  });
-
-  it('loads across a large gap before landing on the next older entry', async () => {
-    const ids = ['2026-10-04T10:00', '2026-09-27T10:00', '2026-09-20T10:00',
-      '2026-09-13T10:00', '2026-09-06T10:00', '2026-01-04T09:00'];
-    const app = await setup(ids);
-    expect(app.state.loadedWeeks).toBe(5);
-    expect(document.querySelector(`[data-entry-id="${ids[5]}"]`)).toBeNull();
-    expect(await app.jumpNearDate('2026-08-30T12:00:00', '2026-09-06', -1)).toBe(true);
-    expect(app.state.loadedWeeks).toBe(6);
-    expect(document.querySelector('.is-target')?.getAttribute('data-entry-id')).toBe(ids[5]);
-  });
-
-  it('lands on the next newer entry even when the current day is closest to the target', async () => {
-    const app = await setup(['2026-10-04T10:00', '2026-01-04T09:00']);
-    expect(await app.jumpNearDate('2026-01-11T12:00:00', '2026-01-04', 1)).toBe(true);
-    expect(document.querySelector('.is-target')?.getAttribute('data-entry-id')).toBe('2026-10-04T10:00');
-  });
-
-  it('keeps the view in place when no date remains in the direction', async () => {
-    const app = await setup(['2026-10-04T10:00']);
-    expect(await app.jumpNearDate('2026-10-11T12:00:00', '2026-10-04', 1)).toBe(false);
-    expect(await app.jumpNearDate('2026-09-27T12:00:00', '2026-10-04', -1)).toBe(false);
-    expect(document.querySelector('.is-target')).toBeNull();
   });
 });

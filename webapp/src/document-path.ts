@@ -1,4 +1,4 @@
-import { entityFilePath, getMondayOfWeek, weekFilePath, assetMediaKind, type EntityRef } from '../lib/types';
+import { entityFilePath, entryWeek, weekFilePath, assetMediaKind, type EntityRef } from '../lib/types';
 import type { Artifact } from '../../cli/src/core/types';
 import { artifactContentFilename } from '../../cli/src/core/artifact-reference';
 import type { DocRef } from './route';
@@ -14,7 +14,7 @@ export function documentFilePath(doc: DocRef, filter: EntityRef | null): string 
   if (doc.kind === 'asset') return doc.path;
   if (doc.kind === 'artifact') return entityFilePath('artifact', doc.id);
   if (!filter) return 'aside.md';
-  if (filter.type === 'entry') return weekFilePath(getMondayOfWeek(new Date(filter.id.slice(0, 10) + 'T00:00:00')));
+  if (filter.type === 'entry') return weekFilePath(entryWeek(filter.id));
   return entityFilePath(filter.type, filter.type === 'action' ? actionSourceId(filter.id) : filter.id);
 }
 

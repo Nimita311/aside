@@ -23,7 +23,7 @@ function save(kind: string, path: string): void {
   if (kind === 'projects') store.saveProject(id, frontMatter, 'new body', path);
   else if (kind === 'actions') store.saveAction(id, frontMatter, 'new body', path);
   else if (kind === 'artifacts') store.saveArtifact(id, frontMatter, 'new body', path);
-  else store.saveEntry(frontMatter.created, [], [], 'new body', path,
+  else store.saveEntry(frontMatter.created, path,
     '---\nweek: 42\nweek_start: 2026-10-12\nweek_end: 2026-10-18\n---\n\n```entry\ncreated: 2026-10-14T12:00:00\n```\n\nnew body\n');
 }
 

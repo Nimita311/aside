@@ -54,7 +54,7 @@ describe('GraphQL MCP resources', () => {
       for (const span of text.matchAll(/`([^`\n]+)`/g)) {
         for (const match of span[1].matchAll(/\b([A-Z][A-Za-z0-9]*)(?:\.([a-z][A-Za-z0-9_]*))?\b/g)) {
           const [, name, field] = match;
-          if (name === 'Type') continue; // The documented Type / Type.field notation.
+          if (name === 'Type' || name === 'URL') continue; // The documented Type / Type.field notation.
           const type = schema.getType(name);
           if (!field && !type && !/(?:Input|Where|Payload|Connection|Filter|Identity|Metadata|FrontMatter|Config|Option)$/.test(name)) continue;
           expect(type, match[0]).toBeDefined();

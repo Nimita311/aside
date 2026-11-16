@@ -192,7 +192,7 @@ describe('confirmed results when a mutation only partly persists', () => {
     expect(marker.error).toContain('#artifact/2026-10-02-files/second.txt');
     expect(marker.error).toContain('Second import failed');
     expect(readdirSync(dirname(destination))).toEqual(['first.txt']);
-    expect(store.getArtifactIds()).toEqual([]);
+    expect([...store.getArtifacts().keys()]).toEqual([]);
   });
 
   it('reports completed removals when a later artifact attachment removal fails', async () => {
@@ -343,7 +343,7 @@ describe('confirmed results when a mutation only partly persists', () => {
     expect(result.errors[0].message).toContain('Injected write failure');
     expect(result.data.capture).toBeNull();
     expect(result.extensions.mutations).toEqual([]);
-    expect(store.getProjectIds()).toEqual([]);
+    expect([...store.getProjects().keys()]).toEqual([]);
     expect(store.getEntries()).toEqual([]);
   });
 
@@ -357,7 +357,7 @@ describe('confirmed results when a mutation only partly persists', () => {
     expect(result.extensions.mutations).toEqual([]);
     expect(existsSync(destination)).toBe(false);
     expect(readdirSync(dirname(destination))).toEqual([]);
-    expect(store.getArtifactIds()).toEqual([]);
+    expect([...store.getArtifacts().keys()]).toEqual([]);
     expect(readFileSync(source, 'utf8')).toBe('Original source');
   });
 

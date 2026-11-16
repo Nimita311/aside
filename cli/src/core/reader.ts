@@ -11,6 +11,7 @@ import type {
   ParseIssue,
   ParseResult,
 } from './types.js';
+import { errorMessage } from './error.js';
 
 // One file read from an instance: where it lives, its raw text, the parsed
 // value, and the issues the shared parser recorded producing that value.
@@ -26,8 +27,6 @@ export interface InstanceFile<T> {
   value: T;
   issues: ParseIssue[];
 }
-
-export type { WeeklyValue } from './types.js';
 
 /** Parse reuse is keyed by exact bytes, never timestamps. The cache owns its
  * parsed values; every read returns an isolated result that consumers may edit. */
@@ -73,7 +72,7 @@ export interface InstanceData {
 // to the parser's totality. Deduplicated, since the markdown and index walks
 // visit the same year directories.
 function readError(errors: ParseIssue[], relPath: string, e: unknown): void {
-  const message = `Could not read: ${e instanceof Error ? e.message : String(e)}`;
+  const message = `Could not read: ${errorMessage(e)}`;
   if (errors.some((i) => i.file === relPath && i.message === message)) return;
   errors.push({ severity: 'error', code: 'read_error', message, file: relPath });
 }

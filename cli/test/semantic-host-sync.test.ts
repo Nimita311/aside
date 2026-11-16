@@ -161,7 +161,7 @@ describe('registered instance semantic index maintenance', () => {
   it('stops maintaining an unloaded instance', async () => {
     const f = fixture(); const {host} = f.host();
     await f.indexed('Original source');
-    host.unload(f.root);
+    host.unloadKey(f.root);
     const calls = f.embed.mock.calls.length;
     f.write('Edit after unload');
     await new Promise(resolve => setTimeout(resolve, 180));

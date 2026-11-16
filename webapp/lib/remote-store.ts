@@ -4,10 +4,16 @@ import { mapLimit } from '../../cli/src/core/async';
 import type { DataSource } from '../../cli/src/core/data-source';
 import type { DataSnapshot, StoreView, Relations, SearchProgress, FileDiagnostic, CheckScope, HotSet, PendingUpdate, UpdateSummary } from '../../cli/src/core/data-snapshot';
 import type { Entry, Project, Action, Artifact } from '../../cli/src/core/types';
-import type { EntityRef } from '../../cli/src/core/record-reference';
+import { entityKey, type EntityRef } from '../../cli/src/core/record-reference';
 
 export interface SnapshotSource extends Pick<DataSource, 'read' | 'revalidate' | 'assetUrl' | 'assetVersion'> {
   snapshot(version?: string, refresh?: boolean): Promise<{ value: DataSnapshot; version: string } | 'unchanged'>;
+}
+
+function bump(counts: Map<string, number>, key: string): number {
+  const next = (counts.get(key) ?? 0) + 1;
+  counts.set(key, next);
+  return next;
 }
 
 // Sidebar edits update navigation without changing native reading content.
@@ -87,7 +93,7 @@ export class RemoteStore implements StoreView {
   getCachedAction(id: string) { return this.actions.get(id) ?? resolveProjection(this.actions, id); }
   async getPlanningActions(project?: string, after?: string): Promise<PlanningPage> {
     const relations = await this.getRelations();
-    return planningActions(this.actions, { projectionsOnly: true, templates: project ? relations.actionsByProject.get(project) ?? [] : undefined, after });
+    return planningActions(this.actions, { templates: project ? relations.actionsByProject.get(project) ?? [] : undefined, after });
   }
 
   getCachedArtifact(id: string) { return this.artifacts.get(id); }
@@ -111,7 +117,7 @@ export class RemoteStore implements StoreView {
   getActionIndex() { return this.data.indexes.actions; }
   getArtifactIndex() { return this.data.indexes.artifacts; }
   getWeeklyDates(): string[] { return this.data.weeklyDates; }
-  filterWeeks(ref: EntityRef): string[] { return this.weeksByEntity.get(`#${ref.type}/${ref.id}`) ?? []; }
+  filterWeeks(ref: EntityRef): string[] { return this.weeksByEntity.get(entityKey(ref.type, ref.id)) ?? []; }
   hasValidators(): boolean { return true; }
 
   private async refresh(): Promise<void> {
@@ -161,6 +167,7 @@ export class RemoteStore implements StoreView {
     const assetStages = new Map<string, { text: string; version: string } | null>();
     const mediaStages = new Map<string, string | null | undefined>();
     const assetBases = new Map<string, number>();
+    const unread = (path: string) => (this.assetReads.get(path) ?? 0) === assetBases.get(path);
     const clearedErrors = new Set<string>();
     const paths = new Set([...(scope === 'full' ? [...this.assets.keys(), ...this.assetLoads.keys(), ...this.media.keys(), ...this.assetErrors.keys()] : hot.assets), ...changedPaths.filter(path => this.assets.has(path) || this.assetLoads.has(path) || this.media.has(path) || this.assetErrors.has(path))]);
     await mapLimit([...paths], 6, async path => {
@@ -180,7 +187,7 @@ export class RemoteStore implements StoreView {
         } else return;
         if (this.assetErrors.has(path)) { clearedErrors.add(path); summary.assets.add(path); }
       } catch (error) {
-        if (revision >= this.appliedRevision && (this.assetReads.get(path) ?? 0) === assetBases.get(path)) this.reportAssetFailure(path, error instanceof Error ? error : new Error(String(error)));
+        if (revision >= this.appliedRevision && unread(path)) this.failAsset(path, error);
       }
     });
     if (result === 'unchanged' && !summary.assets.size && !clearedErrors.size) return null;
@@ -189,19 +196,19 @@ export class RemoteStore implements StoreView {
       if (result !== 'unchanged') this.install(result.value, result.version, revision, false);
       this.appliedRevision = revision;
       for (const path of clearedErrors) {
-        if ((this.assetReads.get(path) ?? 0) === assetBases.get(path)) this.clearAssetFailure(path);
+        if (unread(path)) this.clearAssetFailure(path);
       }
       for (const [path, value] of assetStages) {
-        if ((this.assetReads.get(path) ?? 0) !== assetBases.get(path)) continue;
-        this.assetReads.set(path, (this.assetReads.get(path) ?? 0) + 1);
+        if (!unread(path)) continue;
+        bump(this.assetReads, path);
         if (value) this.assets.set(path, value); else this.assets.delete(path);
         this.clearAssetFailure(path);
       }
       for (const [path, value] of mediaStages) {
-        if ((this.assetReads.get(path) ?? 0) !== assetBases.get(path)) continue;
-        this.assetReads.set(path, (this.assetReads.get(path) ?? 0) + 1);
+        if (!unread(path)) continue;
+        bump(this.assetReads, path);
         this.media.set(path, value);
-        this.assetRevisions.set(path, (this.assetRevisions.get(path) ?? 0) + 1);
+        bump(this.assetRevisions, path);
         if (value === null) this.setAssetFailure(path, 'Media file is missing');
         else if (value !== undefined) this.clearAssetFailure(path);
       }
@@ -215,8 +222,7 @@ export class RemoteStore implements StoreView {
     if (!force && cached) return Promise.resolve(cached.text);
     const pending = this.assetLoads.get(path);
     if (!force && pending) return pending;
-    const revision = (this.assetReads.get(path) ?? 0) + 1;
-    this.assetReads.set(path, revision);
+    const revision = bump(this.assetReads, path);
     const missing = () => new Error(`Asset file not found: ${path}`);
     let load!: Promise<string>;
     load = (async (): Promise<string> => {
@@ -235,7 +241,7 @@ export class RemoteStore implements StoreView {
         this.publish();
         return value.text;
       } catch (error) {
-        if (this.assetReads.get(path) === revision) this.reportAssetFailure(path, error instanceof Error ? error : new Error(String(error)));
+        if (this.assetReads.get(path) === revision) this.failAsset(path, error);
         throw error;
       }
     })();
@@ -254,19 +260,18 @@ export class RemoteStore implements StoreView {
   async prepareAssetUrl(path: string, retry = false): Promise<string | null> {
     if (!this.assetUrl(path)) return null;
     if (!retry && this.media.get(path) != null && !this.diagnosticsFor(path)?.error) return this.assetUrl(path);
-    const revision = (this.assetReads.get(path) ?? 0) + 1;
-    this.assetReads.set(path, revision);
+    const revision = bump(this.assetReads, path);
     try {
       const version = await this.source.assetVersion?.(path);
       if (this.assetReads.get(path) !== revision) return this.assetUrl(path);
       if (version === null) throw new Error(`Media file not found: ${path}`);
       this.media.set(path, version);
       this.clearAssetFailure(path);
-      if (retry) this.assetRevisions.set(path, (this.assetRevisions.get(path) ?? 0) + 1);
+      if (retry) bump(this.assetRevisions, path);
       this.publish();
       return this.assetUrl(path);
     } catch (error) {
-      if (this.assetReads.get(path) === revision) this.reportAssetFailure(path, error instanceof Error ? error : new Error(String(error)));
+      if (this.assetReads.get(path) === revision) this.failAsset(path, error);
       throw error;
     }
   }
@@ -284,5 +289,8 @@ export class RemoteStore implements StoreView {
   reportAssetFailure(path: string, error: Error): void {
     this.setAssetFailure(path, error.message);
     this.publish();
+  }
+  private failAsset(path: string, error: unknown): void {
+    this.reportAssetFailure(path, error instanceof Error ? error : new Error(String(error)));
   }
 }

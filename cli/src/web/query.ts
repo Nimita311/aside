@@ -5,6 +5,7 @@ import {
 } from 'graphql';
 import { GRAPHQL_SCHEMA, prepareGraphQL, type GraphQLArgs } from '../graphql/schema.js';
 import { validWebQueryRequest, webQueryBytes, WEB_QUERY_MAX_BYTES, type WebQueryResult } from '../core/web-query.js';
+import { errorMessage } from '../core/error.js';
 
 const roots = new Set(['entry', 'entries', 'project', 'projects', 'action', 'actions', 'artifact', 'artifacts', 'search']);
 // Fail closed when the agent schema adds another object type or runtime surface.
@@ -72,6 +73,6 @@ export function prepareWebQuery(input: unknown): { args: GraphQLArgs } | { resul
     walk(operation.selectionSet, GRAPHQL_SCHEMA.getQueryType()!, 1, 1);
     return { args };
   } catch (error) {
-    return failed([error instanceof GraphQLError ? error.toJSON() : { message: error instanceof Error ? error.message : String(error) }]);
+    return failed([error instanceof GraphQLError ? error.toJSON() : { message: errorMessage(error) }]);
   }
 }

@@ -232,7 +232,7 @@ describe('instance execution view', () => {
     temporary = realpathSync(mkdtempSync('/tmp/aside-graphql-automations-'));
     writeFileSync(join(temporary, '.aside'), 'execution:\n  cwd: missing\n');
     const diagnostics: ParseIssue[] = [];
-    const execution = executionView(temporary, { diagnostics, executionContext: readExecutionContextSnapshot(temporary) });
+    const execution = executionView(temporary, { diagnostics, catalog: vi.fn(), executionContext: readExecutionContextSnapshot(temporary) });
     expect(execution.cwd()).toBeNull();
     expect(diagnostics).toEqual([expect.objectContaining({ severity: 'error', code: 'execution_config', file: execution.filePath })]);
   });

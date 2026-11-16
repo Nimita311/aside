@@ -5,7 +5,7 @@ import type { DataSnapshot } from '../../cli/src/core/data-snapshot';
 import type { ViewState } from '../src/route';
 import { loadApp } from './app-harness';
 import { snapshotFixture } from './snapshot-fixture';
-import { stubBrowserFetch } from './auth-fixture';
+import { stubBrowserFetch } from './connection-fixture';
 
 interface App {
   setupNavigationSidebar(): void;

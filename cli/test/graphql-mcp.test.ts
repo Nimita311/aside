@@ -84,8 +84,8 @@ describe.skipIf(!existsSync(bundle))('bundled MCP GraphQL mode', () => {
       expect((reply.contents[0] as any).text.length).toBeGreaterThan(0);
       if (resource.uri === 'aside://docs/records') {
         const text = (reply.contents[0] as any).text;
-        for (const guidance of ['showUrl(input:', 'default browser', 'file://', 'owner-only Unix permissions',
-          'automatically installs valid browser authorization', 'redirects to the requested view']) expect(text).toContain(guidance);
+        for (const guidance of ['showUrl(input:', 'default browser', 'HTTP URL', 'public request origin',
+          'deployment authentication', 'aside.resource']) expect(text).toContain(guidance);
       }
     }
     for (const client of [cold, graph]) {

@@ -8,10 +8,9 @@ const defaultWebappDir = path.resolve(path.dirname(fileURLToPath(import.meta.url
 const labels = {
   OPEN_DETAIL_ICON: 'Open details',
   CALENDAR_OFF_ICON: 'Calendar unavailable', WARNING_ICON: 'Instance warning',
-  ARROW_UP: 'Previous period', ARROW_DOWN: 'Next period',
   'btn-instance-switch': 'Instance menu', 'connection-status': 'Offline connection', 'btn-settings': 'Settings',
-  'btn-theme-toggle': 'Theme', 'btn-add-instance': 'Add instance', 'btn-panel-retract': 'Retract panel',
-  'btn-panel-close': 'Close', 'btn-doc-close': 'Close', 'btn-modal-close': 'Close', remove: 'Forget instance',
+  'btn-theme-toggle': 'Theme', 'btn-add-instance': 'Add instance',
+  'btn-modal-close': 'Close', remove: 'Forget instance',
 };
 const humanize = name => name.replace(/^btn-/, '').replace(/_ICON$/, '').replace(/[-_]+/g, ' ')
   .toLowerCase().replace(/^./, letter => letter.toUpperCase());
@@ -53,7 +52,6 @@ function expressionLabel(node) {
     }
     if (ts.isFunctionDeclaration(current) && current.name) {
       if (current.name.text === 'showNotice') return 'Notice warning';
-      if (current.name.text === 'render') return 'Close instance';
       return humanize(current.name.text);
     }
   }

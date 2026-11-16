@@ -1,6 +1,6 @@
 import { resolve } from 'node:path';
-import { jsonResult, writeOutput } from './output.js';
-import { parseCommand, type CommandInput } from './options.js';
+import { publishResult } from './output.js';
+import { parseCommand, type CommandInput, type ParsedCommand } from './options.js';
 import { resolveDataDir } from './mcp.js';
 import { InstancePathError } from '../core/instance.js';
 import {parseShowSource, parseShowTarget, type ShowTarget} from './show-target.js';
@@ -16,9 +16,10 @@ export interface ShowContext {
   out?: (line: string) => void;
 }
 
-async function targetInstance(target: ShowTarget, directory: string | undefined, cwd: string,
+async function targetInstance(target: ShowTarget, options: ParsedCommand, cwd: string,
   client: Pick<DaemonClient, 'request'>): Promise<string> {
-  const workspace = resolveDataDir(cwd, directory === undefined ? [] : ['--dir', directory]);
+  const directory = options.get('--dir');
+  const workspace = resolveDataDir(cwd, options);
   if (workspace.invalidDir) throw new InstancePathError(`Not an aside instance (no aside.md manifest): ${workspace.invalidDir}`);
   if (!target.instanceId && workspace.dataDir) return workspace.dataDir;
   const instances = await client.request<AvailableInstance[]>('instances', {paths: workspace.candidates}, {read: true});
@@ -68,21 +69,20 @@ export async function runShow(args: CommandInput, context: ShowContext = {}): Pr
   const appDir = options.get('--app-dir');
   const client = (context.client ?? (() => new DaemonClient()))();
   try {
-    let result: { port: number; route: string; tab?: boolean; url?: string; launchUrl?: string };
+    let result: ShowResult;
     if (target) {
-      const instance = await targetInstance(target, options.get('--dir'), cwd, client);
+      const instance = await targetInstance(target, options, cwd, client);
       const params = { instance, args: target.args, ...(appDir ? { appDir: resolve(cwd, appDir) } : {}) };
       result = printUrl
-        ? await client.request<ShowResult>('show', { ...params, navigate: false }, { read: true })
+        ? await client.request<ShowResult>('show', params, { read: true })
         : await client.request<ShowResult>('show', params);
     } else {
-      result = await client.request<ShowResult>('serve', { ...(appDir ? { appDir: resolve(cwd, appDir) } : {}), ...(printUrl ? { navigate: false } : {}) });
+      result = await client.request<ShowResult>('serve', { ...(appDir ? { appDir: resolve(cwd, appDir) } : {}) });
     }
     const url = result.url ?? `http://localhost:${result.port}/${result.route}`;
-    if (!printUrl && !(await (context.open ?? openBrowser)(result.launchUrl ?? url)))
-      throw new Error(`Could not open the browser. Run aside show locally to authorize it, then open ${url}`);
-    writeOutput(options.has('--json') ? jsonResult('show', { url, reused_tab: false })
-      : printUrl ? url : `Opened browser: ${url}`, options.has('--json'), context.out ?? console.log);
+    if (!printUrl && !(await (context.open ?? openBrowser)(url)))
+      throw new Error(`Could not open the browser. Open this URL manually: ${url}`);
+    publishResult('show', { url, reused_tab: false }, printUrl ? url : `Opened browser: ${url}`, options.has('--json'), context.out ?? console.log);
   } catch (error) {
     if (!(error instanceof Error)) throw error;
     error.message = error.message.replace(/\nHint: query \w+[^\n]*/g, '\nCheck the handle and instance directory; use aside show to open the selector.');

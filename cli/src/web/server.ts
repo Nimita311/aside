@@ -14,27 +14,21 @@ import { prepareWebQuery } from './query.js';
 import type { GraphQLArgs, GraphQLResult } from '../graphql/schema.js';
 import {resolveInstanceAddress, type AvailableInstance, type InstanceCardSummary} from '../core/catalogue.js';
 import {type InstanceRegistration, type PickerKind} from './picker.js';
-import { WebAuth, type WebSession } from './auth.js';
-import { createWebHandoff, WEB_HANDOFF_LIFETIME_MS } from './handoff.js';
-import { parseFileGrantPath, verifyFileGrant, type ParsedFileGrant } from './file-grants.js';
-import { fileGrantAllows, fileGrantScopeKind } from '../core/web-file-grant.js';
+import { requestOrigin, sameOrigin } from './origin.js';
+import type { Backend } from '../mcp/server.js';
+import { HttpMcp } from '../mcp/http.js';
 import { assertManagedPath, isManagedInstancePath } from '../core/managed-path.js';
 import { assertWebappSidebar, SidebarConflictError } from '../core/webapp-config.js';
 import type { WebappSidebarSection } from '../core/types.js';
+import { errorMessage } from '../core/error.js';
 
-export interface WebServerOptions {
-  auth: WebAuth;
-  stateDirectory: string;
-}
-
-const LOCAL_HOSTS = new Set(['localhost', '127.0.0.1', '::1', '[::1]']);
 // The application shell runs scripts only from the daemon's own assets, so
 // sanitizer-escaping record content cannot execute as the app. Authored media
 // and embeds keep their http(s) destinations; previews are separate documents.
 export const APP_SHELL_CSP = [
   "default-src 'self'", "script-src 'self'", "style-src 'self' 'unsafe-inline'",
-  "img-src 'self' data: https: http:", "media-src 'self' https: http:", "frame-src 'self' https: http:",
-  "connect-src 'self'", "object-src 'none'", "base-uri 'none'", "form-action 'none'", "frame-ancestors 'none'",
+  "img-src 'self' data: blob: https: http:", "media-src 'self' blob: https: http:", "frame-src 'self' blob: https: http:",
+  "connect-src 'self'", "font-src 'self' data: blob:", "object-src 'none'", "base-uri 'none'", "form-action 'none'", "frame-ancestors 'none'",
 ].join('; ');
 export interface WebBackend {
   instances(): AvailableInstance[];
@@ -44,6 +38,7 @@ export interface WebBackend {
   remove(path: string, clearCache?: boolean): void | Promise<void>;
   load(path: string): void;
   data(path: string, refresh: boolean): Promise<DataSnapshot>;
+  mcp?: () => Backend;
   query?(path: string, args: GraphQLArgs, signal: AbortSignal): Promise<GraphQLResult>;
   updateSidebar?(path: string, sidebar: WebappSidebarSection[], expectedSidebar: WebappSidebarSection[]): Promise<void>;
   years?(path: string): readonly string[];
@@ -91,8 +86,7 @@ function publicAssetFile(appDir: string, asset: string): string | null {
   return file.startsWith(root + path.sep) ? file : null;
 }
 
-interface Tab { id: number; res: ServerResponse; focusedAt: number; instance: string | null; session: string }
-interface PendingHandoff { route: string; expires: number; cleanup: () => Promise<void> }
+interface Tab { id: number; res: ServerResponse; focusedAt: number; instance: string | null }
 
 export class AsideWebServer {
   readonly port: number;
@@ -105,21 +99,18 @@ export class AsideWebServer {
   private queryInstances = new Map<string, number>();
   private queryRates = new Map<string, { start: number; count: number }>();
   private picking: Promise<unknown> | null = null;
-  private sessions = new WeakMap<IncomingMessage, WebSession>();
-  private streams = new Map<ServerResponse, string>();
-  private handoffs = new Map<string, PendingHandoff>();
+  private mcp?: HttpMcp;
   onTabsChanged: (() => void) | undefined;
 
   private constructor(private readonly server: http.Server, port: number,
-    private appDir: string, private readonly backend: WebBackend, private readonly options: WebServerOptions) {
+    private appDir: string, private readonly backend: WebBackend) {
     this.port = port;
-    const expiry = setInterval(() => this.expire(), 1000);
-    expiry.unref(); this.timers.add(expiry);
+    if (backend.mcp) this.mcp = new HttpMcp(backend.mcp);
   }
 
   get origin(): string { return `http://localhost:${this.port}`; }
 
-  static start(appDir: string, backend: WebBackend, port: number, options: WebServerOptions): Promise<AsideWebServer | null> {
+  static start(appDir: string, backend: WebBackend, port: number): Promise<AsideWebServer | null> {
     return new Promise((resolve, reject) => {
       const httpServer = http.createServer();
       let server: AsideWebServer;
@@ -128,14 +119,13 @@ export class AsideWebServer {
           if (res.destroyed) return;
           if (res.headersSent) { res.end(); return; }
           const e = error instanceof WebError ? error : new WebError(500, error instanceof Error ? error.message : 'Internal error');
-          if (e.status === 401) return server.unauthorized(res);
           res.writeHead(e.status, { 'Content-Type': TYPES['.json'], 'Cache-Control': 'no-store' });
           res.end(JSON.stringify({ error: e.message, ...(e.paths ? { paths: e.paths } : {}) }));
         });
       });
       httpServer.once('error', (err: NodeJS.ErrnoException) => err.code === 'EADDRINUSE' ? resolve(null) : reject(err));
       httpServer.listen(port, '127.0.0.1', () => {
-        server = new AsideWebServer(httpServer, (httpServer.address() as { port: number }).port, appDir, backend, options);
+        server = new AsideWebServer(httpServer, (httpServer.address() as { port: number }).port, appDir, backend);
         resolve(server);
       });
     });
@@ -143,38 +133,10 @@ export class AsideWebServer {
 
   setAppDir(appDir: string): void { this.appDir = appDir; }
 
-  // Every opening gets a fresh handoff for its chosen browser. A bookmark URL
-  // does not grant access or change an existing browser's authorization.
-  async show(instance: string | null, route: string, navigate = true): Promise<{ url: string; launchUrl?: string; tab: boolean }> {
-    const url = `${this.origin}/${route}`;
-    if (!navigate) return { url, tab: false };
-    const code = crypto.randomBytes(32).toString('base64url');
-    const file = await createWebHandoff(this.options.stateDirectory, this.origin, code);
-    this.handoffs.set(code, { route, expires: Date.now() + WEB_HANDOFF_LIFETIME_MS, cleanup: file.cleanup });
-    return { url, launchUrl: file.url, tab: false };
-  }
-
-  private broadcastAuth(id: string): void {
-    const session = this.options.auth.session(id);
-    if (session) for (const [res, owner] of this.streams) if (owner === id && !res.destroyed)
-      res.write(`event: auth\ndata: ${JSON.stringify({ expiresAt: session.expiresAt })}\n\n`);
-  }
-
-  private expire(): void {
-    for (const [res, id] of this.streams) if (!this.options.auth.session(id)) {
-      if (!res.destroyed) res.end('event: auth-expired\ndata: {}\n\n');
-      this.streams.delete(res);
-    }
-    for (const [code, value] of this.handoffs) if (value.expires <= Date.now()) {
-      this.handoffs.delete(code); void value.cleanup().catch(() => {});
-    }
-  }
-
-  private trackStream(req: IncomingMessage, res: ServerResponse): void {
-    const session = this.sessions.get(req)!;
-    this.streams.set(res, session.id);
-    res.write(`event: auth\ndata: ${JSON.stringify({ expiresAt: session.expiresAt })}\n\n`);
-    res.once('close', () => this.streams.delete(res));
+  private openStream(_req: IncomingMessage, res: ServerResponse, first = ''): void {
+    res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', Connection: 'keep-alive' });
+    res.write(`retry: 3000\n\n${first}`);
+    res.on('error', () => {});
   }
 
   // File metadata walks belong to discovery, not every data/media/control read.
@@ -200,7 +162,7 @@ export class AsideWebServer {
   }
 
   navigate(instancePath: string, route: string): boolean {
-    const tab = this.tabs.filter(t => !t.res.destroyed && t.instance === instancePath && this.options.auth.session(t.session))
+    const tab = this.tabs.filter(t => !t.res.destroyed && t.instance === instancePath)
       .reduce<Tab | null>((best, t) => !best || t.focusedAt > best.focusedAt ? t : best, null);
     if (!tab) return false;
     tab.res.write(`data: ${JSON.stringify({ navigate: route })}\n\n`);
@@ -213,29 +175,22 @@ export class AsideWebServer {
     for (const timer of this.timers) clearInterval(timer);
     this.server.close();
     this.server.closeAllConnections();
-    for (const handoff of this.handoffs.values()) void handoff.cleanup().catch(() => {});
-    this.handoffs.clear();
-  }
-
-  private sameOrigin(req: IncomingMessage): boolean {
-    if (req.headers.origin !== undefined) return req.headers.origin === `http://${req.headers.host}`;
-    const site = req.headers['sec-fetch-site'];
-    return site === undefined || site === 'same-origin' || site === 'none';
+    void this.mcp?.close();
   }
 
   private async handle(req: IncomingMessage, res: ServerResponse): Promise<void> {
     res.setHeader('Referrer-Policy', 'no-referrer');
     res.setHeader('X-Content-Type-Options', 'nosniff');
     const send = (status: number, body: string | Buffer, type = 'text/plain') => {
-      const session = this.sessions.get(req);
-      if (session && !this.options.auth.session(session.id)) return this.unauthorized(res);
       res.writeHead(status, { 'Content-Type': type, 'Cache-Control': 'no-store' });
       res.end(req.method === 'HEAD' ? undefined : body);
     };
     const json = (body: unknown) => send(200, JSON.stringify(body), TYPES['.json']);
-    const hostname = (req.headers.host ?? '').replace(/:\d+$/, '');
-    if (!LOCAL_HOSTS.has(hostname)) return send(403, 'Forbidden');
-    const url = new URL(req.url ?? '/', this.origin);
+    let origin: string;
+    try { origin = requestOrigin(req); } catch { return send(403, 'Forbidden'); }
+    if (!sameOrigin(req, origin)) return send(403, 'Forbidden');
+    const url = new URL(req.url ?? '/', origin);
+    if (url.pathname === '/mcp' && this.mcp) return this.mcp.handle(req, res, origin);
     let pathname: string;
     try { pathname = decodeURIComponent(url.pathname); }
     catch { throw new WebError(400, 'Malformed URL.'); }
@@ -249,31 +204,8 @@ export class AsideWebServer {
     let rel = pathname.replace(/^\/+/, '');
     if ((requestedRel?.startsWith('-/assets/') || rel.startsWith('-/assets/')) && requestedRel !== rel)
       return send(404, 'Not found');
-    if (rel === '-/auth/complete') return this.completeHandoff(req, res);
-    if (rel === '-/auth/redeem') return this.redeemHandoff(req, res);
-    let fileGrant: ParsedFileGrant | null = null;
-    if (rel === '-/files' || rel.startsWith('-/files/')) {
-      fileGrant = parseFileGrantPath(url.pathname);
-      const session = fileGrant && this.options.auth.session(fileGrant.session);
-      if (!fileGrant || !session || !['GET', 'HEAD'].includes(req.method ?? '')) return this.unauthorized(res);
-      let instance: AvailableInstance;
-      try { instance = this.instance(fileGrant.instance); } catch { return this.unauthorized(res); }
-      const key = this.options.auth.fileKey(session.id, instance.path);
-      if (!key || !verifyFileGrant(key, fileGrant.scope, fileGrant.signature, fileGrant.path)) return this.unauthorized(res);
-      rel = `-/api/instances/${fileGrant.instance}/files/${fileGrant.path}`;
-      this.sessions.set(req, session);
-    } else if (rel === '-/api' || rel.startsWith('-/api/')) {
-      const token = req.headers.authorization?.match(/^Bearer ([A-Za-z0-9_-]+)$/)?.[1];
-      const session = token && this.options.auth.authorize(token);
-      if (!session) return this.unauthorized(res);
-      this.sessions.set(req, session);
-    }
-    if (rel === '-/api/auth') {
-      if (req.method !== 'GET') return send(405, 'Method not allowed');
-      return json({ expiresAt: this.sessions.get(req)!.expiresAt });
-    }
     const writable = req.method === 'POST';
-    if (writable && (!this.sameOrigin(req) || req.headers['x-aside-control'] !== '1')) return send(403, 'Forbidden');
+    if (writable && !/^application\/json(?:\s*;|$)/i.test(req.headers['content-type'] ?? '')) return send(403, 'Forbidden');
     if (rel === '-/api/instances/pick') {
       if (!writable) return send(405, 'Method not allowed');
       const msg = await this.readJson(req);
@@ -314,20 +246,12 @@ export class AsideWebServer {
       return json({ instances: this.catalogue() });
     }
     if (rel === '-/api/control') {
-      if (!this.sameOrigin(req)) return send(403, 'Forbidden');
       return this.handleControl(null, req, res);
     }
     const match = rel.match(/^-\/api\/instances\/([^/]+)(?:\/(.*))?$/);
     if (match) {
       const instance = this.instance(match[1]);
       const endpoint = match[2] ?? '';
-      if (endpoint === 'access') {
-        if (req.method !== 'GET') return send(405, 'Method not allowed');
-        const session = this.sessions.get(req)!;
-        const fileKey = this.options.auth.fileKey(session.id, instance.path);
-        if (!fileKey) return this.unauthorized(res);
-        return json({ fileBase: `/-/files/${session.id}/${encodeURIComponent(match[1])}`, fileKey });
-      }
       if (endpoint === 'sidebar') {
         if (!writable) return send(405, 'Method not allowed');
         if (!this.backend.updateSidebar) throw new WebError(503, 'Sidebar updates are unavailable.');
@@ -338,7 +262,7 @@ export class AsideWebServer {
             || !Object.hasOwn(input, 'expectedSidebar')) throw new Error('Provide sidebar and expectedSidebar declarations.');
           sidebar = assertWebappSidebar(input.sidebar);
           expectedSidebar = assertWebappSidebar(input.expectedSidebar);
-        } catch (error) { throw new WebError(400, error instanceof Error ? error.message : String(error)); }
+        } catch (error) { throw new WebError(400, errorMessage(error)); }
         try { await this.backend.updateSidebar(instance.path, sidebar, expectedSidebar); }
         catch (error) { if (error instanceof SidebarConflictError) throw new WebError(409, error.message); throw error; }
         return json({ sidebar });
@@ -387,7 +311,6 @@ export class AsideWebServer {
         }
       }
       if (endpoint === 'control') {
-        if (!this.sameOrigin(req)) return send(403, 'Forbidden');
         if (req.method === 'GET') this.backend.load(instance.path);
         return this.handleControl(instance.path, req, res);
       }
@@ -409,7 +332,6 @@ export class AsideWebServer {
       }
       if (endpoint === 'watch') {
         if (req.method !== 'GET') return send(405, 'Method not allowed');
-        if (!this.sameOrigin(req)) return send(403, 'Forbidden');
         return this.streamWatch(instance.path, req, res);
       }
       if (endpoint.startsWith('files/')) {
@@ -419,11 +341,6 @@ export class AsideWebServer {
         try { real = await fs.realpath(file); }
         catch (error) { if (['ENOENT', 'ENOTDIR', 'ELOOP'].includes((error as NodeJS.ErrnoException).code ?? '')) return send(404, 'Not found'); throw error; }
         if (!real.startsWith(instance.path + path.sep)) return send(404, 'Not found');
-        // Exact-file grants already select the requested path. Folder grants
-        // must also keep resolved user references within their granted scope.
-        if (fileGrant && fileGrantScopeKind(fileGrant.scope) === 'tree' &&
-            !fileGrantAllows(fileGrant.scope, path.relative(instance.path, real).split(path.sep).join('/')))
-          return this.unauthorized(res);
         const managed = isManagedInstancePath(path.relative(instance.path, file));
         const body = await tryFile(managed ? file : real, managed ? instance.path : undefined);
         if (body === null) return send(404, 'Not found');
@@ -449,94 +366,37 @@ export class AsideWebServer {
     // Every safe first path segment is an instance address, including IDs
     // that are currently unavailable: the UI explains and offers recovery.
     if (!rel || isInstanceAddress(rel.split('/')[0])) {
-      const body = await tryFile(path.join(this.appDir, 'index.html'));
-      res.setHeader('Content-Security-Policy', APP_SHELL_CSP);
+      let body = await tryFile(path.join(this.appDir, 'index.html'));
+      const nonce = crypto.randomBytes(24).toString('base64');
+      if (body) body = Buffer.from(body.toString().replace('<head>', `<head><meta name="aside-preview-nonce" content="${nonce}">`));
+      res.setHeader('Content-Security-Policy', APP_SHELL_CSP.replace("script-src 'self'", `script-src 'self' 'nonce-${nonce}'`));
       res.setHeader('X-Frame-Options', 'DENY');
       if (body !== null) return send(200, body, TYPES['.html']);
     }
     send(404, 'Not found');
   }
 
-  private unauthorized(res: ServerResponse): void {
-    res.writeHead(401, { 'Content-Type': TYPES['.json'], 'Cache-Control': 'no-store', 'WWW-Authenticate': 'Bearer' });
-    res.end(JSON.stringify({ code: 'AUTH_REQUIRED', error: 'To reconnect, run aside show or ask your agent to show this in Aside.' }));
-  }
-
-  private async completeHandoff(req: IncomingMessage, res: ServerResponse): Promise<void> {
-    if (req.method !== 'POST') { res.writeHead(405); res.end(); return; }
-    const pending = await this.readHandoff(req);
-    if (!pending) return this.unauthorized(res);
-    const nonce = crypto.randomBytes(18).toString('base64');
-    // The private file cannot read this origin's local storage. This same-origin
-    // bridge supplies its existing credential only when redeeming the code.
-    const script = `(async()=>{try{const saved=localStorage.getItem('aside.webToken');const headers=new Headers({'Content-Type':'application/x-www-form-urlencoded','X-Aside-Control':'1'});if(saved)headers.set('Authorization','Bearer '+saved);const response=await fetch('/-/auth/redeem',{method:'POST',headers,body:new URLSearchParams({code:${JSON.stringify(pending.code)}}).toString(),cache:'no-store'});if(!response.ok)throw new Error();const {token,route}=await response.json();if(localStorage.getItem('aside.webToken')!==token)localStorage.setItem('aside.webToken',token);location.replace(route);}catch{document.getElementById('status').textContent='Could not open Aside. Run show again or request a new showUrl URL and open it immediately.';}})();`;
-    res.writeHead(200, { 'Content-Type': TYPES['.html'], 'Cache-Control': 'no-store',
-      'Content-Security-Policy': `default-src 'none'; script-src 'nonce-${nonce}'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'`, 'X-Frame-Options': 'DENY' });
-    res.end(`<!doctype html><meta charset="utf-8"><title>Opening Aside</title><p id="status">Opening Aside…</p><script nonce="${nonce}">${script}</script>`);
-  }
-
-  private async readHandoff(req: IncomingMessage): Promise<{ code: string; handoff: PendingHandoff } | null> {
-    const chunks: Buffer[] = [];
-    let size = 0;
-    for await (const chunk of req.iterator({ destroyOnReturn: false })) {
-      size += chunk.length;
-      if (size > 2048) { req.resume(); throw new WebError(413, 'Payload too large'); }
-      chunks.push(chunk);
-    }
-    const code = new URLSearchParams(Buffer.concat(chunks).toString('utf8')).get('code') ?? '';
-    const handoff = this.handoffs.get(code);
-    if (!handoff) return null;
-    if (handoff.expires <= Date.now()) {
-      this.handoffs.delete(code); await handoff.cleanup().catch(() => {});
-      return null;
-    }
-    return { code, handoff };
-  }
-
-  private async redeemHandoff(req: IncomingMessage, res: ServerResponse): Promise<void> {
-    if (req.method !== 'POST') { res.writeHead(405); res.end(); return; }
-    if (req.headers.origin !== this.origin || req.headers['x-aside-control'] !== '1') {
-      res.writeHead(403); res.end('Forbidden'); return;
-    }
-    const pending = await this.readHandoff(req);
-    if (!pending) return this.unauthorized(res);
-    const { code, handoff } = pending;
-    // Consume before cleanup yields, so concurrent redemptions cannot both win.
-    if (this.handoffs.get(code) !== handoff) return this.unauthorized(res);
-    this.handoffs.delete(code);
-    await handoff.cleanup().catch(() => {});
-    if (handoff.expires <= Date.now()) return this.unauthorized(res);
-    const token = req.headers.authorization?.match(/^Bearer ([A-Za-z0-9_-]+)$/)?.[1];
-    const previous = token ? this.options.auth.authorize(token) : null;
-    const renewed = previous ? this.options.auth.renew(previous.id) : null;
-    const credential = token && renewed ? { ...renewed, token } : this.options.auth.issue();
-    this.broadcastAuth(credential.id);
-    res.writeHead(200, { 'Content-Type': TYPES['.json'], 'Cache-Control': 'no-store' });
-    res.end(JSON.stringify({ token: credential.token, route: '/' + handoff.route }));
-  }
-
   private etag(body: Buffer): string { return `"${crypto.createHash('sha1').update(body).digest('base64url')}"`; }
   private sendFile(req: IncomingMessage, res: ServerResponse, file: string, body: Buffer, etag = this.etag(body)): void {
-    const session = this.sessions.get(req);
-    if (session && !this.options.auth.session(session.id)) return this.unauthorized(res);
     if (req.headers['if-none-match'] === etag) { res.writeHead(304, { ETag: etag }); res.end(); return; }
     res.writeHead(200, { 'Content-Type': TYPES[path.extname(file).toLowerCase()] ?? 'application/octet-stream', ETag: etag, 'Cache-Control': 'no-cache' });
     res.end(req.method === 'HEAD' ? undefined : body);
   }
-  private async readJson(req: IncomingMessage): Promise<Record<string, unknown>> {
+  // A request body as text, refused once it exceeds the limit.
+  private async readBody(req: IncomingMessage, limit: number): Promise<string> {
     const chunks: Buffer[] = [];
     let size = 0;
     for await (const chunk of req.iterator({ destroyOnReturn: false })) {
       size += chunk.length;
-      if (size > 64 * 1024) { req.resume(); throw new WebError(413, 'Payload too large'); }
+      if (size > limit) { req.resume(); throw new WebError(413, 'Payload too large'); }
       chunks.push(chunk);
     }
-    // Headers may have arrived before expiry or revocation. Check again before
-    // the completed body can trigger a picker, registration, query, or control.
-    const session = this.sessions.get(req);
-    if (!session || !this.options.auth.session(session.id)) throw new WebError(401, 'Authentication required');
+    return Buffer.concat(chunks).toString('utf8');
+  }
+  private async readJson(req: IncomingMessage): Promise<Record<string, unknown>> {
+    const body = await this.readBody(req, 64 * 1024);
     try {
-      const value: unknown = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+      const value: unknown = JSON.parse(body);
       if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error();
       return value as Record<string, unknown>;
     } catch { throw new WebError(400, 'Malformed JSON'); }
@@ -544,13 +404,10 @@ export class AsideWebServer {
 
   private async handleControl(instance: string | null, req: IncomingMessage, res: ServerResponse): Promise<void> {
     if (req.method === 'GET') {
-      const tab: Tab = { id: this.nextTabId++, res, focusedAt: Date.now(), instance, session: this.sessions.get(req)!.id };
+      const tab: Tab = { id: this.nextTabId++, res, focusedAt: Date.now(), instance };
       this.tabs.push(tab);
       this.onTabsChanged?.();
-      res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', Connection: 'keep-alive' });
-      res.write(`retry: 3000\n\ndata: ${JSON.stringify({ tab: tab.id })}\n\n`);
-      this.trackStream(req, res);
-      res.on('error', () => {});
+      this.openStream(req, res, `data: ${JSON.stringify({ tab: tab.id })}\n\n`);
       const ping = setInterval(() => { if (!res.destroyed) res.write(': ping\n\n'); }, WEB_EVENT_HEARTBEAT_MS);
       this.timers.add(ping);
       res.on('close', () => {
@@ -563,7 +420,7 @@ export class AsideWebServer {
     if (req.method !== 'POST') throw new WebError(405, 'Method not allowed');
     const msg = await this.readJson(req);
     if (typeof msg.focus === 'number') {
-      const tab = this.tabs.find(t => t.id === msg.focus && t.instance === instance && t.session === this.sessions.get(req)!.id);
+      const tab = this.tabs.find(t => t.id === msg.focus && t.instance === instance);
       if (tab) tab.focusedAt = Date.now();
       res.writeHead(204); res.end(); return;
     }
@@ -574,18 +431,10 @@ export class AsideWebServer {
     throw new WebError(400, 'Expected {focus}, or an instance-scoped {navigate}.');
   }
   private streamWatch(instanceDir: string, req: IncomingMessage, res: ServerResponse): void {
-    res.writeHead(200, {
-      'Content-Type': 'text/event-stream',
-      'Cache-Control': 'no-cache',
-      Connection: 'keep-alive',
-    });
-    res.write('retry: 3000\n\n');
-    this.trackStream(req, res);
+    this.openStream(req, res);
     const emit = (chunk: string) => {
-      if (!this.options.auth.session(this.sessions.get(req)!.id)) { res.end('event: auth-expired\ndata: {}\n\n'); return; }
       if (!res.destroyed) res.write(chunk);
     };
-    res.on('error', () => {});
 
     const pending = new Set<string>();
     let flushTimer: ReturnType<typeof setTimeout> | null = null;
@@ -613,7 +462,7 @@ export class AsideWebServer {
     } catch (error) {unsubscribe?.(); throw error;}
     // FSWatcher 'error' (dir deleted, EMFILE) is an uncaught exception without
     // a listener — end this stream instead of taking down the process; the
-    // client's authenticated stream retries when the directory returns.
+    // client's event stream retries when the directory returns.
     watcher.on('error', () => {
       watcher.close();
       this.watchers.delete(watcher);

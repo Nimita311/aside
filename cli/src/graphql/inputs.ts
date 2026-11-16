@@ -115,9 +115,10 @@ function contentSource(input: Input, field: 'body' | 'content', required = false
 }
 
 function artifactInput(value: unknown): Input {
-  const result = rename(object(value, 'create artifact'), {bodyFile: 'body_file', attachments: 'files', removeAttachments: 'remove_files'});
+  const input = object(value, 'create artifact');
+  const result = rename(input, {bodyFile: 'body_file', attachments: 'files', removeAttachments: 'remove_files'});
   contentSource(result, 'body');
-  validateInput('createArtifact', 'create_artifact', result, object(value, 'create artifact'));
+  validateInput('createArtifact', 'create_artifact', result, input);
   return result;
 }
 
@@ -262,14 +263,16 @@ export interface ActionStatusSnapshot {
   occurrence?: unknown;
 }
 
-const operations: Record<string, keyof typeof TOOL_SCHEMAS> = {
+/** The daemon operation behind each GraphQL mutation field that writes records. */
+export const mutationOperations = {
   capture: 'capture', updateEntry: 'update_entry', updateProject: 'update_project',
   updateInstance: 'update_instance', updateAction: 'update_action', updateOccurrence: 'update_occurrence',
   createArtifact: 'create_artifact', updateArtifact: 'update_artifact',
-};
+} satisfies Record<string, keyof typeof TOOL_SCHEMAS>;
+export type MutationField = keyof typeof mutationOperations;
 
 function preflight(field: string, input: Input, args: Input, publicInput: Input): void {
-  const operation = operations[field];
+  const operation = (mutationOperations as Record<string, keyof typeof TOOL_SCHEMAS | undefined>)[field];
   if (!operation) return;
   const values: Input = {...input, ...(args.id === undefined ? {} : {id: args.id})};
   delete values.status;

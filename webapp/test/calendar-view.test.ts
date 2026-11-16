@@ -32,8 +32,6 @@ describe('persistent timeline calendar', () => {
       expect(day.classList.contains('range-end')).toBe(index % 7 === 6 || day.dataset.date === '2026-10-20');
     }
     expect(days.filter(day => day.classList.contains('is-adjacent')).length).toBeGreaterThan(0);
-    expect(f.host.querySelector('.date-jump-nav')).toBeNull();
-    expect(f.host.querySelector('.date-jump-units')).toBeNull();
   });
 
   it('groups month controls after the month label and keeps adjacent today identifiable', () => {

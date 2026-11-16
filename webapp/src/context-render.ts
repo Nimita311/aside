@@ -59,9 +59,8 @@ export function renderContextContent(
 ): HTMLElement {
   const page = detail ?? summary;
   const metadata = readerDetails(page);
-  const summaryRoot = readerDetails(summary) ?? summary;
+  const container = readerDetails(summary) ?? summary;
   const detailRoot = metadata ?? page;
-  const container = summaryRoot;
   container.classList.add('context-content');
 
   // Panel expansion belongs to its stable toolbar, rather than a second
@@ -75,10 +74,9 @@ export function renderContextContent(
   // Full-page HTML's renderer stores identity/context separately and mounts
   // its one live iframe on the page. Move that same node into the expansion.
   if (metadata) bodyNodes.push(...children(page));
-  const fields = detail && detailRoot !== container
-    ? children(detailRoot).filter(node => node.classList.contains('detail-fields')) : [];
-  const extraRelated = detail && detailRoot !== container
-    ? children(detailRoot).filter(node => node.classList.contains('entity-related')) : [];
+  const detailChildren: HTMLElement[] = detail && detailRoot !== container ? children(detailRoot) : [];
+  const fields = detailChildren.filter(node => node.classList.contains('detail-fields'));
+  const extraRelated = detailChildren.filter(node => node.classList.contains('entity-related'));
 
   if (essentials) {
     // Only the context panel adopts the shared Essentials design. Native
@@ -111,11 +109,10 @@ export function renderContextContent(
   }
 
   const related = children(container).find(node => node.classList.contains('entity-related') || node.classList.contains('related-section'));
-  const insertionPoint = related ?? null;
   const record = detailRegion([...fields, ...bodyNodes]);
   // Moving a body already mounted in the sole input first detaches it, so
   // both its normal summary fields and related links remain in place.
-  if (record) container.insertBefore(record, insertionPoint);
+  if (record) container.insertBefore(record, related ?? null);
   const additions = detailRegion(extraRelated.filter(node => node.childElementCount));
   if (additions) container.append(additions);
   if (metadata) container.dataset.contextPresentation = 'html';

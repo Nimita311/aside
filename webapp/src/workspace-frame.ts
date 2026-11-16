@@ -1,5 +1,5 @@
 import { activeModal, usable } from './modal';
-import { entityIcon } from './render';
+import { entityIcon, isModifiedClick } from './render';
 import { ICON_SIZE } from './entity-icons';
 import { alignWideBlocks } from './wide-content';
 
@@ -28,19 +28,19 @@ export interface WorkspaceFrameOptions {
   beforeOpen(): void;
   preserveLayout(paint: () => void): void;
   openSearch(): void;
-  onLayout(layout: { panels: boolean; summaryOpen: boolean; reader: WorkspaceReader; controlsOpen: boolean }): void;
+  onLayout(layout: { panels: boolean; reader: WorkspaceReader; controlsOpen: boolean }): void;
   onEntries(): void;
   onOverview(): void;
-  onSummary?(): void;
+  onSummary(): void;
   onPin?(pinned: boolean): void;
   onNavigateItem?(sectionIndex: number, itemIndex: number): void;
   onSort?(order: WorkspaceEntryOrder): void;
 }
 
-type Page = 'views' | 'search' | 'calendar' | 'more' | 'summary' | 'inspect';
+type Page = 'views' | 'search' | 'calendar' | 'more' | 'inspect';
 const FOCUSABLE = 'button, a[href], input, select, textarea, summary, [tabindex]';
 
-// Layout owns presentation only. The live summary/search/instance roots move
+// Layout owns presentation only. The live search/instance roots move
 // between hosts, retaining their content, event handlers and browsing state.
 export function createWorkspaceFrame(options: WorkspaceFrameOptions) {
   const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
@@ -48,7 +48,6 @@ export function createWorkspaceFrame(options: WorkspaceFrameOptions) {
   const sidebarHost = $('navigation-sidebar-host');
   const sidebar = $('navigation-sidebar');
   const panel = $('side-panel');
-  const summary = $('side-panel-body');
   const pill = $('control-pill');
   const surface = $('workspace-control-surface');
   const popover = $('workspace-popover');
@@ -73,8 +72,6 @@ export function createWorkspaceFrame(options: WorkspaceFrameOptions) {
   let notifying = '';
   let sectionsSignature = '';
   let inspectionValue: WorkspaceFrameView['inspection'];
-  let movingSummary = false;
-  let summaryMove = 0;
   let observer: ResizeObserver | undefined;
   let resizeHandler: (() => void) | undefined;
   const obscuredReaders = new Map<HTMLElement, string | null>();
@@ -83,28 +80,15 @@ export function createWorkspaceFrame(options: WorkspaceFrameOptions) {
   const searchTrigger = () => $(panels ? 'btn-navigation-search' : 'btn-pill-search');
   const moreTrigger = () => $(panels ? 'btn-navigation-more' : 'btn-pill-more');
   const fallback = () => panels ? $('btn-instance-switch') : pillViews;
+  // Native readers stop at the workspace cap; full-page HTML has none.
+  const frameWidth = () => frame.clientWidth || Math.min(window.innerWidth, view.reader === 'html' ? Infinity : 1920);
+  const focusDateInput = () => timeline?.querySelector<HTMLInputElement>('.date-jump-input')?.focus({ preventScroll: true });
 
   function notify(): void {
     const key = `${panels}:${page ?? ''}:${view.reader}:${view.summaryAvailable}`;
     if (key === notifying) return;
     notifying = key;
-    options.onLayout({ panels, summaryOpen: page === 'summary', reader: view.reader, controlsOpen: !!page });
-  }
-
-  function moveSummary(destination: HTMLElement): void {
-    if (summary.parentElement === destination) return;
-    const hidden = !!summary.closest('[hidden]') || getComputedStyle(summary).display === 'none';
-    const position = hidden ? Number(summary.dataset.panelScroll ?? summary.scrollTop) || 0 : summary.scrollTop;
-    const revision = ++summaryMove;
-    movingSummary = true;
-    summary.dataset.panelScroll = String(position);
-    destination.append(summary);
-    summary.scrollTop = position;
-    requestAnimationFrame(() => {
-      if (revision !== summaryMove) return;
-      summary.scrollTop = position;
-      movingSummary = false;
-    });
+    options.onLayout({ panels, reader: view.reader, controlsOpen: !!page });
   }
 
   function mountPage(): void {
@@ -113,10 +97,6 @@ export function createWorkspaceFrame(options: WorkspaceFrameOptions) {
     for (const node of [views, search, more, inspect, timeline].filter((node): node is HTMLElement => !!node)) {
       const destination = node === current ? popoverBody : node === views && panels ? sidebar : node === timeline && panels ? $('navigation-timeline-slot') : parking;
       if (node.parentElement !== destination) destination.append(node);
-    }
-    if (!options.onSummary) {
-      if (page === 'summary') moveSummary(popoverBody);
-      else moveSummary(panel);
     }
     const title = page === 'views' ? 'Views' : page === 'search' ? 'Search' : page === 'calendar' ? 'Timeline calendar' : page === 'more' ? 'More' : page === 'inspect' ? 'View details' : 'Summary';
     $('workspace-popover-title').textContent = title;
@@ -132,7 +112,7 @@ export function createWorkspaceFrame(options: WorkspaceFrameOptions) {
   }
 
   function updateReaderInteraction(): void {
-    for (const id of ['flow-scroll', 'doc-backdrop', 'instance-chooser', ...(options.onSummary ? ['side-panel'] : [])]) {
+    for (const id of ['flow-scroll', 'doc-backdrop', 'instance-chooser', 'side-panel']) {
       const reader = $(id);
       if (page && reader.querySelector('iframe.asset-webpage')) {
         // `inert`/`hidden` intentionally revoke a webpage's query grant.
@@ -166,11 +146,6 @@ export function createWorkspaceFrame(options: WorkspaceFrameOptions) {
     sidebarHost.hidden = !panels;
     sidebarHost.inert = !panels || !!page;
     sidebar.hidden = false;
-    if (!options.onSummary) {
-      panel.hidden = !panels || !view.summaryAvailable;
-      panel.inert = panel.hidden || !!page;
-      panel.classList.toggle('is-open', !panel.hidden);
-    }
     $('data-diagnostics').inert = !!page;
     pill.hidden = panels;
     pill.inert = panels;
@@ -184,7 +159,7 @@ export function createWorkspaceFrame(options: WorkspaceFrameOptions) {
     popover.hidden = !page;
     popover.dataset.page = page ?? '';
     dismiss.hidden = !page;
-    $('btn-workspace-summary').hidden = !view.summaryAvailable || (!options.onSummary && panels);
+    $('btn-workspace-summary').hidden = !view.summaryAvailable;
     surface.setAttribute('role', page ? 'dialog' : 'group');
     if (page) {
       surface.setAttribute('aria-modal', 'true');
@@ -197,7 +172,7 @@ export function createWorkspaceFrame(options: WorkspaceFrameOptions) {
     for (const id of ['btn-workspace-views', 'btn-workspace-calendar', 'btn-pill-search', 'btn-pill-more', 'btn-navigation-search', 'btn-navigation-more']) {
       $(id)?.setAttribute('aria-expanded', String(!!page && $(id) === active));
     }
-    const width = frame.clientWidth || Math.min(window.innerWidth, view.reader === 'html' ? Infinity : 1920);
+    const width = frameWidth();
     const maximumWidth = panels ? Math.max(240, parseFloat(frame.style.getPropertyValue('--workspace-panel-width')) - 24) : width - 24;
     popover.style.width = `${Math.min(page === 'calendar' ? 340 : 400, maximumWidth)}px`;
     frame.style.setProperty('--workspace-popover-height', `${Math.max(100, (frame.clientHeight || window.innerHeight) - (panels ? 88 : pill.offsetHeight + 48))}px`);
@@ -211,7 +186,7 @@ export function createWorkspaceFrame(options: WorkspaceFrameOptions) {
     const wasPanels = panels;
     // Set this before measuring, so HTML bypasses the workspace width cap.
     frame.dataset.reader = view.reader;
-    const width = frame.clientWidth || Math.min(window.innerWidth, view.reader === 'html' ? Infinity : 1920);
+    const width = frameWidth();
     const css = getComputedStyle(document.documentElement);
     const value = (name: string, initial: number) => parseFloat(css.getPropertyValue(name)) || initial;
     const flow = value('--flow-max-width', 960);
@@ -239,7 +214,6 @@ export function createWorkspaceFrame(options: WorkspaceFrameOptions) {
     const wideRight = Math.max(0, rightEdge - proseRight);
     frame.dataset.bounded = String(view.reader !== 'html' && (document.body.clientWidth || window.innerWidth) > width);
     if (panels && !wasPanels && (page === 'views' || page === 'calendar')) page = null;
-    if (panels && page === 'summary') page = null;
     const apply = () => {
       frame.style.setProperty('--wide-content-left', `${wideLeft}px`);
       frame.style.setProperty('--wide-content-right', `${wideRight}px`);
@@ -257,10 +231,7 @@ export function createWorkspaceFrame(options: WorkspaceFrameOptions) {
 
   function focusPage(): void {
     if (page === 'search') { options.openSearch(); return; }
-    if (page === 'calendar') {
-      timeline?.querySelector<HTMLInputElement>('.date-jump-input')?.focus({ preventScroll: true });
-      return;
-    }
+    if (page === 'calendar') { focusDateInput(); return; }
     const first = Array.from(popover.querySelectorAll<HTMLElement>(FOCUSABLE)).find(node => node.tabIndex >= 0 && usable(node));
     (first ?? popover).focus({ preventScroll: true });
   }
@@ -275,10 +246,7 @@ export function createWorkspaceFrame(options: WorkspaceFrameOptions) {
   }
 
   function open(next: Page, trigger?: HTMLElement): void {
-    if (activeModal() || (next === 'summary' && !view.summaryAvailable) || ((next === 'search' || next === 'calendar') && !view.available)) return;
-    if (next === 'summary' && options.onSummary) { closePopover(false); options.onSummary(); return; }
-    if (next === 'summary' && panels) { summary.querySelector<HTMLElement>('a, button')?.focus({ preventScroll: true }); return; }
-    if (next === 'calendar' && panels) { timeline?.querySelector<HTMLInputElement>('.date-jump-input')?.focus({ preventScroll: true }); return; }
+    if (activeModal() || ((next === 'search' || next === 'calendar') && !view.available)) return;
     options.beforeOpen();
     if (!page) launcher = trigger ?? (document.activeElement instanceof HTMLElement ? document.activeElement : fallback());
     page = next; paint(); focusPage();
@@ -318,7 +286,7 @@ export function createWorkspaceFrame(options: WorkspaceFrameOptions) {
           link.dataset.sectionIndex = String(sectionIndex); link.dataset.itemIndex = String(itemIndex);
           if (item.active) link.setAttribute('aria-current', 'page');
           link.addEventListener('click', event => {
-            if (event.button || event.ctrlKey || event.metaKey || event.altKey || event.shiftKey || !options.onNavigateItem) return;
+            if (isModifiedClick(event) || !options.onNavigateItem) return;
             event.preventDefault(); closePopover(); options.onNavigateItem(sectionIndex, itemIndex);
           });
           list.append(link);
@@ -334,7 +302,7 @@ export function createWorkspaceFrame(options: WorkspaceFrameOptions) {
     $('workspace-sort').hidden = !next.order || !options.onSort || next.reader !== 'flow';
     $('btn-sort-newest').setAttribute('aria-pressed', String(next.order === 'CREATED_DESC'));
     $('btn-sort-oldest').setAttribute('aria-pressed', String(next.order === 'CREATED_ASC'));
-    $('btn-workspace-summary').hidden = !next.summaryAvailable || (!options.onSummary && panels);
+    $('btn-workspace-summary').hidden = !next.summaryAvailable;
     $('btn-workspace-back').hidden = next.reader !== 'record' && next.reader !== 'html';
     $<HTMLButtonElement>('btn-inspect-view').disabled = !next.available;
     for (const id of ['btn-navigation-search', 'btn-pill-search', 'btn-workspace-calendar']) { const button = $<HTMLButtonElement>(id); if (button) button.disabled = !next.available; }
@@ -345,7 +313,6 @@ export function createWorkspaceFrame(options: WorkspaceFrameOptions) {
       if (next.inspection instanceof HTMLElement) host.replaceChildren(next.inspection);
       else { const pre = document.createElement('pre'); pre.textContent = next.inspection ?? ''; host.replaceChildren(pre); }
     }
-    if (!next.summaryAvailable && page === 'summary') page = null;
     if (!next.available && (page === 'search' || page === 'calendar')) page = null;
     layout();
     if (usable(restoreItemFocus ?? null)) restoreItemFocus!.focus({ preventScroll: true });
@@ -361,7 +328,11 @@ export function createWorkspaceFrame(options: WorkspaceFrameOptions) {
     dismiss.addEventListener('click', () => closePopover());
     $('btn-inspect-view').addEventListener('click', () => open('inspect', moreTrigger()));
     $('btn-workspace-inspection-back').addEventListener('click', () => open('more', moreTrigger()));
-    $('btn-workspace-summary').addEventListener('click', () => open('summary', moreTrigger()));
+    $('btn-workspace-summary').addEventListener('click', event => {
+      event.preventDefault();
+      if (activeModal() || !view.summaryAvailable) return;
+      closePopover(false); options.onSummary();
+    });
     $('btn-workspace-pin').addEventListener('click', () => { const pinned = !view.pinned; closePopover(); options.onPin?.(pinned); });
     for (const [id, order] of [['btn-sort-newest', 'CREATED_DESC'], ['btn-sort-oldest', 'CREATED_ASC']] as const) {
       $(id).addEventListener('click', () => { closePopover(); options.onSort?.(order); });
@@ -370,7 +341,7 @@ export function createWorkspaceFrame(options: WorkspaceFrameOptions) {
     $('btn-settings').addEventListener('click', () => closePopover(false));
     $('btn-theme-toggle').addEventListener('click', () => closePopover());
     for (const [link, navigate] of [[entries, options.onEntries], [overview, options.onOverview]] as const) link.addEventListener('click', event => {
-      if (event.button || event.ctrlKey || event.metaKey || event.altKey || event.shiftKey) return;
+      if (isModifiedClick(event)) return;
       event.preventDefault(); if (!view.available) return; closePopover(); navigate();
     });
     frame.addEventListener('keydown', event => {
@@ -399,14 +370,8 @@ export function createWorkspaceFrame(options: WorkspaceFrameOptions) {
   return {
     setup, update, layout, closePopover,
     openSearch: () => open('search', searchTrigger()),
-    openSummary: () => open('summary', moreTrigger()),
-    openViews: () => open('views', pillViews),
-    openCalendar: () => open('calendar', $('btn-workspace-calendar')),
     isCalendarOpen: () => page === 'calendar',
     openInspection: () => open('inspect'),
-    isSummaryOpen: () => page === 'summary',
-    isSearchOpen: () => page === 'search',
-    isMovingSummary: () => movingSummary,
     dispose: () => {
       closePopover(false);
       for (const reader of [...obscuredReaders.keys()]) restoreReaderAccessibility(reader);

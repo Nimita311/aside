@@ -169,18 +169,11 @@ mutation {
 Both accept `ShowInput`; empty input targets the active instance's timeline.
 Pass `source: "#artifact/<id>/<filename>"` to open an explicit timeline definition. It composes
 with `project` or `action`; content targets retain it as return context.
-`showUrl` returns one string and never opens or navigates a browser. Open that
-string unchanged in the chosen browser/profile on the daemon's machine, using a
-tool that can open local files.
-
-The returned `file://` URL is intentional. Each call creates a temporary private
-HTML file protected by owner-only Unix permissions. Opening it sends a one-use
-code to the daemon, automatically installs valid browser authorization, and
-redirects to the requested view. Missing or expired sessions need no manual
-authentication or token handling. Request a fresh URL for each opening and open
-it immediately: the file is single-use and expires after two minutes. It is not a
-bookmark or a remote web URL. The `url` field on `show` is a clean bookmark URL;
-opening that URL alone does not authorize a different browser.
+`showUrl` returns an HTTP URL without opening or navigating a browser. Open it
+unchanged in the chosen browser. Local CLI/stdio URLs use localhost; HTTP MCP
+URLs use the public request origin. `show` opens the host default browser for
+local CLI/stdio and returns outcome `RETURNED` for HTTP MCP, leaving opening to
+the client. Remote browser access uses deployment authentication.
 
 ## Follow content references
 

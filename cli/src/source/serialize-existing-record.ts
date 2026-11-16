@@ -1,8 +1,6 @@
 import {readFileSync} from 'node:fs';
 import {isDeepStrictEqual} from 'node:util';
-import {mergeMetadata} from '../core/metadata.js';
-
-const frontMatter = /^(\uFEFF?\s*---[ \t\r]*\n)(?:([\s\S]*?)\n)?(---[ \t\r]*)(\n[\s\S]*)?$/;
+import {mergeMetadata, RECORD_FRONT_MATTER} from '../core/metadata.js';
 
 export function serializeExistingRecord(file: string, canonical: string, fields: readonly string[], normalize: (record: string) => object, touchedFields?: readonly string[], metadataEdit?: (metadata: string) => string, preserveBody = false): string {
   let original: string;
@@ -11,8 +9,8 @@ export function serializeExistingRecord(file: string, canonical: string, fields:
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') return canonical;
     throw error;
   }
-  const existing = original.match(frontMatter);
-  const desired = canonical.match(frontMatter);
+  const existing = original.match(RECORD_FRONT_MATTER);
+  const desired = canonical.match(RECORD_FRONT_MATTER);
   if (!existing || !desired) {
     throw new Error(`Cannot update ${file}: existing record must have YAML front matter. Repair it before retrying.`);
   }

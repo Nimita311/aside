@@ -1,7 +1,7 @@
 import { scheduleInstant } from '../core/scheduling.js';
 import type { Store } from '../source/store.js';
 import type { SemanticSearchService } from '../semantic/search.js';
-import { SemanticSetupError } from '../semantic/embedding.js';
+import { configuredEmbeddingModel, SemanticSetupError } from '../semantic/embedding.js';
 import type { QueryView, RecordNode, Where } from './query.js';
 
 export type SearchOrder = 'CREATED_ASC' | 'CREATED_DESC' | 'SCHEDULED_ASC' | 'SCHEDULED_DESC' | 'DEADLINE_ASC' | 'DEADLINE_DESC';
@@ -74,7 +74,7 @@ export async function unifiedSearch(
   }
   if (semantic != null) {
     if (!options.semanticSearch) throw new SemanticSetupError('Semantic ranking requires the Aside daemon and a local embedding model. Field ordering remains available through rankBy.order.', {
-      reason: 'INDEX_UNAVAILABLE', recovery: 'Run this query through the Aside daemon.', model: process.env.ASIDE_EMBEDDING_MODEL ?? 'qwen3-embedding:0.6b',
+      reason: 'INDEX_UNAVAILABLE', recovery: 'Run this query through the Aside daemon.', model: configuredEmbeddingModel(),
     });
     const result = await options.semanticSearch(store, {query: semantic, first: limit},
       {signal: options.signal, allowedHandles: nodes.map(node => node.handle), offset});

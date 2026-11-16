@@ -1,4 +1,5 @@
 import { parentPort } from 'node:worker_threads';
+import { errorMessage } from '../core/error.js';
 
 parentPort!.on('message', (job: { id: number; pattern: string; texts: string[][] }) => {
   try {
@@ -9,6 +10,6 @@ parentPort!.on('message', (job: { id: number; pattern: string; texts: string[][]
     }
     parentPort!.postMessage({ id: job.id, indices });
   } catch (error) {
-    parentPort!.postMessage({ id: job.id, error: error instanceof Error ? error.message : String(error) });
+    parentPort!.postMessage({ id: job.id, error: errorMessage(error) });
   }
 });

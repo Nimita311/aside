@@ -265,7 +265,7 @@ describe('handleCapture', () => {
     // Indexes and derived relationships are live too.
     expect(store.getProjectIndex().find(i => i.id === projectId)?.description).toBe('A fresh project');
     expect(store.getActionIndex().find(i => i.id === actionId)?.description).toBe('A fresh action');
-    expect(store.getActionsForProject(projectId)).toContain(actionId);
+    expect([...(store.getRelations().actionsByProject.get(projectId) ?? [])]).toContain(actionId);
   });
 
   it('a later capture can reference an entity the previous one created (same store)', () => {
@@ -725,12 +725,12 @@ describe('handleCapture', () => {
       Object.fromEntries(arr.map(i => [i.id, i.description]));
     const observable = (s: Store) => ({
       entries: s.getEntries(),
-      projects: s.getProjectIds().sort().map(id => [id, s.getProject(id), s.getProjectFile(id)]),
+      projects: [...s.getProjects().keys()].sort().map(id => [id, s.getProject(id), s.getProjectFile(id)]),
       actions: s.getActionIds().sort().map(id => [id, s.getAction(id), s.getActionFile(id)]),
       noteIndex: idxMap(s.getNoteIndex()),
       projectIndex: idxMap(s.getProjectIndex()),
       actionIndex: idxMap(s.getActionIndex()),
-      rels: s.getProjectIds().sort().map(id => [id, s.getActionsForProject(id).slice().sort()]),
+      rels: [...s.getProjects().keys()].sort().map(id => [id, [...(s.getRelations().actionsByProject.get(id) ?? [])].sort()]),
       revRels: s.getActionIds().sort().map(id => [id, [...(s.getRelations().projectsByAction.get(id) ?? [])].slice().sort()]),
     });
 

@@ -1,6 +1,7 @@
 import type { Store } from '../source/store.js';
 import { assertSearchSourceReadable, searchSourceVersion } from '../semantic/source-version.js';
 import type {SemanticIndexSnapshot} from '../semantic/types.js';
+import {abortable, retryTiming} from '../core/async.js';
 
 export interface InstanceSemanticLifecycleOptions {
   reconcile: (store: Store, options: {signal: AbortSignal}) => Promise<SemanticIndexSnapshot>;
@@ -27,36 +28,24 @@ interface Registered {
   attemptEpoch?: number;
 }
 
-function waitFor<T>(work: Promise<T>, signal?: AbortSignal): Promise<T> {
-  if (!signal) return work;
-  if (signal.aborted) { void work.catch(() => {}); return Promise.reject(signal.reason); }
-  return new Promise((resolve, reject) => {
-    const abort = () => reject(signal.reason);
-    signal.addEventListener('abort', abort, {once: true});
-    work.then(resolve, reject).finally(() => signal.removeEventListener('abort', abort)).catch(() => {});
-  });
-}
+const waitFor = <T>(work: Promise<T>, signal?: AbortSignal): Promise<T> => signal ? abortable(work, signal) : work;
+// Owe a build with no failure history, so the next attempt is not backed off.
+const fresh = (state: Registered): void => {state.force = true; state.failures = 0; state.error = undefined;};
 
 /** Instance-lifecycle index worker. It consumes loaded snapshots and never reads source files. */
 export class InstanceSemanticLifecycle {
   private readonly states = new Map<Store, Registered>();
   private readonly paths = new Map<string, Store>();
   private readonly debounceMs: number;
-  private readonly retryMinMs: number;
-  private readonly retryMaxMs: number;
+  private readonly retryDelay: (failures: number) => number;
   private interval?: ReturnType<typeof setInterval>;
   private closed = false;
   private closing?: Promise<void>;
 
   constructor(private readonly options: InstanceSemanticLifecycleOptions) {
-    this.debounceMs = options.debounceMs ?? 100;
-    this.retryMinMs = options.retryMinMs ?? 1_000;
-    this.retryMaxMs = options.retryMaxMs ?? 30_000;
-    const interval = options.reconciliationIntervalMs ?? 60_000;
-    if (![this.debounceMs, interval].every(value => Number.isSafeInteger(value) && value >= 0)
-      || ![this.retryMinMs, this.retryMaxMs].every(value => Number.isSafeInteger(value) && value > 0)
-      || this.retryMaxMs < this.retryMinMs) throw new Error('Invalid semantic reconciliation intervals.');
-    if (interval) {
+    const timing = retryTiming(options, 'Invalid semantic reconciliation intervals.');
+    this.debounceMs = timing.debounceMs; this.retryDelay = timing.retryDelay;
+    if (timing.intervalMs) {
       this.interval = setInterval(() => {
         for (const state of this.states.values()) {
           // Active reconciliation already verifies the loaded snapshot and model.
@@ -65,7 +54,7 @@ export class InstanceSemanticLifecycle {
           state.force = true;
           this.schedule(state, 0);
         }
-      }, interval);
+      }, timing.intervalMs);
       this.interval.unref?.();
     }
   }
@@ -95,7 +84,7 @@ export class InstanceSemanticLifecycle {
       this.schedule(state, this.debounceMs, true);
     } catch (error) {
       this.failed(state, error);
-      this.schedule(state, this.retryDelay(state), true);
+      this.schedule(state, this.retryDelay(state.failures), true);
     }
   }
 
@@ -104,9 +93,7 @@ export class InstanceSemanticLifecycle {
     const state = this.states.get(store);
     if (!state) return;
     state.epoch++;
-    state.force = true;
-    state.failures = 0;
-    state.error = undefined;
+    fresh(state);
     if (state.attemptVersion !== undefined) state.attempt?.abort(new Error('Index invalidated during semantic reconciliation.'));
     this.schedule(state, this.debounceMs, true);
   }
@@ -142,7 +129,7 @@ export class InstanceSemanticLifecycle {
       try {version = searchSourceVersion(store); this.observeVersion(state, version);}
       catch (error) {
         this.failed(state, error);
-        this.schedule(state, this.retryDelay(state), true);
+        this.schedule(state, this.retryDelay(state.failures), true);
         throw error;
       }
       if (!state.force && !state.work && state.result?.sourceVersion === version) return state.result;
@@ -194,9 +181,7 @@ export class InstanceSemanticLifecycle {
     if (state.targetVersion === version) return;
     state.targetVersion = version;
     state.epoch++;
-    state.force = true;
-    state.failures = 0;
-    state.error = undefined;
+    fresh(state);
     if (state.attemptVersion && state.attemptVersion !== version) {
       state.attempt?.abort(new Error('Source changed during semantic reconciliation.'));
     }
@@ -214,9 +199,6 @@ export class InstanceSemanticLifecycle {
     state.error = error;
     state.failures++;
     state.attempt?.abort(error);
-  }
-  private retryDelay(state: Registered): number {
-    return Math.min(this.retryMaxMs, this.retryMinMs * 2 ** Math.min(Math.max(0, state.failures - 1), 30));
   }
   private schedule(state: Registered, delay: number, replace = false): void {
     if (!this.active(state) || state.work || (state.timer && !replace)) return;
@@ -264,11 +246,8 @@ export class InstanceSemanticLifecycle {
           throw error;
         }
         this.observeVersion(state, current);
-        if (!completionReadFailed && state.attemptVersion && (current !== state.attemptVersion || state.attemptEpoch !== state.epoch)) {
-          state.force = true;
-          state.error = undefined;
-          state.failures = 0;
-        } else this.failed(state, error);
+        if (!completionReadFailed && state.attemptVersion && (current !== state.attemptVersion || state.attemptEpoch !== state.epoch)) fresh(state);
+        else this.failed(state, error);
       }
       throw error;
     }).finally(() => {
@@ -276,7 +255,7 @@ export class InstanceSemanticLifecycle {
       state.attempt = undefined;
       state.attemptVersion = undefined;
       state.attemptEpoch = undefined;
-      if (this.active(state) && state.force) this.schedule(state, state.failures ? this.retryDelay(state) : 0);
+      if (this.active(state) && state.force) this.schedule(state, state.failures ? this.retryDelay(state.failures) : 0);
     });
     state.work = work;
     // Detached background attempts always have a rejection observer.

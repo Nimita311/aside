@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { attachmentFiles } from '../src/mcp/attachments.js';
 import {readAttachmentFiles} from '../src/core/attachment-metadata.js';
 import { Store } from '../src/source/store.js';
-import { handleCreateArtifact, handleUpdateArtifact } from '../src/mcp/tools/artifact.js';
+import { createArtifact, handleUpdateArtifact } from '../src/mcp/tools/artifact.js';
 import { handleQueryArtifacts } from '../src/mcp/tools/query.js';
 import { artifactHandle } from '../src/core/artifact.js';
 
@@ -69,7 +69,7 @@ describe('managed attachment retrieval paths', () => {
     writeFileSync(join(data, 'aside.md'), '---\nid: attachments\nname: Attachments\n---\n');
     store = new Store(data);
     const imported = join(root, 'import-source.pdf'); writeFileSync(imported, 'Imported bytes');
-    const created = handleCreateArtifact(store, { name: 'Plan', description: 'Plan', files: [{ source: imported, filename: NAME }] }, new Date(2026, 9, 4, 10));
+    const created = createArtifact(store, { name: 'Plan', description: 'Plan', files: [{ source: imported, filename: NAME }] }, new Date(2026, 9, 4, 10)).text;
     expect(created).toContain(`    path: ${file}`);
     expect(created).toContain(`    handle: ${artifactHandle(ID, NAME)}`);
     expect(created).not.toContain(imported);

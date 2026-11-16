@@ -1,17 +1,16 @@
 import { createHash } from 'node:crypto';
-import { mkdirSync, readFileSync, realpathSync } from 'node:fs';
-import { dirname, join, resolve } from 'node:path';
+import { mkdirSync, readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
 import { daemonPaths } from '../daemon/paths.js';
 import { assertRecurrence, type RecurrenceSchedule } from '../core/recurrence.js';
+import { canonicalPath } from '../core/worktree.js';
 import { writeFileCrashSafe } from '../storage/atomic-file.js';
 
 // Accepted schedules are daemon metadata, independent of instance records and
 // .aside launch configuration. Checkouts with the same instance ID keep separate
 // baselines; a symlink to a checkout shares its baseline.
 export function recurrenceHistoryPath(dataDir: string, instanceId: string): string {
-  let root: string;
-  try { root = realpathSync(dataDir); } catch { root = resolve(dataDir); }
-  const key = createHash('sha256').update(root + '\0' + instanceId).digest('hex');
+  const key = createHash('sha256').update(canonicalPath(dataDir) + '\0' + instanceId).digest('hex');
   return join(daemonPaths().state, 'recurrence-history', key + '.json');
 }
 

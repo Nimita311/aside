@@ -2,6 +2,7 @@ import {isDeepStrictEqual} from 'node:util';
 import type {Store} from '../source/store.js';
 import {CalSync, storeAction, type SyncAction} from '../mcp/calendar/sync.js';
 import {CALENDAR_SYNC_RETRY_MS, CALENDAR_RECONCILE_RETRY_MS} from '../core/system-config.js';
+import {eventTitlePrefixes} from '../core/types.js';
 
 interface CalendarInstance {
   store: Store;
@@ -15,9 +16,7 @@ interface CalendarInstance {
 }
 
 const actions = (store: Store) => new Map(store.getActionIds().map(id => [id, structuredClone(storeAction(store, id)!)]));
-const configuration = (store: Store) => ({id: store.getManifest().id,
-  active: store.getManifest().config?.scheduledEventTitlePrefix ?? '▢ ',
-  done: store.getManifest().config?.doneEventTitlePrefix ?? '✓ '});
+const configuration = (store: Store) => ({id: store.getManifest().id, ...eventTitlePrefixes(store.getManifest().config)});
 const scheduled = (items: Map<string, SyncAction>) => [...items.values()].filter(action =>
   action.frontMatter.scheduled || action.frontMatter.recurrence || action.frontMatter.occurrence);
 const usesCalendar = (action?: SyncAction) => !!action?.frontMatter.calendar;
@@ -51,8 +50,6 @@ export class InstanceCalendarLifecycle {
         request.reason === 'lock-contention' ? CALENDAR_RECONCILE_RETRY_MS : CALENDAR_SYNC_RETRY_MS);
     });
   }
-
-  changed(store: Store): Promise<void> { return this.reconcile(store); }
 
   reconcile(store: Store): Promise<void> {
     const state = this.instances.get(store);

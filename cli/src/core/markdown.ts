@@ -126,11 +126,19 @@ export function markdownReferenceText(markdown: string): { destinations: string[
     linkStart.lastIndex = stop;
   }
   parts.push(prose.slice(position));
-  // Hashes embedded in ordinary URI tokens are destinations/fragments, not
-  // bare record mentions, including query strings such as ?target=#action/id.
-  const bareProse = parts.join('').replace(/(^|[\s(<{"'\[])([a-z][a-z0-9+.-]*:[^\s<>]+)/gi,
+  return { destinations, prose: maskUriTokens(parts.join('')) };
+}
+
+// Hashes embedded in ordinary URI tokens are destinations/fragments, not
+// bare record mentions, including query strings such as ?target=#action/id.
+export function maskUriTokens(text: string): string {
+  return text.replace(/(^|[\s(<{"'\[])([a-z][a-z0-9+.-]*:[^\s<>]+)/gi,
     (_match, boundary: string, token: string) => boundary + ' '.repeat(token.length));
-  return { destinations, prose: bareProse };
+}
+
+// Markdown's backslash escapes for ASCII punctuation, read as the character.
+export function unescapeMarkdown(text: string): string {
+  return text.replace(/\\([!"#$%&'()*+,\-./:;<=>?@[\\\]^_`{|}~])/g, '$1');
 }
 
 function withoutInlineCode(text: string, blank: (text: string) => string): string {

@@ -3,6 +3,7 @@ import {
   REGEX_EXECUTION_TIMEOUT_MS, REGEX_QUEUE_TIMEOUT_MS, REGEX_WORKER_COUNT,
   REGEX_QUEUE_LIMIT, REGEX_PATTERN_MAX_CHARS, REGEX_SNAPSHOT_MAX_BYTES, REGEX_POOL_MAX_BYTES, REGEX_SNAPSHOT_MAX_RECORDS,
 } from '../core/system-config.js';
+import { errorMessage } from '../core/error.js';
 
 export interface SearchOptions { signal?: AbortSignal; snapshotBytes?: number }
 export interface SearchMatcher { match(pattern: string, texts: string[][], options?: SearchOptions): Promise<number[]> }
@@ -105,7 +106,7 @@ export class RegexWorkerPool implements SearchMatcher {
       }, this.options.executionTimeoutMs);
       slot.worker.postMessage({ id: job.id, pattern: job.pattern, texts: job.texts });
     } catch (error) {
-      this.finish(slot, new Error(`Regex search worker could not start: ${error instanceof Error ? error.message : String(error)}`), undefined, true);
+      this.finish(slot, new Error(`Regex search worker could not start: ${errorMessage(error)}`), undefined, true);
     }
   }
 

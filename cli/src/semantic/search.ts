@@ -8,6 +8,7 @@ import { CHUNKER_VERSION, chunkDocument, collectDocuments, hashText, lexicalRank
 import { assertSearchSourceReadable, searchSourceVersion } from './source-version.js';
 import { writeFileCrashSafe } from '../storage/atomic-file.js';
 import type {SemanticIndexSnapshot} from './types.js';
+import {abortable} from '../core/async.js';
 
 export interface SemanticSearchInput {
   query: string; first?: number; kinds?: SemanticKind[]; projects?: string[]; from?: string; to?: string;
@@ -16,7 +17,6 @@ export interface SemanticHit {
   kind: SemanticKind; id: string; handle: string; name: string; description: string; snippet: string; score: number;
 }
 export interface SemanticSearchResult { model: string; indexedChunks: number; hits: SemanticHit[] }
-export type {SemanticIndexSnapshot} from './types.js';
 export interface SemanticSearchRequestOptions {
   signal?: AbortSignal;
   /** Saved record handles selected by the caller's structural predicates. */
@@ -121,15 +121,6 @@ function eligible(chunk: SearchChunk, input: SemanticSearchInput): boolean {
   return !upper || chunk.created <= upper;
 }
 
-function abortable<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
-  if (signal.aborted) return Promise.reject(signal.reason);
-  return new Promise((resolve, reject) => {
-    const abort = () => reject(signal.reason);
-    signal.addEventListener('abort', abort, { once: true });
-    promise.then(resolve, reject).finally(() => signal.removeEventListener('abort', abort));
-  });
-}
-
 export class SemanticSearchService {
   private readonly embedder: SemanticEmbedder;
   private readonly indexRoot?: string;
@@ -161,24 +152,25 @@ export class SemanticSearchService {
     // caller-owned filters now, so later mutation cannot change this request.
     const savedInput: SemanticSearchInput = { ...input, kinds: input.kinds ? [...input.kinds] : undefined, projects: input.projects ? [...input.projects] : undefined };
     const allowed = options.allowedHandles === undefined ? undefined : new Set(options.allowedHandles);
-    const signal = AbortSignal.any([this.lifetime.signal, ...(options.signal ? [options.signal] : [])]);
-    signal.throwIfAborted();
-    const sourceVersion = searchSourceVersion(store);
-    const task = withSemanticCacheAccess(() => this.execute(store, savedInput, first, signal, sourceVersion, allowed, offset));
-    this.pending = task.catch(() => {});
-    return abortable(task, signal);
+    return this.queued(store, options.signal, (signal, sourceVersion) => this.execute(store, savedInput, first, signal, sourceVersion, allowed, offset));
   }
 
   /** Refresh saved document vectors without embedding a query or applying search filters. */
   async reconcile(store: Store, options: {signal?: AbortSignal} = {}): Promise<SemanticIndexSnapshot> {
-    const signal = AbortSignal.any([this.lifetime.signal, ...(options.signal ? [options.signal] : [])]);
-    signal.throwIfAborted();
-    const sourceVersion = searchSourceVersion(store);
-    const task = withSemanticCacheAccess(async () => {
+    return this.queued(store, options.signal, async (signal, sourceVersion) => {
       const {chunks, finish} = await this.synchronize(store, signal, sourceVersion);
       await finish();
       return {sourceVersion, model: this.embedder.model, indexedChunks: chunks.length};
     });
+  }
+
+  /** Queue work against the source version loaded now. An abort releases the
+   * caller without waiting for the queue. */
+  private queued<T>(store: Store, requested: AbortSignal | undefined, work: (signal: AbortSignal, sourceVersion: string) => Promise<T>): Promise<T> {
+    const signal = AbortSignal.any([this.lifetime.signal, ...(requested ? [requested] : [])]);
+    signal.throwIfAborted();
+    const sourceVersion = searchSourceVersion(store);
+    const task = withSemanticCacheAccess(() => work(signal, sourceVersion));
     this.pending = task.catch(() => {});
     return abortable(task, signal);
   }
@@ -198,17 +190,30 @@ export class SemanticSearchService {
     }
   }
 
+  /** Bind the committed chunks table, if any, and learn its vector dimension. */
+  private async bindChunks(index: OpenIndex): Promise<void> {
+    if (!(await index.connection.tableNames()).includes('chunks')) return;
+    index.table = await this.openChunks(index.connection);
+    if (!index.table) return;
+    const rows = await index.table.query().select(['vector']).limit(1).toArray();
+    if (rows.length) index.dimension = rows[0].vector.length;
+  }
+
+  private async chunkIds(table: Table): Promise<Set<string>> {
+    return new Set<string>((await table.query().select(['chunkId']).toArray()).map(row => row.chunkId));
+  }
+
+  /** Vectors this generation already stores for the batch's texts, by embedding hash. */
+  private async savedVectors(table: Table, batch: SearchChunk[]): Promise<Map<string, number[]>> {
+    const reused = await table.query().where(`"embeddingHash" IN (${[...new Set(batch.map(chunk => chunk.embeddingHash))].map(sqlString).join(',')})`).select(['embeddingHash', 'vector']).toArray();
+    return new Map<string, number[]>(reused.map(row => [row.embeddingHash, Array.from(row.vector as Iterable<number>)]));
+  }
+
   private async openLocation(location: string, create: boolean): Promise<OpenIndex> {
     let index = this.indexes.get(location);
     if (index) {
       // Another service in this process may have committed to the same table.
-      if (!index.table && (await index.connection.tableNames()).includes('chunks')) {
-        index.table = await this.openChunks(index.connection);
-        if (index.table) {
-          const rows = await index.table.query().select(['vector']).limit(1).toArray();
-          if (rows.length) index.dimension = rows[0].vector.length;
-        }
-      }
+      if (!index.table) await this.bindChunks(index);
       await index.table?.checkoutLatest();
       return index;
     }
@@ -226,15 +231,8 @@ export class SemanticSearchService {
     if (create) await mkdir(location, { recursive: true, mode: 0o700 });
     const connection = await lance.connect(location);
     index = { location, connection };
-    try {
-      if ((await connection.tableNames()).includes('chunks')) {
-        index.table = await this.openChunks(connection);
-        if (index.table) {
-          const rows = await index.table.query().select(['vector']).limit(1).toArray();
-          if (rows.length) index.dimension = rows[0].vector.length;
-        }
-      }
-    } catch (error) { connection.close(); throw error; }
+    try { await this.bindChunks(index); }
+    catch (error) { connection.close(); throw error; }
     this.indexes.set(location, index);
     return index;
   }
@@ -354,15 +352,14 @@ export class SemanticSearchService {
   private async invalidate(index: OpenIndex, chunks: SearchChunk[], stable: () => void): Promise<void> {
     if (!index.table) { await this.removeGeneration(index.location, stable); return; }
     stable();
-    const existing = new Set<string>((await index.table.query().select(['chunkId']).toArray()).map(row => row.chunkId));
+    const existing = await this.chunkIds(index.table);
     const current = new Set(chunks.map(chunk => chunk.chunkId));
     const missing = chunks.filter(chunk => !existing.has(chunk.chunkId));
     let prepared = false;
     for (let start = 0; start < missing.length; start += this.batchSize) {
       stable();
       const batch = missing.slice(start, start + this.batchSize);
-      const reused = await index.table.query().where(`"embeddingHash" IN (${[...new Set(batch.map(chunk => chunk.embeddingHash))].map(sqlString).join(',')})`).select(['embeddingHash', 'vector']).toArray();
-      const byText = new Map<string, number[]>(reused.map(row => [row.embeddingHash, Array.from(row.vector as Iterable<number>)]));
+      const byText = await this.savedVectors(index.table, batch);
       const matching = batch.filter(chunk => byText.has(chunk.embeddingHash));
       if (!matching.length) continue;
       const vectors = validateVectors(matching.map(chunk => byText.get(chunk.embeddingHash)), matching.length, index.dimension);
@@ -433,13 +430,12 @@ export class SemanticSearchService {
     const location = join(this.instanceLocation(store), semanticIndexGenerationKey(identity));
     const index = await this.openLocation(location, true);
     stable();
-    const existing = new Set<string>(index.table ? (await index.table.query().select(['chunkId']).toArray()).map(row => row.chunkId) : []);
+    const existing = index.table ? await this.chunkIds(index.table) : new Set<string>();
     const missing = chunks.filter(chunk => !existing.has(chunk.chunkId));
     for (let start = 0; start < missing.length; start += this.batchSize) {
       stable();
       const batch = missing.slice(start, start + this.batchSize);
-      const reused = index.table ? await index.table.query().where(`"embeddingHash" IN (${[...new Set(batch.map(chunk => chunk.embeddingHash))].map(sqlString).join(',')})`).select(['embeddingHash', 'vector']).toArray() : [];
-      const byText = new Map<string, number[]>(reused.map(row => [row.embeddingHash, Array.from(row.vector as Iterable<number>)]));
+      const byText = index.table ? await this.savedVectors(index.table, batch) : new Map<string, number[]>();
       const needed = [...new Map(batch.filter(chunk => !byText.has(chunk.embeddingHash)).map(chunk => [chunk.embeddingHash, chunk])).values()];
       if (needed.length) {
         const fresh = validateVectors(await generation.embed(needed.map(chunk => chunk.text), { signal }), needed.length, index.dimension);

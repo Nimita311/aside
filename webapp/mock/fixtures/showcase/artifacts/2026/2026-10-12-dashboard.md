@@ -2,9 +2,7 @@
 name: Aurora at a glance · interactive dashboard
 created: 2026-10-12T11:20
 attachments:
-  - dashboard.js
   - index.html
-  - styles.css
 
 ---
 
@@ -14,4 +12,4 @@ The dashboard combines an interactive status chart, summary cards, and a filtera
 
 <iframe src="#artifact/2026-10-12-dashboard/index.html" title="Aurora interactive work overview" height="1000"></iframe>
 
-Select a chart segment or status filter to explore the work. **Reset view** restores the full task list. HTML, CSS, and JavaScript are indexed sibling attachments.
+Select a chart segment or status filter to explore the work. **Reset view** restores the full task list. Startup CSS and JavaScript are inline; Aside supplies the SDK.

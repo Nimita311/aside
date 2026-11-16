@@ -118,7 +118,7 @@ describe('portable record model', () => {
     const previous = disk.getEntries()[0];
     const content = `Read #artifact/${FIRST}/notes.md`;
     source.files[weeklyPath] = source.files[weeklyPath].replace(previous.content, content);
-    disk.saveEntry(ENTRY, [P], [A], content, join(dir, weeklyPath), source.files[weeklyPath]);
+    disk.saveEntry(ENTRY, join(dir, weeklyPath), source.files[weeklyPath]);
     const update = await browser.check('full', {weeks: [], entities: [], assets: []}, [weeklyPath]);
     update!.apply();
     const graph = await browser.getRelations();
@@ -170,7 +170,7 @@ describe('portable record model', () => {
     const content = `${previous.content}\nRevised.`;
     const weeklyPath = `notes/2026/${WEEK}.md`;
     files[weeklyPath] = files[weeklyPath].replace(previous.content, content);
-    disk.saveEntry(ENTRY, [P], [A], content, join(dir, weeklyPath), files[weeklyPath]);
+    disk.saveEntry(ENTRY, join(dir, weeklyPath), files[weeklyPath]);
     const update = await browser.check('full', { weeks: [], entities: [], assets: [] }, [attachment]);
     expect(update).not.toBeNull();
     update!.apply();

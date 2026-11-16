@@ -14,12 +14,12 @@ interface App {
   inspectContext(target: { ref: EntityRef | null; doc: DocRef | null }): Promise<void>;
   clearInstanceView(): void;
   contextPanel?: ReturnType<typeof createContextPanel>;
-  datePicker: { close(): void; dispose?(): void };
+  datePicker: { dispose?(): void };
 }
 
 let app: App | undefined;
 afterEach(() => {
-  app?.datePicker.close(); app?.clearInstanceView(); app?.contextPanel?.destroy(); app?.datePicker.dispose?.(); app = undefined;
+  app?.clearInstanceView(); app?.contextPanel?.destroy(); app?.datePicker.dispose?.(); app = undefined;
   vi.restoreAllMocks(); document.body.replaceChildren(); localStorage.clear(); history.replaceState(null, '', '/');
 });
 

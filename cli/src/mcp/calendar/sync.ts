@@ -3,14 +3,14 @@ import { CALENDAR_SYNC_LOCK_TIMEOUT_MS } from '../../core/system-config.js';
 import { formatUtcTimestamp } from '../../core/date.js';
 import { CalClient, CalError, CalUnavailable } from './client.js';
 import { SyncLock } from './lock.js';
-import { schedulingIssues, isRepeatedSchedule, scheduleInstant } from '../../core/scheduling.js';
+import { schedulingIssues } from '../../core/scheduling.js';
 import { authorizationDiagnostic, type CalendarDiagnostic } from './diagnostics.js';
-import { eventTimingDiagnostic, canReplaceEventTime } from './timing.js';
+import { eventTimingDiagnostic, canReplaceEventTime, isExplicitReschedule, startDefinition } from './timing.js';
 import { calendarRoutingError, matchingCalendars } from './routing.js';
 import { actionLocationIssues, calendarLocation, sameCalendarLocation } from './location.js';
 import { isInstanceId, INSTANCE_ID_RULE } from '../../core/identity.js';
 import type { Store } from '../../source/store.js';
-import type { ActionFrontMatter, InstanceConfig } from '../../core/types.js';
+import { eventTitlePrefixes, type ActionFrontMatter, type InstanceConfig } from '../../core/types.js';
 import type { UpsertEventArgs, CalEvent, CalErrorCode, CalCalendar } from './protocol.js';
 import {
   buildMarker,
@@ -22,6 +22,7 @@ import {
   normalizeScheduled,
   type MarkerState,
 } from './markers.js';
+import { errorMessage } from '../../core/error.js';
 
 // The action state forward sync needs: its id, the parsed file, and the one-line
 // description from the year index (kept out of the file, included in event notes).
@@ -36,7 +37,7 @@ function calendarDefinitionIssues(frontMatter: ActionFrontMatter): string[] {
   return [...schedulingIssues(frontMatter), ...actionLocationIssues(frontMatter.location)];
 }
 
-export type SyncStatus = 'synced' | 'deleted' | 'skipped' | 'error';
+type SyncStatus = 'synced' | 'deleted' | 'skipped' | 'error';
 
 export interface SyncResult {
   id: string;
@@ -276,17 +277,16 @@ export class CalSync {
     // Never save/import through a manifest edit the lifecycle has not loaded yet.
     if (this.store) {
       try { this.store.assertSourceIdentity(expectedId, this.fallbackId); }
-      catch (error) { throw new CalendarIdentityChanged(error instanceof Error ? error.message : String(error)); }
+      catch (error) { throw new CalendarIdentityChanged(errorMessage(error)); }
     }
   }
 
   // Event-title prefixes from the instance manifest's `config`, prepended to the
-  // action name; defaults applied here — scheduled `▢ `, done `✓ `. Config names
-  // prefixes by action lifecycle (scheduled / done); internally a scheduled
-  // action's event carries the `active` marker.
+  // action name, with defaults applied. Config names prefixes by action
+  // lifecycle (scheduled / done); internally a scheduled action's event carries
+  // the `active` marker.
   private get prefixes(): { active: string; done: string } {
-    const config = this.store?.getManifest().config ?? this.fallbackConfig;
-    return { active: config?.scheduledEventTitlePrefix ?? '▢ ', done: config?.doneEventTitlePrefix ?? '✓ ' };
+    return eventTitlePrefixes(this.store?.getManifest().config ?? this.fallbackConfig);
   }
 
   // The "failure" bucket calendarSync surfaces — the union of every way a change
@@ -301,9 +301,7 @@ export class CalSync {
     // it once as a standing failure (per-action would duplicate it N times) rather
     // than skipping silently — there is no fallback, the manifest must carry an `id`.
     if (!this.instanceId) items.push({ id: 'instance', reason: this.manifestReadDiagnostic()?.reason ?? 'aside.md has no `id` — calendar sync is disabled' });
-    else {
-      if (identityReason) items.push({ id: 'instance', reason: identityReason });
-    }
+    else if (identityReason) items.push({ id: 'instance', reason: identityReason });
     for (const [id, reason] of this.issues) items.push({ id, reason });
     for (const [id, { reason }] of this.outbox) if (reason !== identityReason) items.push({ id, reason });
     for (const id of this.recurring) {
@@ -367,27 +365,26 @@ export class CalSync {
         if (recurrenceIssue) return { id, status: 'failed', reason: recurrenceIssue };
         const invalid = calendarDefinitionIssues(current.frontMatter);
         if (invalid.length) return { id, status: 'failed', reason: invalid.join(' ') };
-        if (this.settledVersions.get(id) !== this.desiredVersion(current)) {
-          // Lifecycle maintenance has not yet confirmed this loaded revision.
-          // A tracked event still needs removal even before work is dequeued.
-          const removal = this.pendingRemoval(current);
-          if (removal) return removal;
-          // Omit the old positive observation without doing source I/O here.
-          if (current.frontMatter.scheduled && !current.frontMatter.calendar) {
-            return { id, status: 'disabled', reason: 'no calendar' };
-          }
-          return undefined;
-        }
+        // Lifecycle maintenance has not yet confirmed this loaded revision.
+        if (this.settledVersions.get(id) !== this.desiredVersion(current)) return this.unconfirmedStatus(current);
       }
       return { ...result };
     }
-    const action = this.store ? storeAction(this.store, id) : undefined;
-    const removal = action && this.pendingRemoval(action);
-    if (removal) return removal;
-    if (action?.frontMatter.scheduled && !action.frontMatter.calendar) {
-      return { id, status: 'disabled', reason: 'no calendar' };
-    }
-    return undefined;
+    return this.unconfirmedStatus(this.store ? storeAction(this.store, id) : undefined);
+  }
+
+  // Nothing is certified for this action's current revision. A tracked event
+  // still needs removal even before work is dequeued; otherwise omit the old
+  // positive observation without doing source I/O here.
+  private unconfirmedStatus(action: SyncAction | null | undefined): CalendarSyncStatus | undefined {
+    if (!action) return undefined;
+    return this.pendingRemoval(action)
+      ?? (action.frontMatter.scheduled && !action.frontMatter.calendar ? { id: action.id, status: 'disabled', reason: 'no calendar' } : undefined);
+  }
+
+  // Neither a recurrence template nor an occurrence of a native series.
+  private isOrdinary(action: SyncAction): boolean {
+    return !action.frontMatter.recurrence && !isNativeOccurrence(this.store, action);
   }
 
   private pendingRemoval(action: SyncAction): CalendarSyncStatus | undefined {
@@ -404,7 +401,7 @@ export class CalSync {
 
   private observeSuccess(action: SyncAction, result: CalendarSyncStatus, version: string): void {
     const current = this.store ? storeAction(this.store, action.id) : action;
-    if (current && !current.frontMatter.recurrence && !isNativeOccurrence(this.store, current) &&
+    if (current && this.isOrdinary(current) &&
       (!this.store || this.freshOnDisk(current)) && this.desiredVersion(current) === version) {
       this.recurrenceSync.acknowledgeOrdinary(action.id, result.status === 'synced' ? result.eventId : undefined, current.frontMatter.scheduled);
     }
@@ -515,14 +512,14 @@ export class CalSync {
         // Build the cache before syncing. If the sweep fails we can't tell a new
         // action from an already-synced one, so defer (and retry next call) rather
         // than create a duplicate.
-        if (!(await this.ensureCache(allScheduled.filter(a => !a.frontMatter.recurrence && !isNativeOccurrence(this.store, a))))) return this.defer(actions, 'calendar cache unavailable, will retry', this.failureDiagnostic);
+        if (!(await this.ensureCache(allScheduled.filter(a => this.isOrdinary(a))))) return this.defer(actions, 'calendar cache unavailable, will retry', this.failureDiagnostic);
 
         const out: SyncResult[] = [];
         // Lifecycle batches also service unchanged families. Import their
         // witnessed Calendar gestures before exporting saved exceptions; the
         // recurrence protocol's source witnesses still protect local edits.
         out.push(...await this.syncRecurrences(options.importRecurrenceChanges ?? false));
-        for (const a of actions.filter(a => !a.frontMatter.recurrence && !isNativeOccurrence(this.store, a))) out.push(this.record(a, await this.syncOne(a)));
+        for (const a of actions.filter(a => this.isOrdinary(a))) out.push(this.record(a, await this.syncOne(a)));
         // Retry transiently-failed/deferred ops from earlier, unless superseded by
         // this batch. Retry the action's *current* state — the snapshot captured at
         // failure time may be stale by now — falling back to the snapshot only when
@@ -538,7 +535,7 @@ export class CalSync {
             this.settled.set(id, { id, status: 'disabled', reason: 'action no longer exists' });
             continue;
           }
-          if (!fresh.frontMatter.recurrence && !isNativeOccurrence(this.store, fresh)) this.record(fresh, await this.syncOne(fresh));
+          if (this.isOrdinary(fresh)) this.record(fresh, await this.syncOne(fresh));
         }
         return out;
       } finally {
@@ -552,7 +549,7 @@ export class CalSync {
       // prevents the best-effort batch from reaching record() (e.g. a bad retry
       // action read). A later explicit sync can re-evaluate the failed actions.
       this.noteFailure(e);
-      const reason = `calendar sync failed: ${e instanceof Error ? e.message : String(e)}`;
+      const reason = `calendar sync failed: ${errorMessage(e)}`;
       const ids = new Set([...actions.map((a) => a.id), ...this.outbox.keys()]);
       for (const id of ids) {
         if (this.failureDiagnostic) this.diagnostics.set(id, this.failureDiagnostic);
@@ -599,13 +596,18 @@ export class CalSync {
       this.outbox.set(a.id, { action: a, reason });
     }
     this.requestOutboxRetry();
-    return actions.map((a) => ({ id: a.id, status: 'skipped' as const, reason }));
+    return skip(actions, reason);
   }
 
   // The protocol adapter reports pending work. Lifecycle owns the timer and
   // selects current loaded actions when another pass is due.
   private requestOutboxRetry(): void {
     if (this.outbox.size) this.requestReconciliation('pending-delivery');
+  }
+
+  // A caught failure as a result, with the helper's structured class if it sent one.
+  private errorResult(id: string, e: unknown): SyncResult {
+    return { id, status: 'error', reason: (e as Error).message, code: e instanceof CalError ? e.code : undefined, diagnostic: this.cal.diagnosticForError(e) };
   }
 
   // Update issues/outbox from a result and pass it through. An action lands in at
@@ -642,10 +644,6 @@ export class CalSync {
     return res;
   }
 
-  private startDefinition(action: SyncAction): string {
-    return JSON.stringify([action.frontMatter.scheduled ?? null, action.frontMatter.scheduled?.includes('T') ? action.frontMatter.timezone ?? null : null]);
-  }
-
   private recurrenceFailure(action: SyncAction): string | undefined {
     const occurrence = action.frontMatter.occurrence;
     return occurrence && this.recurrenceSync.isOrdinaryPending(action.id) && this.recurrenceSync.hasOwnedOccurrence(occurrence.template, occurrence.original)
@@ -669,13 +667,11 @@ export class CalSync {
     for (const result of results) {
       const action = storeAction(store, result.id);
       if (action) {
-        if (action.frontMatter.recurrence && !this.recurrenceSync.ordinaryEvent(action.id)) {
+        const native = isNativeOccurrence(store, action);
+        if (native || action.frontMatter.recurrence && !this.recurrenceSync.ordinaryEvent(action.id)) {
           this.cache.delete(action.id); this.sweptEvents.delete(action.id); this.confirmations.delete(action.id);
         }
-        if (action.frontMatter.occurrence && isNativeOccurrence(store, action)) {
-          this.cache.delete(action.id); this.sweptEvents.delete(action.id); this.confirmations.delete(action.id);
-          this.settled.delete(action.id); this.settledVersions.delete(action.id);
-        }
+        if (native) { this.settled.delete(action.id); this.settledVersions.delete(action.id); }
         if (result.status === 'synced' || result.status === 'deleted') this.resultVersions.set(result, this.desiredVersion(action));
         out.push(this.record(action, result));
       }
@@ -711,7 +707,7 @@ export class CalSync {
   }
 
   private blockTime(action: SyncAction, diagnostic: CalendarDiagnostic): void {
-    if (!this.timeBlocked.has(action.id)) this.timeBlocked.set(action.id, { definition: this.startDefinition(action), diagnostic });
+    if (!this.timeBlocked.has(action.id)) this.timeBlocked.set(action.id, { definition: startDefinition(action.frontMatter), diagnostic });
     else this.timeBlocked.get(action.id)!.diagnostic = diagnostic;
     this.diagnostics.set(action.id, diagnostic);
     this.issues.set(action.id, diagnostic.reason);
@@ -721,9 +717,7 @@ export class CalSync {
 
   private explicitReschedule(action: SyncAction): boolean {
     const blocked = this.timeBlocked.get(action.id), fm = action.frontMatter;
-    return !!blocked && !!fm.calendar && fm.resolution !== 'cancelled' && blocked.definition !== this.startDefinition(action) && !!fm.scheduled &&
-      calendarDefinitionIssues(fm).length === 0 && scheduleInstant(fm.scheduled, fm.timezone) !== undefined &&
-      !isRepeatedSchedule(fm.scheduled, fm.timezone);
+    return !!blocked && isExplicitReschedule(blocked.definition, fm) && actionLocationIssues(fm.location).length === 0;
   }
 
   // A timing block is rechecked before either upsert or removal. A start edit
@@ -798,7 +792,7 @@ export class CalSync {
       return await this.saveEvent(action, d, version, timing.replace);
     } catch (e) {
       this.noteFailure(e);
-      return { id: action.id, status: 'error', reason: (e as Error).message, code: errorCode(e), diagnostic: this.cal.diagnosticForError(e) };
+      return this.errorResult(action.id, e);
     }
   }
 
@@ -876,10 +870,9 @@ export class CalSync {
         const { events } = await this.cal.getEvents({ eventIds: [eventId] });
         this.requireIdentity(instanceId);
         const event = events.find((ev) => ev.id === eventId);
-        const reason = event && this.ownActionId(event) === action.id
-          ? 'calendar did not confirm event removal'
-          : 'event missing or no longer owned; removal was not confirmed';
-        if (!event || this.ownActionId(event) !== action.id) this.cache.delete(action.id);
+        const owned = !!event && this.ownActionId(event) === action.id;
+        const reason = owned ? 'calendar did not confirm event removal' : 'event missing or no longer owned; removal was not confirmed';
+        if (!owned) this.cache.delete(action.id);
         this.unconfirmedRemovals.set(action.id, reason);
         return { id: action.id, status: 'error', reason };
       }
@@ -888,7 +881,7 @@ export class CalSync {
       return { id: action.id, status: 'deleted' };
     } catch (e) {
       this.noteFailure(e);
-      return { id: action.id, status: 'error', reason: (e as Error).message, code: errorCode(e), diagnostic: this.cal.diagnosticForError(e) };
+      return this.errorResult(action.id, e);
     }
   }
 
@@ -930,8 +923,7 @@ export class CalSync {
     if (access === 'no-access') return;
     if (access !== 'ok') {
       // The helper IS present but unreachable — a real failure, so record it.
-      if (this.failureDiagnostic) this.diagnostics.set('reverse sync', this.failureDiagnostic);
-      this.reconcileFailures = [{ id: 'reverse sync', reason: `calendar helper error: ${access.error}` }];
+      this.failPass(`calendar helper error: ${access.error}`);
       return;
     }
     // Reverse sync reads and writes actions through the store, which capture/update
@@ -951,8 +943,7 @@ export class CalSync {
       try { this.calendars = (await this.cal.listCalendars()).calendars; }
       catch (e) {
         this.noteFailure(e);
-        if (this.failureDiagnostic) this.diagnostics.set('reverse sync', this.failureDiagnostic);
-        this.reconcileFailures = [{ id: 'reverse sync', reason: `calendar routing unavailable, will retry: ${(e as Error).message}` }];
+        this.failPass(`calendar routing unavailable, will retry: ${(e as Error).message}`);
         return;
       }
       this.requireIdentity();
@@ -969,7 +960,7 @@ export class CalSync {
   private async reconcileLocked(allScheduled: SyncAction[], store: Store, canImport?: (action: SyncAction) => boolean): Promise<void> {
     const instanceId = this.instanceId;
     await this.syncRecurrences(true);
-    allScheduled = allScheduled.filter(a => !a.frontMatter.recurrence && !isNativeOccurrence(this.store, a));
+    allScheduled = allScheduled.filter(a => this.isOrdinary(a));
     // Cold (first completed reconcile): the deletion-import pass, where every
     // scheduled action is a candidate. Warm: a changed signal re-fetches the
     // tracked events. A null load failed: skip the pass rather than mistake an
@@ -981,11 +972,7 @@ export class CalSync {
     const sweptBefore = this.swept;
     const current = await this.loadCurrent(allScheduled);
     this.requireIdentity(instanceId);
-    if (current === null) {
-      if (this.failureDiagnostic) this.diagnostics.set('reverse sync', this.failureDiagnostic);
-      this.reconcileFailures = [{ id: 'reverse sync', reason: 'could not read calendar state, will retry' }];
-      return;
-    }
+    if (current === null) return this.failPass('could not read calendar state, will retry');
 
     this.diagnostics.delete('reverse sync');
 
@@ -1157,8 +1144,7 @@ export class CalSync {
     if (!actual && this.unconfirmedRemovals.has(action.id)) return;
     let fm = action.frontMatter;
     if (actual) {
-      const parsed = parseMarker(actual.url);
-      if (!parsed || parsed.instance !== this.instanceId || parsed.actionId !== action.id) {
+      if (this.ownActionId(actual) !== action.id) {
         // The fetched event no longer confirms this action's previous sync.
         // Leave the foreign event and local action untouched.
         if (this.settled.get(action.id)?.status === 'synced') this.settled.delete(action.id);
@@ -1220,8 +1206,8 @@ export class CalSync {
     }
 
     // Forward-reconcile the (possibly updated) action against the event we have.
-    const d = desiredFromAction({ ...action, frontMatter: fm }, this.instanceId, this.prefixes);
     const observed = { ...action, frontMatter: fm };
+    const d = desiredFromAction(observed, this.instanceId, this.prefixes);
     const version = this.desiredVersion(observed, d);
     // A reverse gesture may have saved a local change just before the helper
     // write below. Keep its receipt pending until that write has completed too.
@@ -1246,13 +1232,19 @@ export class CalSync {
       this.observeSuccess(observed, { id: action.id, status: 'synced', eventId: this.cache.get(action.id) }, version);
     } catch (e) {
       if (this.confirmations.has(action.id)) {
-        this.record(observed, { id: action.id, status: 'error', reason: (e as Error).message, code: errorCode(e), diagnostic: this.cal.diagnosticForError(e) });
+        this.record(observed, this.errorResult(action.id, e));
       }
       this.settled.set(action.id, { id: action.id, status: 'failed', reason: `reverse sync failed: ${(e as Error).message}` });
       throw e;
     } finally {
       this.releaseInFlight([action.id]);
     }
+  }
+
+  // A whole reverse pass failed before any action was examined.
+  private failPass(reason: string): void {
+    if (this.failureDiagnostic) this.diagnostics.set('reverse sync', this.failureDiagnostic);
+    this.reconcileFailures = [{ id: 'reverse sync', reason }];
   }
 
   // Load the current event for each tracked action. Before the sweep has run:
@@ -1262,7 +1254,7 @@ export class CalSync {
   // helper for a set of deletions.
   private async loadCurrent(allScheduled: SyncAction[]): Promise<Map<string, CalEvent> | null> {
     if (!this.swept) {
-      if (!(await this.ensureCache(allScheduled.filter(a => !a.frontMatter.recurrence && !isNativeOccurrence(this.store, a))))) return null;
+      if (!(await this.ensureCache(allScheduled.filter(a => this.isOrdinary(a))))) return null;
       return this.sweptEvents;
     }
     const tracked = [...this.cache];
@@ -1397,11 +1389,12 @@ export class CalSync {
     if (syncable.length === 0) return;
 
     const { min, max, want } = sweepWindow(syncable);
+    const byId = new Map(syncable.map(action => [action.id, action]));
     // ±1mo first, then only the segments that widen it to ±1yr — the month range
     // is never re-queried.
     for (const { start, end } of widenRanges(min, max)) {
       if (want.size === 0) break;
-      await this.sweepRange(start, end, want, new Map(syncable.map(action => [action.id, action])));
+      await this.sweepRange(start, end, want, byId);
     }
   }
 
@@ -1469,11 +1462,6 @@ function sourceSnapshot(action: SyncAction): string {
   // YAML for authoring diagnostics. It must not participate in this fingerprint.
   const {delegation: _delegation, ...metadata} = action.frontMatter;
   return JSON.stringify([Object.entries(metadata).sort(([a], [b]) => a.localeCompare(b)), action.body, action.description ?? null]);
-}
-
-// The helper's structured failure class from a caught error, if it sent one.
-function errorCode(e: unknown): CalErrorCode | undefined {
-  return e instanceof CalError ? e.code : undefined;
 }
 
 // The window a sweep/relocate queries: the span of the actions' scheduled dates,

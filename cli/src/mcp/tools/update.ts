@@ -9,9 +9,9 @@ import { assertCalendarName } from '../../core/calendar-name.js';
 import { assertLocationHandle } from '../../core/location-reference.js';
 import {formatScalar} from '../../core/text.js';
 import { validateEntryContent, buildEntryBlock, renderEntries, splitEntrySegments, splitWeekFile } from './entry-file.js';
-import { resolveEntityRefs, type NewProject, type NewAction } from './capture.js';
+import { requireRelatedProjects, resolveEntityRefs, type NewProject, type NewAction } from './capture.js';
 import { resolveMarkdownSource } from './content-source.js';
-import { parseEntryBlock, ENTRY_PREAMBLE } from '../../core/parser.js';
+import { parseEntryBlock, ENTRY_FENCE, ENTRY_PREAMBLE } from '../../core/parser.js';
 import type { ActionFrontMatter, ProjectFrontMatter, RelatedProject } from '../../core/types.js';
 import { assertAutomationEdits, hasAutomationEdits, type AutomationEdits } from '../../core/automation-edits.js';
 import { trackMutation } from '../../source/mutation-result.js';
@@ -97,7 +97,7 @@ export interface UpdateEntryResult {
 
 // The action fields the merge patch can touch — also what `fileChanged` derives
 // from, so the patch and the rewrite trigger cannot drift.
-const ACTION_PATCH_FIELDS = ['name', 'scheduled', 'deadline', 'resolution', 'calendar', 'calendar_account', 'duration', 'timezone', 'location', 'delegation'] as const;
+export const ACTION_PATCH_FIELDS = ['name', 'scheduled', 'deadline', 'resolution', 'calendar', 'calendar_account', 'duration', 'timezone', 'location', 'delegation'] as const;
 
 // Apply one provided merge-patch field: null (or an empty string) removes it, a
 // value sets it. Callers skip undefined fields (leave unchanged).
@@ -183,17 +183,11 @@ function updateProject(store: Store, args: UpdateProjectArgs): string | undefine
     if (args.related_projects === null || args.related_projects.length === 0) {
       delete fm.related_projects;
     } else {
-      for (const rp of args.related_projects) {
-        if (!store.getProject(rp.project)) {
-          throw new Error(`Related project "${rp.project}" not found.\nHint: query projects to find the correct ID.`);
-        }
-      }
+      requireRelatedProjects(store, args.related_projects);
       fm.related_projects = args.related_projects;
     }
   }
-  for (const link of args.relatedProjectEdits?.upsert ?? []) {
-    if (!store.getProject(link.project)) throw new Error(`Related project "${link.project}" not found.\nHint: query projects to find the correct ID.`);
-  }
+  requireRelatedProjects(store, args.relatedProjectEdits?.upsert ?? []);
 
   const replacementBody = resolveMarkdownSource(args.body, args.body_file, 'body');
   const file = store.getProjectFile(args.id);
@@ -277,11 +271,11 @@ function updateEntry(store: Store, args: UpdateEntryArgs, now?: Date): UpdateEnt
         // Read `created:` only from the segment's leading ```entry fence — the
         // same rule extractEntryBlocks uses — so a `created:` line in entry prose
         // can never identify the segment, however the metadata block is shaped.
-        const fence = segment.match(/^\s*```entry\s*\n([\s\S]*?)```/);
+        const fence = segment.match(ENTRY_FENCE);
         return fence !== null && parseEntryBlock(fence[1]).value.created === args.id;
       });
       if (targetIndex === -1) throw new Error(`Cannot update entry "${args.id}" — not found in weekly file.`);
-      const target = segments[targetIndex].match(/^\s*```entry\s*\n([\s\S]*?)```\s*\n?([\s\S]*)/)!;
+      const target = segments[targetIndex].match(ENTRY_FENCE)!;
       originalMetadata = target[1];
       if (replacementContent === undefined) {
         metadataRange = entryMetadataRange(split.body, args.id);
@@ -331,7 +325,7 @@ function updateEntry(store: Store, args: UpdateEntryArgs, now?: Date): UpdateEnt
       segments[targetIndex] = updatedBlock;
       weeklyContent = split.frontMatter + '\n' + renderEntries(segments) + '\n';
     }
-    store.saveEntry(args.id, projectIds, actionIds, content, file, weeklyContent);
+    store.saveEntry(args.id, file, weeklyContent);
   }
   return { warning: descriptionWarning(store, 'notes', args.id, args.description), createdProjectIds: refs.createdProjectIds, createdActionIds: refs.createdActionIds };
 }

@@ -1,6 +1,6 @@
 import { CALENDAR_LOCK_POLL_MS } from '../../core/system-config.js';
 // Calendar-mutation lock: one holder per instance data dir at a time. The
-// daemon is the only process that touches the calendar (design/daemon.md), so
+// daemon is the only process that touches the calendar (design/runtime.md), so
 // this serializes the phases inside it — a forward batch and a reverse pass —
 // which must never interleave on one instance. Constructed without a data dir
 // (no store), there is nothing to serialize on and the lock is a no-op.

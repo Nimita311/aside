@@ -57,7 +57,7 @@ describe('webpage previews', () => {
     const frame = root.querySelector('iframe')!;
     const details = readerDetails(root)!;
     document.body.append(root, details);
-    details.querySelector<HTMLAnchorElement>('.tag-project')!.click();
+    details.querySelector<HTMLAnchorElement>('.ref-row-project')!.click();
     expect(visited).toEqual(['project/2026-10-01-launch']);
     expect(frames).toEqual([frame]);
     expect(document.querySelectorAll('iframe')).toHaveLength(1);

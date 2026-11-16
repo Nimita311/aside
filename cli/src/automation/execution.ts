@@ -5,8 +5,9 @@ import { join, resolve } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { Transform } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
-import { assertArtifactPrompt, automationName, timeoutMs, type ResolvedModel } from '../core/automation.js';
-import { builtinModel, executablePath } from './models.js';
+import { assertArtifactPrompt, automationName, namedModel, timeoutMs, type ResolvedModel } from '../core/automation.js';
+import { builtinModel, executablePath, killProcessGroup } from './models.js';
+import { delegationIdentity } from './delegation.js';
 import {assertExecutionCwd} from '../runtime/execution-cwd.js';
 import {resolveExecutionContext} from '../core/execution-context.js';
 import type { ScheduledJob } from './scheduler.js';
@@ -55,9 +56,7 @@ export class AutomationRunner {
     if (this.closed) throw new Error('Execution runner is closed.');
     const record: RunRecord = { id: randomUUID(), key: job.key, root: job.root, definedIn: job.definedIn,
       occurrence: new Date(occurrence).toISOString(), started: new Date().toISOString(), status: 'running', session: this.storage.session,
-      definition: job.definition, latenessMs: Math.max(0, Date.now() - occurrence),
-      ...(job.delegation ? {actionId: job.delegation.id, templateId: job.delegation.action.frontMatter.occurrence?.template,
-        original: job.delegation.action.frontMatter.occurrence?.original} : {}) };
+      definition: job.definition, latenessMs: Math.max(0, Date.now() - occurrence), ...delegationIdentity(job.delegation) };
     const outputDir = this.storage.start(record);
     this.changed();
     const work = this.runObserved(job, record, outputDir);
@@ -76,7 +75,7 @@ export class AutomationRunner {
         args = job.definition.run.args ?? [];
       } else {
         const selection = job.definition.run.model;
-        const named = config.models && Object.hasOwn(config.models, selection) ? config.models[selection] : undefined;
+        const named = namedModel(config, selection);
         const model = named && 'command' in named ? named : builtinModel(named?.model ?? selection, job.root);
         if (!model) throw new Error(`Model ${JSON.stringify(selection)} is not configured in ${join(job.root, '.aside')} or has no recorded built-in identity`);
         run.model = { name: selection, ...model };
@@ -99,11 +98,6 @@ export class AutomationRunner {
     const child = spawn(command, args, { cwd, detached: process.platform !== 'win32', stdio: ['pipe', 'pipe', 'pipe'] });
     let timer: ReturnType<typeof setTimeout> | undefined;
     let termination: Promise<void> | undefined;
-    const kill = (signal: NodeJS.Signals) => {
-      if (child.pid) {
-        try { if (process.platform !== 'win32') process.kill(-child.pid, signal); else child.kill(signal); } catch {}
-      }
-    };
     const groupAlive = () => {
       if (!child.pid) return false;
       if (process.platform === 'win32') return child.exitCode === null && child.signalCode === null;
@@ -116,10 +110,10 @@ export class AutomationRunner {
       termination = new Promise<void>(resolveTermination => {
         const finish = () => {
           clearTimeout(killTimer); child.removeListener('close', closed);
-          kill('SIGKILL'); resolveTermination();
+          killProcessGroup(child, 'SIGKILL'); resolveTermination();
         };
         const closed = () => { if (!groupAlive()) finish(); };
-        kill('SIGTERM');
+        killProcessGroup(child, 'SIGTERM');
         // A leader can exit while descendants keep running with redirected
         // output. Keep escalation alive until the group is gone or grace ends.
         const killTimer = setTimeout(finish, AUTOMATION_TERMINATE_TIMEOUT_MS);

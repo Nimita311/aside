@@ -1,6 +1,6 @@
 import { isInstanceId } from '../core/identity.js';
 import type { HealthCheck } from './output.js';
-import type {AvailableInstance} from '../core/catalogue.js';
+import {instanceFamilyKey, type AvailableInstance} from '../core/catalogue.js';
 import {resolve} from 'node:path';
 
 // Listings diagnose catalogue-wide conflicts; individual files belong to validate.
@@ -12,7 +12,7 @@ export function instanceIdClashChecks(instances: Pick<AvailableInstance, 'path' 
     const paths = byId.get(instance.id) ?? new Set<string>();
     const path = resolve(instance.path);
     paths.add(path);
-    families.set(path, instance.worktree ? `${instance.worktree.commonDir}\0${instance.worktree.primaryPath}` : path);
+    families.set(path, instanceFamilyKey(instance.worktree, path));
     byId.set(instance.id, paths);
   }
   return [...byId].filter(([, paths]) => new Set([...paths].map(path => families.get(path))).size > 1).map(([id, paths]) => ({

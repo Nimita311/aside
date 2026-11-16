@@ -2,13 +2,11 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { DaemonDataSource, daemonRequest, loadDaemonInstance } from '../src/backend';
 
 import { snapshotFixture } from './snapshot-fixture';
-const fileKey = 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA';
 
 function fileResponse(url: string): Response {
   if (url.endsWith('/years')) return Response.json(['2026']);
   if (url === '/-/api/instances/work') return Response.json({ id: 'work', name: 'Work', path: '/fixture/work' });
   if (url.includes('/data')) return Response.json(snapshotFixture(), { headers: { ETag: '"data-v1"' } });
-  if (url.endsWith('/access')) return Response.json({ fileBase: '/-/files/00000000-0000-4000-8000-000000000001/work', fileKey });
   return new Response('', { status: 404 });
 }
 
@@ -20,14 +18,13 @@ describe('daemon browser source', () => {
     const request = vi.fn(async (url: string) => {
       if (url === '/-/api/instances/work') return Response.json({ id: 'work', address: 'work', alias, path: '/fixture/work' });
       if (url === `/-/api/instances/${alias}`) return Response.json({ id: 'work', address: alias, alias, path: '/fixture/work', calendarWarning: 'Calendar sync is paused' });
-      if (url.endsWith('/access')) return Response.json({ fileBase: `/-/files/00000000-0000-4000-8000-000000000001/${alias}`, fileKey });
       return fileResponse(url.replace(alias, 'work'));
     });
     vi.stubGlobal('fetch', request);
     const { instance, source, store } = await loadDaemonInstance('work');
     expect(instance.address).toBe(alias); expect(instance.id).toBe('work');
     expect(store.getInstance()?.manifest.id).toBe('work');
-    expect(source.assetUrl('assets/photo.png')).toContain(`/00000000-0000-4000-8000-000000000001/${alias}/`);
+    expect(source.assetUrl('assets/photo.png')).toContain(`/-/api/instances/${alias}/`);
     expect(source.assetUrl('assets/photo.png')).toContain('/files/assets/photo.png');
     expect(request.mock.calls.filter(([url]) => url.startsWith('/-/api/instances/work/'))).toEqual([]);
     expect(request.mock.calls.at(-1)?.[0]).toBe(`/-/api/instances/${alias}`);
@@ -35,18 +32,18 @@ describe('daemon browser source', () => {
   it('scopes file reads, media URLs, years and watches to the selected instance', async () => {
     const request = vi.fn().mockResolvedValue(new Response('["2010","2037"]', { status: 200 }));
     vi.stubGlobal('fetch', request);
-    const source = new DaemonDataSource('work', '/-/files/00000000-0000-4000-8000-000000000001/work', fileKey);
+    const source = new DaemonDataSource('work');
     expect(await source.listYears()).toEqual(['2010', '2037']);
     expect(request.mock.calls[0][0]).toBe('/-/api/instances/work/years');
-    expect(source.assetUrl('assets/photo #1.png')).toMatch(/^\/-\/files\/00000000-0000-4000-8000-000000000001\/work\/.+\/files\/assets\/photo%20%231\.png$/);
+    expect(source.assetUrl('assets/photo #1.png')).toBe('/-/api/instances/work/files/assets/photo%20%231.png');
     request.mockResolvedValue(new Response('work bytes', { status: 200, headers: { ETag: '"work-v1"' } }));
     expect((await source.read('aside.md'))?.text).toBe('work bytes');
     expect(request.mock.calls[1][0]).toBe('/-/api/instances/work/files/aside.md');
     request.mockResolvedValue(new Response(new ReadableStream(), { headers: { 'Content-Type': 'text/event-stream' } }));
     source.watch(() => {})();
     expect(request.mock.calls[2][0]).toBe('/-/api/instances/work/watch');
-    expect(new Headers(request.mock.calls[2][1].headers).get('Authorization')).toBe('Bearer fixture-browser-token');
-    expect(new DaemonDataSource('home', '/-/files/00000000-0000-4000-8000-000000000001/home', fileKey).assetUrl('assets/photo #1.png')).toContain('/00000000-0000-4000-8000-000000000001/home/');
+    expect(new Headers(request.mock.calls[2][1].headers).get('Authorization')).toBeNull();
+    expect(new DaemonDataSource('home').assetUrl('assets/photo #1.png')).toContain('/-/api/instances/home/');
   });
 
   it('reports unavailable and ambiguous instances with all paths', async () => {
@@ -98,7 +95,7 @@ describe('daemon browser source', () => {
     expect(store.filterWeeks({ type: 'entry', id: '2026-10-04T10:00' })).toEqual(['2026-09-28']);
     expect(store.getCachedEntryContents().get('2026-10-04T10:00')).toBe('Good note body.');
     await store.getRelations(); await store.warmSearch();
-    expect(request.mock.calls.map(call => call[0])).toEqual(['/-/api/instances/work', '/-/api/instances/work/access', '/-/api/instances/work/data', '/-/api/instances/work']);
+    expect(request.mock.calls.map(call => call[0])).toEqual(['/-/api/instances/work', '/-/api/instances/work/data', '/-/api/instances/work']);
   });
 
   it('rejects an unavailable daemon before loading records', async () => {

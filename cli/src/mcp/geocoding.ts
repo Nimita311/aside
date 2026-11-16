@@ -1,6 +1,7 @@
 import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { platform, release } from 'node:os';
+import { decimal } from '../core/location-reference.js';
 import { GEOCODING_HELPER_TIMEOUT_MS, GEOCODING_HELPER_MAX_STDOUT_BYTES, GEOCODING_HELPER_MAX_STDERR_BYTES, GEOCODING_QUEUE_LIMIT } from '../core/system-config.js';
 import { nativeCommand } from '../native/helper.js';
 
@@ -71,21 +72,6 @@ export function normalizeGeocodeAddressInput(input: GeocodeAddressInput): Geocod
     normalized.region = { latitude: region.latitude, longitude: region.longitude, radiusMeters: region.radiusMeters };
   }
   return normalized;
-}
-
-// RFC 5870 decimal coordinates do not allow JavaScript's exponent notation.
-function decimal(value: number): string {
-  const text = String(value);
-  if (!/[eE]/.test(text)) return text;
-  const [coefficient, exponent] = text.toLowerCase().split('e');
-  const negative = coefficient.startsWith('-');
-  const unsigned = negative ? coefficient.slice(1) : coefficient;
-  const digits = unsigned.replace('.', '');
-  const point = (unsigned.includes('.') ? unsigned.indexOf('.') : unsigned.length) + Number(exponent);
-  const expanded = point <= 0 ? `0.${'0'.repeat(-point)}${digits}`
-    : point >= digits.length ? digits + '0'.repeat(point - digits.length)
-    : `${digits.slice(0, point)}.${digits.slice(point)}`;
-  return `${negative ? '-' : ''}${expanded}`;
 }
 
 function optionalText(value: unknown): string | null {
@@ -168,9 +154,9 @@ function runHelper(input: GeocodeAddressInput, options: GeocodeAddressOptions, c
     const timeout = setTimeout(() => finish(result('FAILED', 'Apple geocoding request timed out. Retry later.'), true), configuration.timeoutMs ?? GEOCODING_HELPER_TIMEOUT_MS);
     options.signal?.addEventListener('abort', abort, { once: true });
     child.on('error', () => finish(result('UNAVAILABLE', 'Apple geocoding helper could not start.'), true));
-    child.stdin?.on('error', () => finish(result('FAILED', 'Apple geocoding helper communication failed.'), true));
-    child.stdout?.on('error', () => finish(result('FAILED', 'Apple geocoding helper communication failed.'), true));
-    child.stderr?.on('error', () => finish(result('FAILED', 'Apple geocoding helper communication failed.'), true));
+    for (const stream of [child.stdin, child.stdout, child.stderr]) {
+      stream?.on('error', () => finish(result('FAILED', 'Apple geocoding helper communication failed.'), true));
+    }
     child.stdout?.on('data', (data: Buffer) => {
       if (settled) return;
       stdoutBytes += data.length;

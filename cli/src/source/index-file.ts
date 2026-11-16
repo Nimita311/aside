@@ -1,4 +1,4 @@
-import {readFileSync, existsSync} from 'node:fs';
+import {existsSync} from 'node:fs';
 import {isAlias, isMap, isScalar, isSeq, parseDocument, visit} from 'yaml';
 import {yamlQuote} from '../core/yaml.js';
 import {assertManagedPath, readManagedText} from '../core/managed-path.js';
@@ -8,9 +8,9 @@ import {writeFileCrashSafe} from '../storage/atomic-file.js';
 // creating the file if absent. `id` is quoted only when YAML needs it, so slug
 // ids stay bare and timestamp ids (which contain a colon) get quoted. The caller
 // passes the final description (already single-line and truncated as needed).
-export function prependIndex(indexPath: string, id: string, description: string, managedRoot?: string): void {
-  if (managedRoot !== undefined) indexPath = assertManagedPath(managedRoot, indexPath, 'file', true);
-  let existing = existsSync(indexPath) ? managedRoot === undefined ? readFileSync(indexPath, 'utf-8') : readManagedText(managedRoot, indexPath) : '';
+export function prependIndex(indexPath: string, id: string, description: string, managedRoot: string): void {
+  indexPath = assertManagedPath(managedRoot, indexPath, 'file', true);
+  let existing = existsSync(indexPath) ? readManagedText(managedRoot, indexPath) : '';
   const newline = existing.includes('\r\n') ? '\r\n' : '\n';
   let doc = parseDocument(existing);
   // The parser misreads a BOM immediately before a block sequence indicator.
@@ -55,10 +55,10 @@ export function prependIndex(indexPath: string, id: string, description: string,
 // source range. Quotes, key order, comments, and unrelated formatting stay intact;
 // replacing a block scalar consumes its body as well as its header.
 // A true result means the description was saved on disk.
-export function updateIndexDescription(indexPath: string, id: string, description: string, managedRoot?: string): boolean {
-  if (managedRoot !== undefined) indexPath = assertManagedPath(managedRoot, indexPath, 'file', true);
+export function updateIndexDescription(indexPath: string, id: string, description: string, managedRoot: string): boolean {
+  indexPath = assertManagedPath(managedRoot, indexPath, 'file', true);
   if (!existsSync(indexPath)) return false;
-  const content = managedRoot === undefined ? readFileSync(indexPath, 'utf-8') : readManagedText(managedRoot, indexPath);
+  const content = readManagedText(managedRoot, indexPath);
   const doc = parseDocument(content);
   if (doc.errors.length) return false;
   if (!isSeq(doc.contents)) return false;

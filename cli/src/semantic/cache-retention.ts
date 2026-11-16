@@ -3,6 +3,7 @@ import { lstat, readFile, readdir, rename, rm, rmdir, writeFile } from 'node:fs/
 import { join, resolve } from 'node:path';
 import { hashText } from './documents.js';
 import { closeSemanticCacheHandles, withSemanticCacheAccess } from './search.js';
+import { errorMessage } from '../core/error.js';
 
 export const SEMANTIC_CACHE_RETENTION_DAYS = 30;
 export const SEMANTIC_CACHE_RETENTION_MS = SEMANTIC_CACHE_RETENTION_DAYS * 24 * 60 * 60 * 1000;
@@ -34,28 +35,22 @@ export class SemanticCacheRetention {
 
   /** Record the policy before removing registration. Missing caches stay absent. */
   forget(paths: readonly string[], clear: boolean): Promise<void> {
-    return withSemanticCacheAccess(async () => {
-      if (!await this.rootExists()) return;
-      for (const path of new Set(paths)) {
-        const location = this.location(path);
-        if (!await this.directoryExists(location)) continue;
-        const previous = await this.state(location);
-        await this.write(location, {version: 1, unregisteredSince: previous?.unregisteredSince ?? this.time(),
-          ...(clear || previous?.removeRequested ? {removeRequested: true as const} : {})});
-      }
-    });
+    return this.eachCache(paths, (location, previous) => this.write(location, {version: 1, unregisteredSince: previous?.unregisteredSince ?? this.time(),
+      ...(clear || previous?.removeRequested ? {removeRequested: true as const} : {})}));
   }
 
   /** Complete an explicit pending purge before admission, then cancel expiry. */
   register(paths: readonly string[]): Promise<void> {
+    return this.eachCache(paths, (location, state) => state?.removeRequested ? this.remove(location) : rm(join(location, METADATA), {force: true}));
+  }
+
+  // Visit each named instance's existing cache with its saved retention state.
+  private eachCache(paths: readonly string[], visit: (location: string, state: RetentionState | undefined) => Promise<void>): Promise<void> {
     return withSemanticCacheAccess(async () => {
       if (!await this.rootExists()) return;
       for (const path of new Set(paths)) {
         const location = this.location(path);
-        if (!await this.directoryExists(location)) continue;
-        const state = await this.state(location);
-        if (state?.removeRequested) await this.remove(location);
-        else await rm(join(location, METADATA), {force: true});
+        if (await this.directoryExists(location)) await visit(location, await this.state(location));
       }
     });
   }
@@ -92,7 +87,7 @@ export class SemanticCacheRetention {
           // handle before unlinking prevents another service retaining old tables.
           await this.remove(location, () => this.contains(registered, entry.name) || this.contains(inUse, entry.name));
         } catch (error) {
-          failures.push(new Error(`Could not collect semantic cache ${entry.name}: ${error instanceof Error ? error.message : String(error)}`, {cause: error}));
+          failures.push(new Error(`Could not collect semantic cache ${entry.name}: ${errorMessage(error)}`, {cause: error}));
         }
       }
       if (failures.length) throw new AggregateError(failures, failures.map(error => error.message).join('\n'));

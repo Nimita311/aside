@@ -211,7 +211,7 @@ describe('native navigation controls', () => {
     const card = mountEntry(options);
     expect(card.querySelector('a.em-time')?.getAttribute('href')).toBe('/work/2026-05-22T15:30');
     const reader = renderAssetDetail('assets/note.md', { kind: 'text', text: 'text' }, options, [{ id: entry.meta.created, description: 'Linked entry' }]);
-    const backlink = reader.querySelector<HTMLAnchorElement>('a.tag-entry')!;
+    const backlink = reader.querySelector<HTMLAnchorElement>('a.ref-row-entry')!;
     expect(backlink.getAttribute('href')).toBe('/work/2026-05-22T15:30');
   });
 });

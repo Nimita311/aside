@@ -14,7 +14,8 @@ it('keeps chart keyboard focus on its status after filtering without taking focu
     projects: { totalCount: 2 },
   } }) } });
   try {
-    preview.eval(await readFile(new URL('../fixtures/showcase/artifacts/2026/2026-10-12-dashboard/dashboard.js', import.meta.url), 'utf8'));
+    const html = await readFile(new URL('../fixtures/showcase/artifacts/2026/2026-10-12-dashboard/index.html', import.meta.url), 'utf8');
+    preview.eval(html.match(/<script>([\s\S]*?)<\/script>/)![1]);
     await vi.waitFor(() => expect(preview.document.querySelectorAll('.chart-bar')).toHaveLength(4));
     const backlog = preview.document.querySelector<HTMLButtonElement>('[data-status="BACKLOG"]')!;
     backlog.focus();

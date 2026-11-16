@@ -83,9 +83,9 @@ export function validateArtifactRendering(): { checks: number; failures: string[
     { projects: [], actions: [], backlinks: [artifactHandle(other, 'notes.md')] }, { kind: 'pdf', url: '/data/report.pdf' });
   check('sole attachment uses the existing file preview with artifact identity', fileArtifact.querySelector('iframe')?.getAttribute('src') === '/data/report.pdf' && fileArtifact.querySelector('.asset-path')?.textContent === artifactHandle(id));
   const fileBacklink = fileArtifact.querySelector<HTMLAnchorElement>('[data-section="Linked from"] + ul a');
-  check('attachment backlinks show filename pills with their exact source handle', fileBacklink?.matches('.tag.tag-artifact') && fileBacklink.querySelector('svg') && fileBacklink.textContent === 'notes.md' && fileBacklink.title === artifactHandle(other, 'notes.md'));
+  check('attachment backlinks show filename rows with their exact source handle', fileBacklink?.matches('.ref-row.ref-row-artifact') && fileBacklink.querySelector('svg') && fileBacklink.textContent === 'notes.md' && fileBacklink.title === artifactHandle(other, 'notes.md'));
   fileBacklink?.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, button: 0 }));
-  check('attachment backlink pills open the exact source attachment', calls.at(-1)?.id === other && calls.at(-1)?.filename === 'notes.md');
+  check('attachment backlink rows open the exact source attachment', calls.at(-1)?.id === other && calls.at(-1)?.filename === 'notes.md');
   const listedFile = fileArtifact.querySelector<HTMLAnchorElement>('[data-section="Attachments"] + ul a');
   check('selected file is listed with its exact name and canonical handle', listedFile?.textContent === 'report.pdf' && listedFile.title === artifactHandle(id, 'report.pdf'));
   listedFile?.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, button: 0 }));
@@ -124,7 +124,7 @@ export function validateArtifactRendering(): { checks: number; failures: string[
     { ...opts, activeFilter: { type: 'entry', id: '2026-10-02T12:00' } },
     { projects: [], actions: [], backlinks: [`#entry/${sourceEntry}`] });
   const entryBacklink = entryScoped.querySelector<HTMLAnchorElement>('[data-section="Linked from"] + ul a');
-  check('entry backlinks use the shared pill label, icon, and hover identity', entryBacklink?.matches('.tag.tag-entry') && entryBacklink.querySelector('svg') && entryBacklink.querySelector('.tag-text')?.textContent === opts.resolveName('entry', sourceEntry) && entryBacklink.dataset.refType === 'entry' && entryBacklink.dataset.refId === sourceEntry && entryBacklink.title === `#entry/${sourceEntry}`);
+  check('entry backlinks use the shared row label, icon, and hover identity', entryBacklink?.matches('.ref-row.ref-row-entry') && entryBacklink.querySelector('svg') && entryBacklink.querySelector('.tag-text')?.textContent === opts.resolveName('entry', sourceEntry) && entryBacklink.dataset.refType === 'entry' && entryBacklink.dataset.refId === sourceEntry && entryBacklink.title === `#entry/${sourceEntry}`);
   const entryHref = entryBacklink?.getAttribute('href');
   const entryRoute = entryHref && parseRoute(entryHref.replace(/^\//, ''));
   check('entry backlinks leave entry-detail scope in native hrefs', entryRoute && entryRoute.filter === null && entryRoute.doc === null && entryRoute.jump === sourceEntry);
@@ -136,22 +136,22 @@ export function validateArtifactRendering(): { checks: number; failures: string[
   const clicked: { type: string; id: string }[] = [];
   const sourceProject = '2026-10-02-product';
   const sourceAction = '2026-10-02-review';
-  const pillSources = renderArtifactDetail(id, artifact, undefined, {
+  const backlinkSources = renderArtifactDetail(id, artifact, undefined, {
     ...opts, resolveName: (_type, value) => value === sourceProject ? 'Product' : 'Review',
     refMarks: (type) => type === 'action' ? ['done'] : [],
     onTagClick: (ref) => clicked.push(ref),
   }, { projects: [], actions: [], backlinks: [`#project/${sourceProject}`, `#action/${sourceAction}`, artifactHandle(other)] });
-  const sourcePills = [...pillSources.querySelectorAll<HTMLAnchorElement>('[data-section="Linked from"] + ul a')];
-  check('project and action backlink pills retain names, active state, and lifecycle marks', sourcePills[0].matches('.tag.tag-project.is-active') && sourcePills[0].querySelector('.tag-text')?.textContent === 'Product' && sourcePills[1].matches('.tag.tag-action.tag-status-done.tag-status-closed') && sourcePills[1].querySelector('.tag-text')?.textContent === 'Review');
-  check('artifact backlink pills resolve their name and retain the canonical handle', sourcePills[2].matches('.tag.tag-artifact') && sourcePills[2].textContent === 'Related document' && sourcePills[2].title === artifactHandle(other));
-  sourcePills[1].dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, button: 0 }));
-  check('entity backlink pills retain primary-click navigation', clicked.at(-1)?.type === 'action' && clicked.at(-1)?.id === sourceAction);
+  const sourceRows = [...backlinkSources.querySelectorAll<HTMLAnchorElement>('[data-section="Linked from"] + ul a')];
+  check('project and action backlink rows retain names, active state, and lifecycle marks', sourceRows[0].matches('.ref-row.ref-row-project.is-active') && sourceRows[0].querySelector('.tag-text')?.textContent === 'Product' && sourceRows[1].matches('.ref-row.ref-row-action.tag-status-done.tag-status-closed') && sourceRows[1].querySelector('.tag-text')?.textContent === 'Review');
+  check('artifact backlink rows resolve their name and retain the canonical handle', sourceRows[2].matches('.ref-row.ref-row-artifact') && sourceRows[2].textContent === 'Related document' && sourceRows[2].title === artifactHandle(other));
+  sourceRows[1].dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, button: 0 }));
+  check('entity backlink rows retain primary-click navigation', clicked.at(-1)?.type === 'action' && clicked.at(-1)?.id === sourceAction);
   const beforeModified = clicked.length;
   let preventedModified = true;
-  sourcePills[1].addEventListener('click', (event) => { preventedModified = event.defaultPrevented; event.preventDefault(); }, { once: true });
-  sourcePills[1].dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, button: 0, ctrlKey: true }));
-  check('entity backlink pills retain native modifier-click navigation', clicked.length === beforeModified && !preventedModified);
-  const actionRoute = parseRoute(sourcePills[1].getAttribute('href')!.replace(/^\//, ''));
+  sourceRows[1].addEventListener('click', (event) => { preventedModified = event.defaultPrevented; event.preventDefault(); }, { once: true });
+  sourceRows[1].dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, button: 0, ctrlKey: true }));
+  check('entity backlink rows retain native modifier-click navigation', clicked.length === beforeModified && !preventedModified);
+  const actionRoute = parseRoute(sourceRows[1].getAttribute('href')!.replace(/^\//, ''));
   check('entity backlink hrefs open the source filtered view', actionRoute.filter?.type === 'action' && actionRoute.filter.id === sourceAction && actionRoute.doc === null);
   const attachment = renderArtifactDetail(id, artifact, undefined, opts, undefined,
     { kind: 'markdown', text: `---\nowner: "${artifactHandle(other)}"\n---\n\nBody ${artifactHandle(id)}.` }, 'notes.md');

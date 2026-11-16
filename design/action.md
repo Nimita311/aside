@@ -5,9 +5,9 @@ An action is a deliberate work item created through the system.
 ## Properties
 
 - **Named.** Each action has a human-readable display name and a derived unique ID: `YYYY-MM-DD-{slug-of-name}`. The date is the creation date. The ID is also the filename (without `.md`).
-- **Entry-bound.** Actions are created linked to an entry that captures the context they emerged from — why it exists, what prompted it. The entry is the action's origin record. A saved occurrence takes this context from its template; see `recurrence.md`.
+- **Entry-bound.** Actions are created linked to an entry that captures the context they emerged from — why it exists, what prompted it. The entry is the action's origin record. A saved occurrence takes this context from its template; see `planning.md`.
 - **Derived relationships.** Project association and origin context are not stored on the action — they are derived from entries where the action appears.
-- **Calendar-synced.** A scheduled action syncs 1:1 to a calendar event when a target `calendar` is set, and syncs back a limited set of edits. See `calendar.md`.
+- **Calendar-synced.** A scheduled action syncs 1:1 to a calendar event when a target `calendar` is set, and syncs back a limited set of edits. See `planning.md`.
 
 ## Storage
 
@@ -45,15 +45,15 @@ original discussion.
 ```
 
 Front matter fields:
-- `delegation`: optional agent configuration, using `run.model`, a direct artifact handle in `run.prompt`, and optional `timeout`. See [Delegation](delegation.md) for scheduling, execution, completion, and GraphQL authoring.
+- `delegation`: optional agent configuration, using `run.model`, a direct artifact handle in `run.prompt`, and optional `timeout`. See [Delegation](planning.md#delegation) for scheduling, execution, completion, and GraphQL authoring.
 - `name`: human-readable display name for the action
 - `created`: ISO 8601 with minute precision (`YYYY-MM-DDTHH:MM`) — when the action was created
 - `scheduled`: ISO 8601 with minute precision, or date-only for all-day work — the calendar time the work is planned for. When the action is marked done or cancelled, it can be considered the done time. Omit for backlog; optional even once resolved.
 - `deadline`: ISO 8601 with minute precision, or date-only when no time was specified — optional hard deadline for urgency
 - `resolution`: `done` or `cancelled` — how the action was resolved. Omit while active.
 - `calendar`: nonblank readable name of the calendar to sync the event to. Omit on creation to leave the action unsynced; use `null` on update to clear routing and remove its event.
-- `calendar_account`: optional readable account name qualifying `calendar`; omit for uniquely named calendars. See [calendar selection](calendar.md#calendar-selection).
-- `location`: optional primary [location handle](location-reference.md#action-location), independent of body mentions. Use one bare handle and quote it in YAML; omit on creation or use `null` on update to clear. It synchronizes to Calendar in one direction only.
+- `calendar_account`: optional readable account name qualifying `calendar`; omit for uniquely named calendars. See [calendar selection](../reference/frontmatter.md#actions).
+- `location`: optional primary [location handle](../reference/urls.md#location-handles), independent of body mentions. Use one bare handle and quote it in YAML; omit on creation or use `null` on update to clear. It synchronizes to Calendar in one direction only.
 - `duration`: positive fixed ISO duration in whole minutes (e.g. `PT1H`, `P1D` = 24 elapsed hours even across clock changes) — the timed event's length. Omit for the default.
 - `timezone`: IANA time zone (e.g. `Asia/Tokyo`) for `scheduled`. Omit for a floating time.
 
@@ -113,5 +113,5 @@ The agent creates actions through `capture` or `updateEntry`, linked to their co
 - **Completing**: set `resolution: done`. Successful delegation execution also completes the action; manually completing it never starts an agent. The done time is the `scheduled` time, if one is set.
 - **Cancelling**: set `resolution: cancelled`. The action file is kept on the record.
 
-The [recurrence design](recurrence.md) defines projected occurrences and saved
+The [recurrence design](planning.md#recurrence) defines projected occurrences and saved
 exceptions, their authoring interfaces, and Calendar mapping.

@@ -2,6 +2,7 @@
 // framing MCP uses over stdio. Either side may send requests and notifications.
 import type { Socket } from 'node:net';
 import { DAEMON_RPC_MAX_FRAME_CHARS } from '../core/system-config.js';
+import { errorMessage } from '../core/error.js';
 
 export interface RpcError {
   code: number;
@@ -30,7 +31,6 @@ export class Peer {
   private seq = 0;
   private pending = new Map<number, { resolve: (v: any) => void; reject: (e: Error) => void }>();
   private closeListeners = new Set<() => void>();
-  private notifyListeners = new Set<(method: string, params: any) => void>();
   closed = false;
 
   constructor(private socket: Socket, private onRequest?: Handler, private readonly maxFrameChars = DAEMON_RPC_MAX_FRAME_CHARS) {
@@ -56,11 +56,7 @@ export class Peer {
   }
 
   notify(method: string, params?: unknown): void {
-    if (!this.closed) this.send({ jsonrpc: '2.0', method, params });
-  }
-
-  onNotify(cb: (method: string, params: any) => void): void {
-    this.notifyListeners.add(cb);
+    this.send({ jsonrpc: '2.0', method, params });
   }
 
   onClose(cb: () => void): void {
@@ -98,10 +94,8 @@ export class Peer {
 
   private async dispatch(msg: any): Promise<void> {
     if (typeof msg?.method === 'string') {
-      if (msg.id === undefined || msg.id === null) {
-        for (const cb of this.notifyListeners) cb(msg.method, msg.params);
-        return;
-      }
+      // A notification needs no reply, and nothing here subscribes to one.
+      if (msg.id === undefined || msg.id === null) return;
       try {
         if (!this.onRequest) throw new RpcFailure(`unknown method ${msg.method}`, ERR_METHOD_NOT_FOUND);
         const result = await this.onRequest(msg.method, msg.params ?? {});
@@ -109,7 +103,7 @@ export class Peer {
       } catch (e) {
         const error: RpcError = {
           code: e instanceof RpcFailure ? e.code : ERR_FAILED,
-          message: e instanceof Error ? e.message : String(e),
+          message: errorMessage(e),
         };
         this.send({ jsonrpc: '2.0', id: msg.id, error });
       }

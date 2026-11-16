@@ -1,10 +1,10 @@
-import { isMap, isNode, stringify } from 'yaml';
+import { isMap, stringify } from 'yaml';
 import { assertAutomationDeclarations } from '../automation/declaration.js';
 import type { AutomationDeclarations } from './automation.js';
-import { assertArtifactPrompt, mapping, modelSelector, timeoutMs } from './automation.js';
+import { assertArgList, assertArtifactPrompt, assertKnownKeys, assertNonblankText, assertTimeZone, mapping, modelSelector, timeoutMs } from './automation.js';
 import { compileSchedule } from '../automation/schedule.js';
 import { Temporal } from '@js-temporal/polyfill';
-import { mergeMetadata, parseMetadata } from './metadata.js';
+import { mergeMetadata, metadataValue, parseMetadata } from './metadata.js';
 
 // GraphQL authoring lists are converted to this named map before validation.
 // Only edited jobs are declarations to author; untouched jobs remain repairable.
@@ -32,16 +32,11 @@ function assertPatch(value: unknown): AutomationPatch {
       for (const [field, entry] of Object.entries(nested)) {
         if (!allowed.includes(field)) throw new Error(`Unknown automation patch.${key}.${field}`);
         if (entry == null) continue;
-        if (field === 'args') {
-          if (!Array.isArray(entry) || entry.some(arg => typeof arg !== 'string' || arg.includes('\0'))) throw new Error('automation patch.run.args must be a list of strings');
-        } else if (field === 'prompt') {
-          assertArtifactPrompt(entry, 'automation patch.run.prompt');
-        } else if (typeof entry !== 'string' || !entry.trim() || entry.includes('\0')) throw new Error(`automation patch.${key}.${field} must be nonblank text`);
+        if (field === 'args') assertArgList(entry, 'automation patch.run.args');
+        else if (field === 'prompt') assertArtifactPrompt(entry, 'automation patch.run.prompt');
+        else assertNonblankText(entry, `automation patch.${key}.${field}`);
         if (field === 'model') modelSelector(entry, 'automation patch.run.model');
-        if (field === 'timezone') {
-          if (String(entry).startsWith('+') || String(entry).startsWith('-')) throw new Error('timezone must be an IANA time zone');
-          new Intl.DateTimeFormat('en', {timeZone: entry as string});
-        }
+        if (field === 'timezone') assertTimeZone(entry as string);
         // Validate independently meaningful authored values before any root
         // mutation executes; remaining constraints require the saved job.
         if (field === 'cron') compileSchedule({cron: entry as string});
@@ -65,7 +60,7 @@ function assertPatch(value: unknown): AutomationPatch {
 
 export function assertAutomationEdits(value: unknown): AutomationEdits {
   const input = mapping(value, 'automationEdits');
-  for (const key of Object.keys(input)) if (!['upsert', 'patch', 'remove'].includes(key)) throw new Error(`Unknown automationEdits.${key}`);
+  assertKnownKeys(input, ['upsert', 'patch', 'remove'], 'automationEdits');
   const upsert = input.upsert == null ? input.upsert as null | undefined : assertAutomationDeclarations(input.upsert);
   const patch: Record<string, AutomationPatch> = Object.create(null);
   if (input.patch != null) for (const [name, value] of Object.entries(mapping(input.patch, 'automationEdits.patch'))) {
@@ -100,14 +95,14 @@ export function applyAutomationEditsToMetadata(source: string, edits: Automation
   if (!hasAutomationEdits(normalized)) return source;
   const document = parseMetadata(source, context);
   const pairs = isMap(document.contents) ? document.contents.items.filter(pair =>
-    (isNode(pair.key) ? pair.key.toJS(document, {mapAsMap: true}) : pair.key) === 'automations') : [];
+    metadataValue(pair.key, document) === 'automations') : [];
   if (pairs.length > 1) throw new Error(`Cannot update ${context}: existing metadata repeats automations after resolving YAML aliases. Repair it before retrying.`);
   const current = pairs[0]?.value;
   if (pairs.length && !isMap(current)) throw new Error(`Cannot update ${context}: existing automations must be a YAML mapping. Repair it before editing individual jobs.`);
   const currentNames = new Set<string>();
   if (isMap(current)) {
     for (const pair of current.items) {
-      const name = isNode(pair.key) ? pair.key.toJS(document, {mapAsMap: true}) : pair.key;
+      const name = metadataValue(pair.key, document);
       if (typeof name !== 'string') throw new Error(`Cannot update ${context}: existing automation names must be text. Repair them before editing individual jobs.`);
       if (currentNames.has(name)) throw new Error(`Cannot update ${context}: existing automations repeats "${name}" after resolving YAML aliases. Repair it before retrying.`);
       currentNames.add(name);
@@ -122,7 +117,7 @@ export function applyAutomationEditsToMetadata(source: string, edits: Automation
   const fields: string[][] = [...Object.keys(upsert), ...remove.filter(name => currentNames.has(name))].map(name => ['automations', name]);
   for (const [name, changes] of Object.entries(patch)) {
     if (!currentNames.has(name)) throw new Error(`Cannot update ${context}: automation "${name}" does not exist. Use upsert to create it.`);
-    const pair = isMap(current) ? current.items.find(pair => (isNode(pair.key) ? pair.key.toJS(document, {mapAsMap: true}) : pair.key) === name)! : undefined;
+    const pair = isMap(current) ? current.items.find(pair => metadataValue(pair.key, document) === name)! : undefined;
     if (!isMap(pair?.value)) throw new Error(`Cannot update ${context}: automation "${name}" must be a YAML mapping. Use upsert to replace it.`);
     const job = mapping(pair.value.toJS(document), `automation ${name}`);
     const merged = structuredClone(job);
